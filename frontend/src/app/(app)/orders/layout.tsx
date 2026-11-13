@@ -149,6 +149,9 @@ export default function OrdersLayout({ children }: { children: React.ReactNode }
     if (n == null || n === 0) return null;
     return (
       <span
+        // Always the whole-workspace figure (every store, no filters) — the
+        // board's own lanes show the filtered counts.
+        title={tab.count === 'toBook' ? 'To book across all stores' : 'Ready to dispatch across all stores'}
         className={cn(
           'rounded-full px-1.5 py-px text-xs font-bold tabular-nums',
           active ? 'bg-brand-50 text-brand-700' : 'bg-sunken text-muted',

@@ -183,11 +183,8 @@ export function AudienceBuilder({
                 type="date"
                 value={f.lastMessageAfter?.slice(0, 10) ?? ''}
                 onChange={(e) =>
-                  setFilter({
-                    lastMessageAfter: e.target.value
-                      ? new Date(e.target.value).toISOString()
-                      : undefined,
-                  })
+                  // Bare YYYY-MM-DD: the backend treats it as a whole day.
+                  setFilter({ lastMessageAfter: e.target.value || undefined })
                 }
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
               />
@@ -200,11 +197,9 @@ export function AudienceBuilder({
                 type="date"
                 value={f.lastMessageBefore?.slice(0, 10) ?? ''}
                 onChange={(e) =>
-                  setFilter({
-                    lastMessageBefore: e.target.value
-                      ? new Date(e.target.value).toISOString()
-                      : undefined,
-                  })
+                  // Bare YYYY-MM-DD so "before" covers the WHOLE chosen day
+                  // (an instant at UTC midnight dropped that day entirely).
+                  setFilter({ lastMessageBefore: e.target.value || undefined })
                 }
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
               />

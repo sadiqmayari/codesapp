@@ -14,7 +14,7 @@ import {
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { useAuth } from '@/context/auth-context';
-import { cn, zonedTodayRange, zonedWeekRange, zonedMonthRange } from '@/lib/utils';
+import { cn, zonedDayRange, zonedTodayRange, zonedWeekRange, zonedMonthRange } from '@/lib/utils';
 import { ConfirmDialog } from '@/components/ui/modal';
 import { ContestModal } from '@/components/gamification/contest-modal';
 import { TargetModal } from '@/components/gamification/target-modal';
@@ -76,13 +76,12 @@ export default function LeaderboardPage() {
     if (period === 'today') return zonedTodayRange();
     if (period === 'week') return zonedWeekRange();
     if (period === 'month') return zonedMonthRange(0);
+    // Custom = inclusive tenant-clock days (it used the BROWSER clock and
+    // dropped the last second of the end day); from > to is swapped.
+    const r = zonedDayRange(customFrom, customTo);
     return {
-      from: customFrom
-        ? new Date(`${customFrom}T00:00:00`).toISOString()
-        : zonedWeekRange().from,
-      to: customTo
-        ? new Date(`${customTo}T23:59:59`).toISOString()
-        : new Date().toISOString(),
+      from: r.from ?? zonedWeekRange().from,
+      to: r.to ?? new Date().toISOString(),
     };
   }, [period, customFrom, customTo]);
 

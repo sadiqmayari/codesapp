@@ -9,9 +9,9 @@ import {
   PhoneIncoming,
   PhoneOutgoing,
   PhoneMissed,
-  Search,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import { SearchInput } from '@/components/ui/search-input';
 import { useSocket } from '@/context/socket-context';
 import { useSip } from '@/context/sip-context';
 import { dayKey, dayLabel, fmtTime } from '@/lib/utils';
@@ -79,6 +79,7 @@ export default function CallsPanel({
   }, [search]);
   const seqRef = useRef(0);
   const loadingMoreRef = useRef(false);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const fetchPage = useCallback(
     async (page: number) => {
@@ -110,6 +111,7 @@ export default function CallsPanel({
         setLoading(true);
         setError(false);
         pageRef.current = 1;
+        if (listRef.current) listRef.current.scrollTop = 0;
       }
       try {
         const pages = silent ? Math.max(1, pageRef.current) : 1;
@@ -132,7 +134,11 @@ export default function CallsPanel({
           setError(true);
         }
       } finally {
-        if (!silent && seq === seqRef.current) setLoading(false);
+        // Clear the spinner whenever THIS is the latest request — silent or
+        // not. A live call.updated refresh used to bump the seq while a
+        // filter-change load was in flight; that load was then discarded and
+        // nothing ever turned `loading` off (spinner stuck on an empty list).
+        if (seq === seqRef.current) setLoading(false);
       }
     },
     [fetchPage],
@@ -209,18 +215,13 @@ export default function CallsPanel({
   return (
     <div className="flex flex-1 flex-col min-h-0">
       <div className="p-3 border-b border-gray-200 space-y-2">
-        <div className="relative">
-          <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search calls by name or number"
-            aria-label="Search calls"
-            type="search"
-            autoComplete="off"
-            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-          />
-        </div>
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search calls by name or number"
+          aria-label="Search calls"
+          loading={loading && !!search}
+        />
         <div className="flex gap-1 flex-wrap">
           {FILTERS.map((f) => (
             <button
@@ -239,7 +240,7 @@ export default function CallsPanel({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto" onScroll={onScroll}>
+      <div ref={listRef} className="flex-1 overflow-y-auto" onScroll={onScroll}>
         {loading && rows.length === 0 ? (
           <div className="p-6 flex justify-center">
             <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />

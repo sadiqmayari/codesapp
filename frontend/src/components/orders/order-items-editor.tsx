@@ -128,6 +128,10 @@ export function OrderItemsEditor({
   const toast = useToast();
 
   const [loading, setLoading] = useState(true);
+  // The order's own store — product search must hit THAT store's catalogue
+  // (it used to search the primary store for every order).
+  const [orderStoreId, setOrderStoreId] = useState<number | null>(null);
+  const searchSeq = useRef(0);
   const [editable, setEditable] = useState(true);
   const [blockedReason, setBlockedReason] = useState<string | null>(null);
   const [serverCurrentTotal, setServerCurrentTotal] = useState<number | null>(null);
@@ -165,6 +169,7 @@ export function OrderItemsEditor({
     (async () => {
       try {
         const res = await getOrderEditable(orderGid);
+        setOrderStoreId(res.storeId ?? null);
         setEditable(res.editable);
         setBlockedReason(res.blockedReason ?? null);
         setServerCurrentTotal(res.currentTotal ?? null);
@@ -202,22 +207,25 @@ export function OrderItemsEditor({
 
   // Product search — includes draft/unlisted (all=1); the AI auto-order stays strict.
   const runSearch = useCallback(async (q: string) => {
+    const my = ++searchSeq.current;
     if (!q.trim()) {
       setResults([]);
+      setSearching(false);
       return;
     }
     setSearching(true);
     try {
       const res = await apiFetch<ProductVariant[]>('/shopify/products', {
-        params: { query: q, all: '1' },
+        params: { query: q, all: '1', ...(orderStoreId ? { storeId: String(orderStoreId) } : {}) },
       });
-      setResults(Array.isArray(res) ? res : []);
+      // Stale-response guard: a slower earlier query must not overwrite newer results.
+      if (my === searchSeq.current) setResults(Array.isArray(res) ? res : []);
     } catch {
-      setResults([]);
+      if (my === searchSeq.current) setResults([]);
     } finally {
-      setSearching(false);
+      if (my === searchSeq.current) setSearching(false);
     }
-  }, []);
+  }, [orderStoreId]);
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => runSearch(query), 350);

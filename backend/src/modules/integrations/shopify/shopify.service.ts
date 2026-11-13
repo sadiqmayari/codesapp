@@ -31,6 +31,7 @@ import { AiKnowledgeService } from '../../ai/ai-knowledge.service';
 import { AiRagService, RagItem } from '../../ai/ai-rag.service';
 import { courierTrackingUrl } from '../../couriers/couriers.constants';
 import { formatLineItemsSummary } from '../../../common/utils/line-items-summary';
+import { classifySearch, likeContains } from '../../../common/utils/search';
 
 export interface ShopifyOrderPayload {
   id?: number | string;
@@ -3002,7 +3003,12 @@ export class ShopifyService implements OnModuleInit {
    * unreachable / PII-blocked we return the unfiltered pending list and let the
    * orders/create webhook backstop (markCheckoutConverted) keep it clean.
    */
-  async listAbandonedCheckouts(companyId: number): Promise<
+  async listAbandonedCheckouts(
+    companyId: number,
+    // Server-side search (name / phone in any format / email / items) + store,
+    // applied in SQL BEFORE the 500-row cap so a match is never cut off.
+    opts: { search?: string; store?: number } = {},
+  ): Promise<
     Array<{
       id: number;
       contactName: string | null;
@@ -3047,6 +3053,21 @@ export class ShopifyService implements OnModuleInit {
       /* non-fatal */
     }
 
+    const abParams: unknown[] = [];
+    let abStoreSql = '';
+    if (opts.store) {
+      abStoreSql = 'AND ac.shopify_store_id = ?';
+      abParams.push(opts.store);
+    }
+    let abSearchSql = '';
+    const abQ = classifySearch(opts.search);
+    if (abQ.raw) {
+      const like = likeContains(abQ.raw);
+      const phoneLike = likeContains(abQ.kind === 'phone' && abQ.phoneTail ? abQ.phoneTail : abQ.raw);
+      abSearchSql =
+        'AND (ac.contact_name LIKE ? OR ac.email LIKE ? OR ac.items_summary LIKE ? OR ac.phone LIKE ?)';
+      abParams.push(like, like, like, phoneLike);
+    }
     // Raw select — includes the new value/assignee columns (not in schema.prisma).
     const rows = await this.prisma.$queryRawUnsafe<
       Array<{
@@ -3086,9 +3107,12 @@ export class ShopifyService implements OnModuleInit {
        LEFT JOIN shopify_stores st ON st.id = ac.shopify_store_id
        WHERE ac.company_id = ? AND ac.status = 'pending'
          AND ac.phone IS NOT NULL AND ac.phone <> ''
-       ORDER BY ac.created_at DESC
+         ${abStoreSql}
+         ${abSearchSql}
+       ORDER BY ac.created_at DESC, ac.id DESC
        LIMIT 500`,
       companyId,
+      ...abParams,
     );
 
     const { phones, emails } = await this.ordersTodayIndex(companyId);
@@ -3419,7 +3443,12 @@ export class ShopifyService implements OnModuleInit {
     const pageSize = Math.min(200, Math.max(1, Math.floor(opts.pageSize ?? 50)));
     const offset = (page - 1) * pageSize;
     const search = (opts.search ?? '').trim();
-    const like = `%${search}%`;
+    // Escaped LIKE (a "_" used to match any char); order # without "#";
+    // phone on the last 10 digits (0300… / +92300… / 92300…).
+    const sq = classifySearch(search);
+    const like = likeContains(search);
+    const orderLike = likeContains(sq.orderNo ?? search);
+    const phoneLike = likeContains(sq.kind === 'phone' && sq.phoneTail ? sq.phoneTail : search);
     const dec = (v: unknown): number =>
       v == null ? 0 : Number((v as { toString(): string }).toString());
 
@@ -3474,13 +3503,13 @@ export class ShopifyService implements OnModuleInit {
           AND poh.created_by_user_id IS NOT NULL
           AND poh.order_gid IS NOT NULL
           AND poh.created_at >= ? AND poh.created_at <= ?
-          ${search ? 'AND (ct.name LIKE ? OR ct.email LIKE ? OR poh.order_name LIKE ?)' : ''}`;
+          ${search ? 'AND (ct.name LIKE ? OR ct.email LIKE ? OR poh.order_name LIKE ? OR ct.phone LIKE ?)' : ''}`;
       baseParams = [
         companyId,
         companyId,
         opts.from,
         opts.to,
-        ...(search ? [like, like, like] : []),
+        ...(search ? [like, like, orderLike, phoneLike] : []),
       ];
       orderCol = 'poh.created_at';
     } else {
@@ -3502,16 +3531,20 @@ export class ShopifyService implements OnModuleInit {
         JOIN contacts ct ON ct.id = c.contact_id
         LEFT JOIN pending_order_hashes poh
           ON poh.company_id = som.company_id AND poh.order_gid = som.shopify_order_gid
+        LEFT JOIN shopify_orders sord
+          ON sord.company_id = som.company_id AND sord.shopify_order_gid = som.shopify_order_gid
         LEFT JOIN users u ON u.id = COALESCE(m.user_id, poh.created_by_user_id)
         WHERE som.company_id = ?
           AND c.referral_source_id IS NOT NULL
           AND som.created_at >= ? AND som.created_at <= ?
-          ${search ? 'AND (ct.name LIKE ? OR ct.email LIKE ? OR som.shopify_order_gid LIKE ?)' : ''}`;
+          // Ad scope matched the internal Shopify GID, not the order number, so
+          // "#1001" found nothing. Match the order # (poh, LEFT JOINed) + phone.
+          ${search ? 'AND (ct.name LIKE ? OR ct.email LIKE ? OR COALESCE(poh.order_name, sord.order_name) LIKE ? OR ct.phone LIKE ?)' : ''}`;
       baseParams = [
         companyId,
         opts.from,
         opts.to,
-        ...(search ? [like, like, like] : []),
+        ...(search ? [like, like, orderLike, phoneLike] : []),
       ];
       orderCol = 'som.created_at';
     }
@@ -4780,6 +4813,22 @@ export class ShopifyService implements OnModuleInit {
   > {
     const api = await this.requireAdminApi(companyId, storeId);
     const q = (query || '').trim();
+    // Shopify search syntax: each plain word gets a trailing `*` so partial
+    // words match ("kurt" -> kurta), and the ACTIVE filter is pushed to Shopify
+    // when listed-only, so the 30-result window isn't eaten by drafts that the
+    // post-filter below would then drop (results used to come back empty even
+    // when active matches existed). Quotes/backslashes are stripped.
+    const shopQ = [
+      includeUnlisted ? '' : 'status:active',
+      q
+        .replace(/["\\]/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((t) => (/[:*]/.test(t) ? t : `${t}*`))
+        .join(' '),
+    ]
+      .filter(Boolean)
+      .join(' ');
     const gql = `query($q: String) {
       products(first: 30, query: $q) {
         edges { node {
@@ -4844,7 +4893,7 @@ export class ShopifyService implements OnModuleInit {
         api.apiVersion,
         api.token,
         gql,
-        { q: q || undefined },
+        { q: shopQ || undefined },
       );
     } catch (err) {
       this.logger.warn(
@@ -7477,6 +7526,14 @@ export class ShopifyService implements OnModuleInit {
    * are NOT PII, so any authed tenant user may read them. Used to render the
    * edit modal before committing changes back to Shopify.
    */
+  /** The connected store an order belongs to (null for legacy single-store). */
+  async orderStoreId(companyId: number, orderGid: string): Promise<number | null> {
+    const o = await this.prisma.shopifyOrder
+      .findFirst({ where: { company_id: companyId, shopify_order_gid: orderGid }, select: { shopify_store_id: true } })
+      .catch(() => null);
+    return o?.shopify_store_id ?? null;
+  }
+
   async getOrderEditableItems(
     companyId: number,
     orderGid: string,
@@ -11179,7 +11236,7 @@ export class ShopifyService implements OnModuleInit {
   /** Resolve one order from the local mirror by its gid OR order number. */
   private async findOrderDetailRow(
     companyId: number,
-    key: { gid?: string; number?: string },
+    key: { gid?: string; number?: string; store?: number },
   ) {
     if (key.gid) {
       return this.prisma.shopifyOrder.findFirst({
@@ -11188,12 +11245,45 @@ export class ShopifyService implements OnModuleInit {
     }
     const num = (key.number || '').replace(/[^0-9]/g, '');
     if (!num) return null;
+    // Multi-Store: the same order number can exist in two stores. Honour an
+    // explicit store, else pick deterministically (newest). It used to be an
+    // unordered findFirst, so #1001 opened either store at random. The detail
+    // payload lists the other stores' matches (`sameNumberInOtherStores`).
     return this.prisma.shopifyOrder.findFirst({
       where: {
         company_id: companyId,
+        ...(key.store ? { shopify_store_id: key.store } : {}),
         OR: [{ order_number: num }, { order_name: `#${num}` }, { order_name: num }],
       },
+      orderBy: [{ shopify_created_at: 'desc' }, { id: 'desc' }],
     });
+  }
+
+  /** Other stores' orders sharing this order's number (multi-store only). */
+  private async sameNumberInOtherStores(
+    companyId: number,
+    o: { id: number; order_name: string | null },
+  ): Promise<Array<{ orderGid: string; storeId: number | null; storeLabel: string | null }>> {
+    if (!o.order_name) return [];
+    const rows = await this.prisma.shopifyOrder.findMany({
+      where: { company_id: companyId, order_name: o.order_name, id: { not: o.id } },
+      select: { shopify_order_gid: true, shopify_store_id: true },
+      take: 5,
+    });
+    if (!rows.length) return [];
+    const ids = rows.map((r) => r.shopify_store_id).filter((v): v is number => v != null);
+    const stores = ids.length
+      ? await this.prisma.shopifyStore.findMany({
+          where: { company_id: companyId, id: { in: ids } },
+          select: { id: true, label: true, shop_domain: true },
+        })
+      : [];
+    const label = new Map(stores.map((s) => [s.id, s.label || s.shop_domain]));
+    return rows.map((r) => ({
+      orderGid: r.shopify_order_gid,
+      storeId: r.shopify_store_id,
+      storeLabel: r.shopify_store_id != null ? label.get(r.shopify_store_id) ?? null : null,
+    }));
   }
 
   /**
@@ -11202,7 +11292,7 @@ export class ShopifyService implements OnModuleInit {
    * conversation link, admin URL and public-tracking link. The `/live` companion
    * hydrates transactions/refunds/timeline from Shopify on demand.
    */
-  async getOrderDetail(companyId: number, key: { gid?: string; number?: string }) {
+  async getOrderDetail(companyId: number, key: { gid?: string; number?: string; store?: number }) {
     const o = await this.findOrderDetailRow(companyId, key);
     if (!o) throw new NotFoundException('Order not found.');
 
@@ -11356,9 +11446,13 @@ export class ShopifyService implements OnModuleInit {
       at: a.created_at,
     }));
 
+    const sameNumberInOtherStores =
+      storeCount > 1 ? await this.sameNumberInOtherStores(companyId, o).catch(() => []) : [];
+
     return {
       callLogs,
       multiStore: storeCount > 1,
+      sameNumberInOtherStores,
       order: {
         orderGid: o.shopify_order_gid,
         orderName: o.order_name,

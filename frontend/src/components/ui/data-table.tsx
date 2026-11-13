@@ -41,6 +41,7 @@ export function DataTable<T>({
   selectable = false,
   bulkActions,
   toolbar,
+  emptyNode,
   className,
   maxHeight = '70vh',
   selectedKeys,
@@ -54,6 +55,8 @@ export function DataTable<T>({
   rowKey: (row: T) => string | number;
   loading?: boolean;
   empty?: { icon?: React.ElementType; title: string; description?: React.ReactNode; action?: React.ReactNode };
+  /** Replaces the default empty state (e.g. `<NoResults>` when a filter is active). */
+  emptyNode?: React.ReactNode;
   onRowClick?: (row: T) => void;
   selectable?: boolean;
   /** Rendered in the floating bar when ≥1 row is selected. */
@@ -128,7 +131,15 @@ export function DataTable<T>({
       if (x == null && y == null) return 0;
       if (x == null) return 1;
       if (y == null) return -1;
-      const c = x < y ? -1 : x > y ? 1 : 0;
+      // Strings: case-insensitive, locale + numeric aware ("#2" < "#10").
+      const c =
+        typeof x === 'string' && typeof y === 'string'
+          ? x.localeCompare(y, undefined, { numeric: true, sensitivity: 'base' })
+          : x < y
+            ? -1
+            : x > y
+              ? 1
+              : 0;
       return sort.dir === 'asc' ? c : -c;
     });
   }, [rows, columns, sort, serverSort]);
@@ -159,7 +170,7 @@ export function DataTable<T>({
       {loading ? (
         <SkeletonRows rows={6} />
       ) : rows.length === 0 ? (
-        <EmptyState
+        emptyNode ?? <EmptyState
           compact
           icon={empty?.icon}
           title={empty?.title ?? 'Nothing here yet'}

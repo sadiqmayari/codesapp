@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { phoneSearchDigits } from '../../common/utils/contact-phone';
+import { likeContains } from '../../common/utils/search';
 
 /**
  * Contacts 360 — THE single contact filter.
@@ -35,7 +36,7 @@ export interface ContactFilter {
   deleted?: boolean;
 }
 
-const like = (s: string) => `%${s.replace(/[\\%_]/g, (c) => '\\' + c)}%`;
+const like = likeContains;
 
 function tagCond(tag: string): Prisma.Sql {
   const t = tag.trim().toLowerCase();

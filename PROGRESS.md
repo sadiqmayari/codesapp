@@ -6,6 +6,11 @@
 
 ## Current Status
 
+**Search & filter overhaul — app-wide (2026-11-13, latest):** NO migration. Audit (88 findings) + preview: https://claude.ai/artifact/6T3CxvftQxCorKtBuervK5
+- **Foundation:** backend `common/utils/search.ts` (escaped LIKE, `classifySearch`, `clampQuery`, spec); frontend `SearchInput`, `filter-bar` (`StatusChips`/`FilterSelect`/`ActiveFilters`/`DateRangeFilter`), `NoResults`, `lib/use-list-query.ts`, `apiFetch({signal})`, `zonedDayRange` + tenant-zoned `periodRange`.
+- **Bugs fixed:** phone search in every format (inbox, calls, tickets, Orders board, payments, abandoned, agent/ad orders, PR); Orders board courier+sub-tab clobber, 20k gid cap, unstable paging, Select-all ignoring the sub-tab, exact order # first, URL-persisted filters, stale-response guards, filtered empty state; pending payments search/store + stale guard; shortfalls full scan + "N cleared hidden"; super-admin clients/audit/billing server-side; tickets server pagination + search + agent pool RBAC; attendance/analytics/leaderboard/orders-list/agents tenant-clock dates; inbox label exact match + `unassigned=false` bug + × clear + single initial load; calls stuck spinner; Ctrl+F from the composer + transcripts; finance tracking lookup; multi-store duplicate order numbers; product search (store, drafts, partial words); bulk RTO receive store-ambiguity guard.
+- **New search/filters:** tickets, templates (+category), broadcasts (+ template picker filter), webhook logs (event/date), content, PR submissions (+campaign) + influencers, settings team (+role) + AI KB, super-admin usage (+near/over limit), abandoned carts, attendance grid.
+
 **Order drawer v2 (2026-11-13, latest):** Frontend + one additive backend field (no migration). Preview: https://claude.ai/artifact/GbHphZsJdq9JSHXyTxwHnj
 - **Next-step callout** at the top (`drawer/next-step.tsx` `deriveNextStep`): confirm / fix address / shipper advice (inline re-attempt/return form) / book / track / settlement status, with the right buttons per state.
 - **Header** reduced to Open chat · Call (softphone or tel:) · Edit · ⋯ menu (book, fulfil manually, mark paid, confirmation actions, log call, tracking page, Shopify, refresh); "Synced Xm ago" replaces the mirror/live badges; progress steps show dates.

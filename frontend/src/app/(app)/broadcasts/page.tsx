@@ -26,7 +26,9 @@ import type {
   BroadcastStatus,
 } from '@/lib/crm-types';
 import { Skeleton } from '@/components/ui/skeleton';
-import { EmptyState } from '@/components/ui/empty-state';
+import { EmptyState, NoResults } from '@/components/ui/empty-state';
+import { SearchInput } from '@/components/ui/search-input';
+import { useDebouncedValue } from '@/lib/use-list-query';
 import { Megaphone } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
@@ -70,6 +72,10 @@ export default function BroadcastsPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<BroadcastStatus | 'all'>('all');
   const [page, setPage] = useState(1);
+  // Server-side name search (the list is paginated).
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebouncedValue(searchInput.trim(), 300);
+  const loadSeq = useRef(0);
 
   const [analytics, setAnalytics] = useState<BroadcastAnalytics | null>(null);
   const [scheduleFor, setScheduleFor] = useState<Broadcast | null>(null);
@@ -81,15 +87,18 @@ export default function BroadcastsPage() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
+    const my = ++loadSeq.current;
     setLoading(true);
     try {
       const res = await apiFetch<Broadcast[]>('/broadcasts', {
         params: {
           status: filter === 'all' ? undefined : filter,
+          search: search || undefined,
           page,
           limit: LIMIT,
         },
       });
+      if (my !== loadSeq.current) return; // superseded
       setRows(res);
     } catch (e) {
       toast.error(
@@ -98,11 +107,11 @@ export default function BroadcastsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, page, toast]);
+  }, [filter, page, search, toast]);
 
   useEffect(() => {
     setPage(1);
-  }, [filter]);
+  }, [filter, search]);
   useEffect(() => {
     load();
   }, [load]);
@@ -207,6 +216,14 @@ export default function BroadcastsPage() {
         </Link>
       </div>
 
+      <SearchInput
+        value={searchInput}
+        onChange={setSearchInput}
+        placeholder="Search broadcasts by name"
+        slashShortcut
+        loading={loading && !!searchInput}
+        className="mb-3 w-full sm:w-80"
+      />
       <div className="flex flex-wrap gap-2 mb-5">
         {FILTERS.map((f) => (
           <button
@@ -230,6 +247,15 @@ export default function BroadcastsPage() {
             <Skeleton key={i} className="h-24 rounded-xl" />
           ))}
         </div>
+      ) : rows.length === 0 && (search || filter !== 'all') ? (
+        <NoResults
+          query={search}
+          noun="broadcasts"
+          onClear={() => {
+            setSearchInput('');
+            setFilter('all');
+          }}
+        />
       ) : rows.length === 0 ? (
         <EmptyState
           icon={Megaphone}

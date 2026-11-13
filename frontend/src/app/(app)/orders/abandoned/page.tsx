@@ -19,6 +19,9 @@ import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { apiFetch, ApiError } from '@/lib/api';
 import { fmtDateTime, cn } from '@/lib/utils';
+import { useDebouncedValue } from '@/lib/use-list-query';
+import { SearchInput } from '@/components/ui/search-input';
+import { NoResults } from '@/components/ui/empty-state';
 import {
   listAbandonedCheckouts,
   dismissAbandonedCheckout,
@@ -284,23 +287,31 @@ export default function AbandonedCheckoutsPage() {
       .catch(() => {});
   }, [isAdmin]);
 
+  // Server-side search (applied before the 500-cart cap, so a match is never
+  // cut off); stale responses dropped.
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebouncedValue(searchInput.trim(), 300);
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const my = ++loadSeq.current;
     setLoading(true);
     setError(null);
     try {
       const [list, s] = await Promise.all([
-        listAbandonedCheckouts(),
+        listAbandonedCheckouts({ search }),
         getAbandonedStats().catch(() => null),
       ]);
+      if (my !== loadSeq.current) return;
       setRows(list);
       setStats(s);
       setSelected(new Set());
     } catch (e) {
+      if (my !== loadSeq.current) return;
       setError(e instanceof ApiError ? e.userMessage : 'Failed to load checkouts');
     } finally {
-      setLoading(false);
+      if (my === loadSeq.current) setLoading(false);
     }
-  }, []);
+  }, [search]);
 
   useEffect(() => {
     load();
@@ -460,6 +471,13 @@ export default function AbandonedCheckoutsPage() {
         </div>
       )}
 
+      <SearchInput
+        value={searchInput}
+        onChange={setSearchInput}
+        placeholder="Search name, phone, email or product"
+        loading={loading && !!searchInput}
+        className="w-full sm:w-80"
+      />
       {/* Lanes + sort */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
@@ -564,6 +582,8 @@ export default function AbandonedCheckoutsPage() {
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           {error}
         </div>
+      ) : sortedRows.length === 0 && search ? (
+        <NoResults query={search} noun="carts" onClear={() => setSearchInput('')} />
       ) : sortedRows.length === 0 ? (
         lane === 'new' ? (
           <EmptyState stats={stats} />

@@ -39,7 +39,7 @@ import {
   zonedHalfYearToDate,
   zonedYearToDate,
   zonedPresetRange,
-  zonedStartOfDay,
+  zonedDayRange,
 } from '@/lib/utils';
 import {
   getInventoryProductAnalytics,
@@ -138,9 +138,10 @@ export default function InventoryAnalyticsPage() {
       case 'last7': return zonedPresetRange(7);
       case 'last30': return zonedPresetRange(30);
       case 'custom': {
-        const from = zonedStartOfDay(new Date(customFrom + 'T12:00:00Z'));
-        const toStart = zonedStartOfDay(new Date(customTo + 'T12:00:00Z'));
-        return { from: from.toISOString(), to: new Date(toStart.getTime() + 864e5 - 1).toISOString() };
+        // Inclusive tenant-clock days; a reversed range (to < from) is swapped.
+        const r = zonedDayRange(customFrom, customTo);
+        const fb = zonedPresetRange(30);
+        return { from: r.from ?? fb.from, to: r.to ?? fb.to };
       }
     }
   }, [preset, customFrom, customTo]);
@@ -175,10 +176,15 @@ export default function InventoryAnalyticsPage() {
       );
     }
     const dir = sortDir === 'asc' ? 1 : -1;
+    // Nulls ALWAYS last (either direction). `-Infinity - -Infinity` is NaN,
+    // which made the comparator inconsistent and the order unstable.
     return [...r].sort((a, b) => {
-      const av = (a[sortKey] ?? -Infinity) as number;
-      const bv = (b[sortKey] ?? -Infinity) as number;
-      return (av - bv) * dir;
+      const av = a[sortKey] as number | null | undefined;
+      const bv = b[sortKey] as number | null | undefined;
+      const an = av == null || Number.isNaN(av);
+      const bn = bv == null || Number.isNaN(bv);
+      if (an || bn) return an === bn ? 0 : an ? 1 : -1;
+      return ((av as number) - (bv as number)) * dir;
     });
   }, [rows, search, sortKey, sortDir]);
 
@@ -252,7 +258,8 @@ export default function InventoryAnalyticsPage() {
 
   // Open the catalogue filtered to this product (its variants, ready to edit).
   const openProduct = (r: ProductAnalyticsRow) =>
-    router.push('/inventory?q=' + encodeURIComponent(r.title));
+    // Carry the store so a secondary-store product is searched in ITS store.
+    router.push('/inventory?q=' + encodeURIComponent(r.title) + (storeId ? '&store=' + storeId : ''));
 
   const toggleSort = (k: SortKey) => {
     if (k === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));

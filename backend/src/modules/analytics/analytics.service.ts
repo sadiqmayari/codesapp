@@ -128,7 +128,10 @@ export class AnalyticsService {
       const sign = offMin >= 0 ? '+' : '-';
       const abs = Math.abs(offMin);
       const pad = (x: number) => String(x).padStart(2, '0');
-      return `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+      const out = `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+      // This string is INTERPOLATED into $queryRawUnsafe (CONVERT_TZ). It is
+      // server-computed, but never let anything but a strict +HH:MM through.
+      return /^[+-]\d{2}:\d{2}$/.test(out) ? out : '+00:00';
     } catch {
       return '+00:00';
     }

@@ -17,7 +17,7 @@ import {
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
-import { cn, zonedPresetRange } from '@/lib/utils';
+import { cn, zonedDayRange, zonedPresetRange, zonedYMDString } from '@/lib/utils';
 import AdAttribution from '@/components/analytics/ad-attribution';
 import { Skeleton, SkeletonCards } from '@/components/ui/skeleton';
 
@@ -121,8 +121,9 @@ const PRESETS = [
 ] as const;
 type PresetKey = (typeof PRESETS)[number]['key'] | 'custom';
 
+// Tenant-clock YYYY-MM-DD (the UTC day is "yesterday" before 05:00 PKT).
 function isoDate(d: Date) {
-  return d.toISOString().slice(0, 10);
+  return zonedYMDString(d);
 }
 
 function fmtNumber(n: number) {
@@ -166,7 +167,11 @@ export default function AnalyticsPage() {
   // tenant's calendar day, not the UTC day.
   const range = useMemo(() => {
     if (preset === 'custom') {
-      return { from: `${customFrom}T00:00:00Z`, to: `${customTo}T23:59:59Z` };
+      // Inclusive TENANT-clock days. It used to send UTC midnight
+      // (`T00:00:00Z`), shifting a PKT custom range by 5h vs the presets.
+      const r = zonedDayRange(customFrom, customTo);
+      const fb = zonedPresetRange(7);
+      return { from: r.from ?? fb.from, to: r.to ?? fb.to };
     }
     const days = PRESETS.find((p) => p.key === preset)!.days;
     return zonedPresetRange(days === 1 ? 0 : days);

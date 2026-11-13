@@ -44,9 +44,11 @@ export class BroadcastsService {
     const skip = (page - 1) * limit;
     const where: Prisma.BroadcastWhereInput = { company_id: companyId };
     if (dto.status) where.status = dto.status;
+    const q = dto.search?.trim();
+    if (q) where.name = { contains: q };
     return this.prisma.broadcast.findMany({
       where,
-      orderBy: { created_at: 'desc' },
+      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       skip,
       take: limit,
     });

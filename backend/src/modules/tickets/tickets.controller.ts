@@ -22,13 +22,22 @@ import { CreateTicketEventDto } from './dto/create-ticket-event.dto';
 export class TicketsController {
   constructor(private readonly tickets: TicketsService) {}
 
+  // Server-paginated + searchable; pool-model visibility for agents.
   @Get()
   list(
-    @CurrentUser() user: { companyId: number },
+    @CurrentUser() user: { companyId: number; userId: number; role: string },
     @Query('status') status?: string,
     @Query('type') type?: string,
+    @Query('search') search?: string,
+    @Query('sort') sort?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
-    return this.tickets.list(user.companyId, { status, type });
+    return this.tickets.list(
+      user.companyId,
+      { status, type, search, sort, page, limit },
+      { userId: user.userId, role: user.role },
+    );
   }
 
   @Post()
@@ -48,10 +57,11 @@ export class TicketsController {
   }
 
   @Get(':id')
-  get(
-    @CurrentUser() user: { companyId: number },
+  async get(
+    @CurrentUser() user: { companyId: number; userId: number; role: string },
     @Param('id', ParseIntPipe) id: number,
   ) {
+    await this.tickets.assertVisible(user.companyId, id, { userId: user.userId, role: user.role });
     return this.tickets.get(user.companyId, id);
   }
 

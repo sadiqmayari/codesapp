@@ -348,3 +348,51 @@ export function windowCountdown(
   const m = Math.floor((ms % 3_600_000) / 60_000);
   return { open: true, label: `${h}h ${m}m left` };
 }
+
+// ---------------------------------------------------------------------------
+// Search & filter conventions — ONE tenant-clock day range for every custom
+// date filter (attendance, analytics, leaderboard, orders, broadcasts…).
+// Never build a range from `T00:00:00Z` (UTC) or `new Date('YYYY-MM-DDT00:00')`
+// (browser clock): both drift by the tenant's UTC offset.
+// ---------------------------------------------------------------------------
+
+const YMD_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** Tenant-zone calendar day of an instant as `YYYY-MM-DD`. */
+export function zonedYMDString(date: Date = new Date()): string {
+  const { year, month, day } = zonedYMD(date);
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/** Tenant-zone month of an instant as `YYYY-MM`. */
+export function zonedMonthString(date: Date = new Date()): string {
+  return zonedYMDString(date).slice(0, 7);
+}
+
+/**
+ * Inclusive tenant-calendar range for two `YYYY-MM-DD` days:
+ * `from` = start of `fromYMD`, `to` = the last millisecond of `toYMD`, both in
+ * the tenant's timezone, returned as UTC ISO strings. Either bound may be
+ * omitted. Swaps the two when from > to (callers should also block that in UI).
+ */
+export function zonedDayRange(
+  fromYMD?: string | null,
+  toYMD?: string | null,
+): { from?: string; to?: string } {
+  let f = fromYMD && YMD_RE.test(fromYMD) ? fromYMD : undefined;
+  let t = toYMD && YMD_RE.test(toYMD) ? toYMD : undefined;
+  if (f && t && f > t) [f, t] = [t, f];
+  const out: { from?: string; to?: string } = {};
+  if (f) {
+    const [, y, m, d] = YMD_RE.exec(f)!;
+    out.from = zonedWallStart(+y, +m, +d).toISOString();
+  }
+  if (t) {
+    const [, y, m, d] = YMD_RE.exec(t)!;
+    // Next tenant-day start minus 1ms. Date.UTC normalises day overflow.
+    const next = new Date(Date.UTC(+y, +m - 1, +d + 1));
+    const ns = zonedWallStart(next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate());
+    out.to = new Date(ns.getTime() - 1).toISOString();
+  }
+  return out;
+}

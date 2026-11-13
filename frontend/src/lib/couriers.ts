@@ -528,6 +528,8 @@ export function getQueueIds(
   params: {
     search?: string;
     status?: QueueStatusFilter;
+    /** To-book sub-tab — Select-all must honour it. */
+    confirmation?: 'confirmed' | 'unconfirmed';
     courier?: CourierType;
     from?: string;
     to?: string;
@@ -537,6 +539,7 @@ export function getQueueIds(
   const q = new URLSearchParams();
   if (params.search) q.set('search', params.search);
   if (params.status && params.status !== 'unfulfilled') q.set('status', params.status);
+  if (params.confirmation) q.set('confirmation', params.confirmation);
   if (params.courier) q.set('courier', params.courier);
   if (params.from) q.set('from', params.from);
   if (params.to) q.set('to', params.to);
@@ -612,6 +615,8 @@ export type ShortfallResolution = 'disputed' | 'recovered' | 'written_off';
 export interface ShortfallsResult {
   items: CourierShortfall[];
   truncated: boolean;
+  /** Cleared lines hidden by the default view (absent on older backends). */
+  resolvedHidden?: number;
   couriers: Array<{ courier: CourierType; count: number; total: number }>;
   totals: { count: number; total: number };
   currency: string | null;
@@ -739,8 +744,13 @@ export function listPendingPayments(params: {
   page?: number;
   pageSize?: number;
   sort?: 'value' | 'oldest';
-} = {}) {
+  /** Order # / tracking / phone (any format) / city / customer. */
+  search?: string;
+  store?: number;
+} = {}, signal?: AbortSignal) {
   const q = new URLSearchParams();
+  if (params.search?.trim()) q.set('search', params.search.trim());
+  if (params.store) q.set('store', String(params.store));
   if (params.courierType) q.set('courierType', params.courierType);
   if (params.bucket) q.set('bucket', params.bucket);
   if (params.page) q.set('page', String(params.page));
@@ -752,7 +762,7 @@ export function listPendingPayments(params: {
     total: number;
     page: number;
     pageSize: number;
-  }>(`/shipments/pending-payments/list${qs ? `?${qs}` : ''}`);
+  }>(`/shipments/pending-payments/list${qs ? `?${qs}` : ''}`, { signal });
 }
 
 /** Mark courier COD as remitted (by shipment ids, or a whole courier's batch). */
@@ -1065,7 +1075,9 @@ export interface EditableOrder {
 
 /** Fetch an order's current line items + shipping for the in-app editor. */
 export function getOrderEditable(orderGid: string) {
-  return apiFetch<EditableOrder>('/shopify/orders/editable', { params: { orderGid } });
+  return apiFetch<EditableOrder & { storeId?: number | null }>('/shopify/orders/editable', {
+    params: { orderGid },
+  });
 }
 
 /** Item-edit changes. `discountAmount` = ABSOLUTE target discount for a line

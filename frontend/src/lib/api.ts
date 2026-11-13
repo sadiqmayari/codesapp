@@ -1,4 +1,4 @@
-import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
+import axios, { AxiosError, InternalAxiosRequestConfig, isCancel } from 'axios';
 
 // Single origin: the backend is mounted under /api on the SAME host that
 // serves this frontend. Resolve at runtime from window.location so the
@@ -145,6 +145,8 @@ api.interceptors.response.use(
 export class ApiError extends Error {
   status: number;
   userMessage: string;
+  /** True when the request was cancelled via `signal` (not a real failure). */
+  aborted = false;
   constructor(status: number, message: string, userMessage: string) {
     super(message);
     this.name = 'ApiError';
@@ -172,6 +174,12 @@ export interface ApiFetchOptions {
    * an infinite spinner. Do NOT set on uploads/imports (they can run long).
    */
   timeout?: number;
+  /**
+   * Abort a superseded request (search-as-you-type, fast tab switches). An
+   * aborted call rejects with an ApiError whose `aborted` is true; callers
+   * should ignore it (see `isAbortError`). Used by `useListQuery`.
+   */
+  signal?: AbortSignal;
 }
 
 /** Returns the full envelope so callers can read `meta` (pagination). */
@@ -186,6 +194,7 @@ export async function apiFetchEnvelope<T>(
       data: opts.body,
       params: opts.params,
       timeout: opts.timeout,
+      signal: opts.signal,
     });
     const env = res.data;
     if (env && typeof env === 'object' && 'success' in env && !env.success) {
@@ -194,6 +203,11 @@ export async function apiFetchEnvelope<T>(
     return env;
   } catch (err) {
     if (err instanceof ApiError) throw err;
+    if (isCancel(err)) {
+      const e = new ApiError(0, 'aborted', '');
+      e.aborted = true;
+      throw e;
+    }
     const ax = err as { response?: { status?: number; data?: { message?: string } } };
     const status = ax.response?.status ?? 0;
     const backendMsg = ax.response?.data?.message ?? 'Request failed';
@@ -276,4 +290,9 @@ export async function postMultipart<T>(
     }
     throw new ApiError(status, backendMsg, userMessage);
   }
+}
+
+/** True for a request cancelled via `ApiFetchOptions.signal` — never toast it. */
+export function isAbortError(e: unknown): boolean {
+  return e instanceof ApiError && e.aborted;
 }

@@ -6,7 +6,8 @@ import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { ApiError } from '@/lib/api';
 import { Modal } from '@/components/ui/modal';
-import { periodRange, type PeriodKey } from '@/lib/date-period';
+import { periodDays, type PeriodKey } from '@/lib/date-period';
+import { zonedMonthString } from '@/lib/utils';
 import {
   type Allowance,
   type AttendanceCell,
@@ -83,7 +84,8 @@ function dayLabel(dateStr: string): string {
   return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
 }
 function monthNow(): string {
-  return new Date().toISOString().slice(0, 7);
+  // Tenant clock: between 00:00 and 05:00 PKT the UTC month can still be last month.
+  return zonedMonthString();
 }
 
 export default function AttendancePanel() {
@@ -148,7 +150,7 @@ function CheckinTab({ isOwner }: { isOwner: boolean }) {
 
   const loadSelf = useCallback(async () => {
     try {
-      const [t, h] = await Promise.all([getMyToday(), getMyHistory(periodRange('30d'))]);
+      const [t, h] = await Promise.all([getMyToday(), getMyHistory(periodDays('30d'))]);
       setToday(t);
       setHistory(h);
     } catch (e) {
@@ -289,10 +291,11 @@ function CheckinTab({ isOwner }: { isOwner: boolean }) {
 function GridTab() {
   const toast = useToast();
   const [period, setPeriod] = useState<PeriodKey>('7d');
+  const [memberQ, setMemberQ] = useState('');
   const [report, setReport] = useState<AttendanceReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [edit, setEdit] = useState<{ userId: number; name: string; date: string; cell: AttendanceCell | null } | null>(null);
-  const range = useMemo(() => periodRange(period), [period]);
+  const range = useMemo(() => periodDays(period), [period]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -319,6 +322,13 @@ function GridTab() {
         >
           {PRESETS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
         </select>
+        <input
+          value={memberQ}
+          onChange={(e) => setMemberQ(e.target.value)}
+          placeholder="Search member"
+          aria-label="Search member"
+          className="flex-1 min-w-[140px] max-w-xs border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs"
+        />
         <button
           onClick={() => downloadAttendanceCsv(range).catch(() => toast.error('Export failed'))}
           className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
@@ -341,7 +351,9 @@ function GridTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {report.members.map((m) => (
+              {report.members
+                .filter((m) => !memberQ.trim() || `${m.name} ${m.role}`.toLowerCase().includes(memberQ.trim().toLowerCase()))
+                .map((m) => (
                 <tr key={m.userId}>
                   <td className="py-2.5 px-3 sticky left-0 bg-white">
                     <div className="font-medium text-gray-800">{m.name}</div>

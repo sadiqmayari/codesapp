@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Sparkles,
   Plus,
@@ -24,6 +24,9 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/components/toast';
 import { Modal, ConfirmDialog } from '@/components/ui/modal';
+import { SearchInput } from '@/components/ui/search-input';
+import { FilterSelect } from '@/components/ui/filter-bar';
+import { NoResults } from '@/components/ui/empty-state';
 import { ApiError } from '@/lib/api';
 import { cn, fmtDate, fmtDateTime } from '@/lib/utils';
 import {
@@ -129,8 +132,35 @@ function Submissions({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [sendFor, setSendFor] = useState<PrSubmission | null>(null);
   const [trackOrder, setTrackOrder] = useState<ContactOrder | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  // Search (name / phone in any format / email / handles / order #) + a
+  // campaign filter. The submissions list is loaded whole (not paginated), so
+  // filtering it client-side is complete.
+  const [query, setQuery] = useState('');
+  const [campaignId, setCampaignId] = useState('');
+  const loadSeq = useRef(0);
+  const campaignOptions = useMemo(() => {
+    const m = new Map<number, string>();
+    rows.forEach((r) => r.campaign && m.set(r.campaign.id, r.campaign.name));
+    return Array.from(m.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+  }, [rows]);
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase().replace(/^@+/, '');
+    const qd = query.replace(/[^0-9]/g, '');
+    const tail = qd.length >= 9 ? qd.slice(-10) : '';
+    return rows.filter((r) => {
+      if (campaignId && String(r.campaign_id) !== campaignId) return false;
+      if (!q) return true;
+      const hay = [r.influencer_name, r.email, r.instagram, r.tiktok, r.order_name, r.phone]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      if (hay.includes(q)) return true;
+      return !!tail && (r.phone ?? '').replace(/[^0-9]/g, '').endsWith(tail);
+    });
+  }, [rows, query, campaignId]);
 
   const load = useCallback(async () => {
+    const my = ++loadSeq.current;
     setLoading(true);
     try {
       // Pull submissions + (for the sent cards' live status strip) the shipped
@@ -140,6 +170,7 @@ function Submissions({ toast }: { toast: ReturnType<typeof useToast> }) {
         listSubmissions({ status }),
         listPrOrders().catch(() => [] as PrOrderRow[]),
       ]);
+      if (my !== loadSeq.current) return; // superseded by a newer status tab
       setRows(subs);
       setOrdersBySub(
         Object.fromEntries(orders.map((o) => [o.submissionId, o])),
@@ -194,11 +225,40 @@ function Submissions({ toast }: { toast: ReturnType<typeof useToast> }) {
           <UserPlus size={16} /> Add influencer
         </button>
       </div>
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <SearchInput
+          value={query}
+          onChange={setQuery}
+          placeholder="Search name, phone, @handle, email or order #"
+          className="w-full sm:w-80"
+        />
+        {campaignOptions.length > 1 && (
+          <FilterSelect
+            label="Campaign"
+            value={campaignId}
+            options={[
+              { value: '', label: 'All' },
+              ...campaignOptions.map(([id, name]) => ({ value: String(id), label: name })),
+            ]}
+            onChange={setCampaignId}
+          />
+        )}
+      </div>
 
       {loading ? (
         <div className="flex justify-center py-16 text-gray-400">
           <Loader2 className="animate-spin" />
         </div>
+      ) : shown.length === 0 && (query.trim() || campaignId || status !== 'all') ? (
+        <NoResults
+          query={query}
+          noun="submissions"
+          onClear={() => {
+            setQuery('');
+            setCampaignId('');
+            setStatus('all');
+          }}
+        />
       ) : rows.length === 0 ? (
         <div className="text-center py-16 text-gray-500">
           <Users className="mx-auto mb-3 text-gray-300" size={40} />
@@ -206,7 +266,7 @@ function Submissions({ toast }: { toast: ReturnType<typeof useToast> }) {
         </div>
       ) : (
         <div className="space-y-3">
-          {rows.map((s) => (
+          {shown.map((s) => (
             <SubmissionCard
               key={s.id}
               s={s}
@@ -641,7 +701,9 @@ function PrOrders({ toast }: { toast: ReturnType<typeof useToast> }) {
     return rows.filter((r) => {
       const co = r as ContactOrder;
       if (filter === 'delivered' && !orderIsDelivered(co)) return false;
-      if (filter === 'issues' && !orderIsFailed(co)) return false;
+      // Same precedence as the tiles (delivered wins), so the "Returned /
+      // issues" tile count always equals the rows this filter shows.
+      if (filter === 'issues' && (orderIsDelivered(co) || !orderIsFailed(co))) return false;
       if (
         filter === 'in_transit' &&
         !(orderIsActive(co) && !orderIsDelivered(co) && !orderIsFailed(co))

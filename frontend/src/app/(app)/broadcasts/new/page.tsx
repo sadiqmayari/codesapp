@@ -24,6 +24,7 @@ import {
   type FieldKind,
 } from '@/lib/broadcast-utils';
 import { cn } from '@/lib/utils';
+import { SearchInput } from '@/components/ui/search-input';
 import type {
   AudiencePreview,
   Broadcast,
@@ -73,6 +74,8 @@ export default function BroadcastWizardPage() {
 
   const [name, setName] = useState('');
   const [templates, setTemplates] = useState<Template[]>([]);
+  // Template picker filter: approved first, then the rest (they may not send).
+  const [tplQuery, setTplQuery] = useState('');
   const [templateId, setTemplateId] = useState<number | ''>('');
   const [audience, setAudience] = useState<AudienceValue>({ mode: 'all' });
   const [vars, setVars] = useState<Record<string, string>>({});
@@ -397,6 +400,15 @@ export default function BroadcastWizardPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Template
                 </label>
+                {templates.length > 8 && (
+                  <SearchInput
+                    value={tplQuery}
+                    onChange={setTplQuery}
+                    placeholder="Filter templates"
+                    size="sm"
+                    className="mb-2"
+                  />
+                )}
                 <select
                   value={templateId}
                   onChange={(e) =>
@@ -405,11 +417,36 @@ export default function BroadcastWizardPage() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
                 >
                   <option value="">Select a template…</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} ({t.status})
-                    </option>
-                  ))}
+                  {(() => {
+                    const q = tplQuery.trim().toLowerCase();
+                    // Keep the CURRENT selection listed even when filtered out.
+                    const match = (t: Template) =>
+                      !q || t.name.toLowerCase().includes(q) || t.id === templateId;
+                    const approved = templates.filter((t) => t.status === 'approved' && match(t));
+                    const other = templates.filter((t) => t.status !== 'approved' && match(t));
+                    return (
+                      <>
+                        {approved.length > 0 && (
+                          <optgroup label="Approved">
+                            {approved.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.name}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {other.length > 0 && (
+                          <optgroup label="Not approved (may not send)">
+                            {other.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.name} ({t.status})
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </>
+                    );
+                  })()}
                 </select>
                 <p className="text-xs text-gray-400 mt-1">
                   Only approved templates will actually send (Meta requirement).

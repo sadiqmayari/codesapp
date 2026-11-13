@@ -285,8 +285,11 @@ export default function CreateOrderModal({
   const [selectedRate, setSelectedRate] = useState<ShippingRate | null>(null);
   const ratesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Stale-response guard: a slower earlier query must not overwrite newer results.
+  const productSearchSeq = useRef(0);
   const runSearch = useCallback(
     async (q: string) => {
+      const my = ++productSearchSeq.current;
       setSearching(true);
       setSearchError(null);
       try {
@@ -298,6 +301,10 @@ export default function CreateOrderModal({
           apiFetch<ProductVariant[]>('/shopify/products', {
             params: {
               query: q,
+              // A human agent may add a draft/unlisted product (the backend
+              // documents this modal as an all=1 caller; the AI-draft path
+              // below stays strict listed-only).
+              all: '1',
               ...(storeId ? { storeId: String(storeId) } : {}),
             },
           }),
@@ -319,6 +326,7 @@ export default function CreateOrderModal({
               }).catch(() => [])
             : Promise.resolve([]),
         ]);
+        if (my !== productSearchSeq.current) return;
         const shopify = Array.isArray(res) ? res : [];
         const seen = new Set(shopify.map((v) => v.variantId));
         const invMapped: ProductVariant[] = (Array.isArray(invHits) ? invHits : [])
@@ -336,12 +344,13 @@ export default function CreateOrderModal({
           }));
         setResults([...invMapped, ...shopify]);
       } catch (e) {
+        if (my !== productSearchSeq.current) return;
         setResults([]);
         setSearchError(
           e instanceof ApiError ? e.userMessage : 'Product search failed',
         );
       } finally {
-        setSearching(false);
+        if (my === productSearchSeq.current) setSearching(false);
       }
     },
     [storeId],

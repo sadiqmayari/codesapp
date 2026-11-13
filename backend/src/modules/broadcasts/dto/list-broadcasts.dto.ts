@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 export enum BroadcastStatusFilter {
   draft = 'draft',
@@ -14,6 +14,12 @@ export class ListBroadcastsDto {
   @IsOptional()
   @IsEnum(BroadcastStatusFilter)
   status?: BroadcastStatusFilter;
+
+  // Name search (server-side — the list is paginated).
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
 
   @IsOptional()
   @IsInt()

@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
+import { useDebouncedValue } from '@/lib/use-list-query';
 import { ConfirmDialog } from '@/components/ui/modal';
 import { fmtDate } from '@/lib/utils';
 import type { ActivationStatus, ClientCompany, Paged } from '@/lib/crm-types';
@@ -42,16 +43,35 @@ export default function SuperAdminClientsPage() {
     if (s === 'pending' || s === 'active' || s === 'suspended') setFilter(s);
   }, []);
 
+  // Server-side status + search (search & filter conventions). It used to
+  // filter the current 20 rows client-side, so "Pending 3" meant "3 on this
+  // page". Debounced, stale responses dropped, page reset on change.
+  const debouncedSearch = useDebouncedValue(search.trim(), 300);
+  const [statusCounts, setStatusCounts] = useState<Record<string, number> | null>(null);
+  const seqRef = useRef(0);
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, filter]);
   const load = useCallback(async () => {
+    const my = ++seqRef.current;
     setLoading(true);
     setError('');
     try {
-      const res = await apiFetch<Paged<ClientCompany>>('/super-admin/clients', {
-        params: { page, limit: LIMIT },
+      const res = await apiFetch<
+        Paged<ClientCompany> & { meta: { statusCounts?: Record<string, number> } }
+      >('/super-admin/clients', {
+        params: {
+          page,
+          limit: LIMIT,
+          q: debouncedSearch || undefined,
+          status: filter === 'all' ? undefined : filter,
+        },
         noOnboardingRedirect: true,
       });
+      if (my !== seqRef.current) return;
       setRows(res.items);
       setTotal(res.meta.total);
+      setStatusCounts(res.meta.statusCounts ?? null);
     } catch (e) {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
         router.replace('/super-admin/login');
@@ -62,20 +82,18 @@ export default function SuperAdminClientsPage() {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
+  }, [page, debouncedSearch, filter]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const visible = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (filter !== 'all' && r.activation_status !== filter) return false;
-      if (q && !r.company_name.toLowerCase().includes(q)) return false;
-      return true;
-    });
-  }, [rows, filter, search]);
+  // Rows are already filtered server-side. After an optimistic activate /
+  // suspend, hide a row that no longer matches the active status tab.
+  const visible = useMemo(
+    () => rows.filter((r) => filter === 'all' || r.activation_status === filter),
+    [rows, filter],
+  );
 
   const runAction = async () => {
     if (!confirm) return;
@@ -96,13 +114,16 @@ export default function SuperAdminClientsPage() {
   };
 
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
-  const counts = useMemo(() => {
-    const c = { all: rows.length, pending: 0, active: 0, suspended: 0 };
-    rows.forEach((r) => {
-      c[r.activation_status as keyof typeof c]++;
-    });
-    return c;
-  }, [rows]);
+  // True global totals (server, search applied) — not "on this page".
+  const counts = useMemo(
+    () => ({
+      all: statusCounts?.all ?? total,
+      pending: statusCounts?.pending ?? 0,
+      active: statusCounts?.active ?? 0,
+      suspended: statusCounts?.suspended ?? 0,
+    }),
+    [statusCounts, total],
+  );
 
   return (
     <div className="sa-content">
@@ -117,7 +138,7 @@ export default function SuperAdminClientsPage() {
               style={{ paddingLeft: 34 }}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search company on this page…"
+              placeholder="Search company, #id or owner email…"
             />
           </div>
         }
@@ -156,7 +177,7 @@ export default function SuperAdminClientsPage() {
               {loading ? (
                 <tr><td colSpan={6}><SaSpinner /></td></tr>
               ) : visible.length === 0 ? (
-                <tr><td colSpan={6} className="sa-faint" style={{ textAlign: 'center', padding: 40 }}>No clients match.</td></tr>
+                <tr><td colSpan={6} className="sa-faint" style={{ textAlign: 'center', padding: 40 }}>{search.trim() ? `No clients match “${search.trim()}”.` : 'No clients match.'}</td></tr>
               ) : (
                 visible.map((c) => (
                   <tr key={c.id}>

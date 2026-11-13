@@ -253,6 +253,10 @@ export default function ContactsPage() {
   const limit = q?.limit ?? 25;
   const page = q?.page ?? 1;
   const pages = Math.max(1, Math.ceil(total / limit));
+  // Deletes / merges can leave us past the last page (empty "no match" state).
+  useEffect(() => {
+    if (!loading && total > 0 && page > pages) update({ page: pages }, true);
+  }, [loading, total, page, pages, update]);
   const selectedIds = useMemo(() => Array.from(selected).map(Number), [selected]);
   const pageAllSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
   const selectionCount = allMatching ? total : selectedIds.length;

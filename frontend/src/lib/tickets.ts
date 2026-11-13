@@ -85,15 +85,36 @@ export function codeLabel(
   return list.find((c) => c.value === code)?.label ?? '';
 }
 
-export function listTickets(params?: {
-  status?: string;
-  type?: string;
-}): Promise<TicketListItem[]> {
-  const q = new URLSearchParams();
-  if (params?.status) q.set('status', params.status);
-  if (params?.type) q.set('type', params.type);
-  const qs = q.toString();
-  return apiFetch(`/tickets${qs ? `?${qs}` : ''}`);
+export interface TicketPage {
+  rows: TicketListItem[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+/** Server-paginated + searchable ticket list (pool-model visibility for agents). */
+export function listTickets(
+  params: {
+    status?: string;
+    type?: string;
+    search?: string;
+    sort?: 'overdue' | 'recent';
+    page?: number;
+    limit?: number;
+  } = {},
+  signal?: AbortSignal,
+): Promise<TicketPage> {
+  return apiFetch('/tickets', {
+    params: {
+      status: params.status || undefined,
+      type: params.type || undefined,
+      search: params.search?.trim() || undefined,
+      sort: params.sort,
+      page: params.page,
+      limit: params.limit,
+    },
+    signal,
+  });
 }
 
 export function getTicket(id: number): Promise<TicketDetail> {

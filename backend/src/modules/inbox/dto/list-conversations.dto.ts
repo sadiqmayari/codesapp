@@ -1,10 +1,11 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsEnum,
   IsInt,
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 
@@ -28,16 +29,19 @@ export class ListConversationsDto {
 
   // Owner/admin assignee filter: show ONLY unassigned chats. Ignored for agents
   // (their view is always scoped to unassigned + their own).
+  // NOT @Type(() => Boolean): that turns the string "false" into true.
   @IsOptional()
-  @Type(() => Boolean)
+  @Transform(({ value }) => value === true || value === 'true' || value === '1')
   unassigned?: boolean;
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   search?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   label?: string;
 
   @IsOptional()

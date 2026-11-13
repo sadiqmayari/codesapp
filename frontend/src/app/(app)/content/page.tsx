@@ -24,6 +24,8 @@ import {
 import { ContentMediaViewer } from '@/components/content/media-viewer';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
+import { SearchInput } from '@/components/ui/search-input';
+import { NoResults } from '@/components/ui/empty-state';
 import { Modal } from '@/components/ui/modal';
 import { ApiError } from '@/lib/api';
 import { fmtDate } from '@/lib/utils';
@@ -83,6 +85,18 @@ export default function ContentPage() {
 
   const [filter, setFilter] = useState('all');
   const [items, setItems] = useState<ContentItem[]>([]);
+  // Title / caption / platform search. The board loads the whole (filtered)
+  // list, so searching it client-side is complete, not page-only.
+  const [query, setQuery] = useState('');
+  const shownItems = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((it) =>
+      [it.title, it.caption ?? '', it.platform ?? ''].join(' ').toLowerCase().includes(q),
+    );
+  }, [items, query]);
+  // Stale-response guard for fast status-chip switches.
+  const loadSeq = useRef(0);
   const [collections, setCollections] = useState<ContentCollection[]>([]);
   const [stats, setStats] = useState<ContentStats | null>(null);
   const [drive, setDrive] = useState<DriveStatus | null>(null);
@@ -113,6 +127,7 @@ export default function ContentPage() {
   };
 
   const load = useCallback(async () => {
+    const my = ++loadSeq.current;
     setLoading(true);
     try {
       const [list, st, cols] = await Promise.all([
@@ -120,6 +135,7 @@ export default function ContentPage() {
         getContentStats(),
         listCollections(),
       ]);
+      if (my !== loadSeq.current) return;
       setItems(list);
       setStats(st);
       setCollections(cols);
@@ -246,6 +262,13 @@ export default function ContentPage() {
         </div>
       )}
 
+      <SearchInput
+        value={query}
+        onChange={setQuery}
+        placeholder="Search title, caption or platform"
+        slashShortcut
+        className="mb-3 w-full sm:w-80"
+      />
       {/* Filters + view toggle */}
       <div className="flex items-center gap-2 mb-4">
       <div className="flex gap-1.5 overflow-x-auto pb-1 flex-1">
@@ -287,8 +310,18 @@ export default function ContentPage() {
           <Loader2 className="animate-spin" />
         </div>
       ) : (
+        (query.trim() || filter !== 'all') && shownItems.length === 0 ? (
+          <NoResults
+            query={query}
+            noun="content items"
+            onClear={() => {
+              setQuery('');
+              setFilter('all');
+            }}
+          />
+        ) : (
         <Board
-          items={items}
+          items={shownItems}
           collections={collections}
           assignees={assignees}
           view={view}
@@ -296,6 +329,7 @@ export default function ContentPage() {
           onNewCampaign={() => setCampaignModal('campaign')}
           onPlanInto={openPlan}
         />
+        )
       )}
 
       {uploadOpen && (

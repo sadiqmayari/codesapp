@@ -1,9 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { Search, Loader2, Instagram, Users } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Loader2, Instagram, Users } from 'lucide-react';
 import type { useToast } from '@/components/toast';
 import { Modal } from '@/components/ui/modal';
+import { SearchInput } from '@/components/ui/search-input';
+import { NoResults } from '@/components/ui/empty-state';
 import { VideoManager } from '@/components/pr/video-manager';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime } from '@/lib/utils';
@@ -33,14 +35,19 @@ export function InfluencersTab({
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState<number | null>(null);
 
+  // Stale-response guard: the debounce only delayed the START of a fetch, an
+  // earlier slow search could still land after a newer one.
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const my = ++loadSeq.current;
     setLoading(true);
     try {
-      setRows(await listInfluencers({ status, q: q.trim() || undefined }));
+      const res = await listInfluencers({ status, q: q.trim() || undefined });
+      if (my === loadSeq.current) setRows(res);
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load influencers');
+      if (my === loadSeq.current) toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load influencers');
     } finally {
-      setLoading(false);
+      if (my === loadSeq.current) setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, q]);
@@ -53,15 +60,13 @@ export function InfluencersTab({
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <div className="relative flex-1 min-w-[180px]">
-          <Search className="absolute left-3 top-2.5 text-gray-400" size={15} />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search name, handle, phone, email…"
-            className="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm"
-          />
-        </div>
+        <SearchInput
+          value={q}
+          onChange={setQ}
+          placeholder="Search name, @handle, phone, email…"
+          loading={loading && !!q}
+          className="flex-1 min-w-[180px]"
+        />
         {STATUS_FILTERS.map((f) => (
           <button
             key={f}
@@ -81,6 +86,15 @@ export function InfluencersTab({
         <div className="flex justify-center py-16 text-gray-400">
           <Loader2 className="animate-spin" />
         </div>
+      ) : rows.length === 0 && (q.trim() || status !== 'all') ? (
+        <NoResults
+          query={q}
+          noun="influencers"
+          onClear={() => {
+            setQ('');
+            setStatus('all');
+          }}
+        />
       ) : rows.length === 0 ? (
         <div className="text-center py-16 text-gray-500">
           <Users className="mx-auto mb-3 text-gray-300" size={40} />

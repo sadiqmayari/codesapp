@@ -57,6 +57,9 @@ import {
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
+import { SearchInput } from '@/components/ui/search-input';
+import { FilterSelect } from '@/components/ui/filter-bar';
+import { NoResults } from '@/components/ui/empty-state';
 import { cn, mediaUrl, fmtDateTime } from '@/lib/utils';
 import { storeColor } from '@/lib/store-colors';
 import {
@@ -967,6 +970,14 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
   const { user } = useAuth();
   const [rows, setRows] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
+  // Name / email search + role filter over the whole team list.
+  const [memberQuery, setMemberQuery] = useState('');
+  const [memberRole, setMemberRole] = useState('');
+  const shownMembers = rows.filter((m) => {
+    if (memberRole && m.role !== memberRole) return false;
+    const q = memberQuery.trim().toLowerCase();
+    return !q || `${m.name} ${m.email}`.toLowerCase().includes(q);
+  });
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({
     name: '',
@@ -1133,7 +1144,26 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
 
   return (
     <div>
-      <div className="flex justify-end mb-3">
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <SearchInput
+          value={memberQuery}
+          onChange={setMemberQuery}
+          placeholder="Search name or email"
+          className="w-full sm:w-64"
+        />
+        <FilterSelect
+          label="Role"
+          value={memberRole}
+          options={[
+            { value: '', label: 'Any' },
+            ...Array.from(new Set(rows.map((m) => m.role))).map((r) => ({
+              value: r,
+              label: ROLE_LABELS[r as TeamRole] ?? r,
+            })),
+          ]}
+          onChange={setMemberRole}
+        />
+        <span className="flex-1" />
         <button
           onClick={() => setShowCreate(true)}
           className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg"
@@ -1161,8 +1191,22 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
                     <div className="inline-block w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
                   </td>
                 </tr>
+              ) : shownMembers.length === 0 ? (
+                <tr>
+                  <td colSpan={5}>
+                    <NoResults
+                      compact
+                      query={memberQuery}
+                      noun="members"
+                      onClear={() => {
+                        setMemberQuery('');
+                        setMemberRole('');
+                      }}
+                    />
+                  </td>
+                </tr>
               ) : (
-                rows.map((m) => {
+                shownMembers.map((m) => {
                   const isSelf = m.id === user?.id;
                   const isOwner = m.role === 'owner';
                   const locked = isSelf || isOwner;
@@ -4845,6 +4889,11 @@ function AiTab({ canManage }: { canManage: boolean }) {
 function AiKnowledgeEditor() {
   const toast = useToast();
   const [rows, setRows] = useState<AiKnowledgeEntry[]>([]);
+  const [kbQuery, setKbQuery] = useState('');
+  const shownKb = rows.filter((e) => {
+    const q = kbQuery.trim().toLowerCase();
+    return !q || JSON.stringify(e).toLowerCase().includes(q);
+  });
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<AiKnowledgeEntry | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -5042,13 +5091,24 @@ function AiKnowledgeEditor() {
         </div>
       )}
 
+      {rows.length > 5 && (
+        <SearchInput
+          value={kbQuery}
+          onChange={setKbQuery}
+          placeholder="Search knowledge entries"
+          size="sm"
+          className="mb-2 w-full sm:w-72"
+        />
+      )}
       {loading ? (
         <p className="text-sm text-gray-500">Loading…</p>
       ) : rows.length === 0 ? (
         <p className="text-sm text-gray-500">No entries yet.</p>
+      ) : shownKb.length === 0 ? (
+        <NoResults compact query={kbQuery} noun="entries" onClear={() => setKbQuery('')} />
       ) : (
         <ul className="divide-y divide-gray-100">
-          {rows.map((e) => (
+          {shownKb.map((e) => (
             <li key={e.id} className="py-2 flex items-center gap-3">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-gray-800 truncate">

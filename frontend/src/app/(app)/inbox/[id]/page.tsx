@@ -1533,7 +1533,8 @@ export default function ThreadPage() {
     const q = searchTerm.trim().toLowerCase();
     if (!q) return [] as number[];
     return messages
-      .filter((m) => (m.content || '').toLowerCase().includes(q))
+      // Voice-note transcripts are searchable too.
+      .filter((m) => ((m.content || '') + ' ' + (m.transcription || '')).toLowerCase().includes(q))
       .map((m) => m.id);
   }, [searchTerm, messages]);
 
@@ -1848,7 +1849,10 @@ export default function ThreadPage() {
       const typing =
         !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
       if (document.querySelector('[aria-modal="true"],[data-order-drawer]')) return;
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && !typing) {
+      // Ctrl+F also works from the COMPOSER (usually focused) — it used to fall
+      // through to the browser's own find. Other inputs keep native find.
+      const inComposer = !!t && t === composerRef.current;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && (!typing || inComposer)) {
         e.preventDefault();
         setSearchOpen(true);
         return;
@@ -1883,15 +1887,26 @@ export default function ThreadPage() {
   const slashActive =
     /^\/\S*$/.test(text) && !staged && !voiceActive;
   const slashQuery = slashActive ? text.slice(1).toLowerCase() : '';
-  const slashMatches = slashActive
+  // Rank: title starts-with > title contains > body contains (was DB order, so
+  // a body hit could push the reply the agent named off the 6-item list).
+  const slashRanked = slashActive
     ? cannedReplies
-        .filter(
-          (r) =>
-            r.title.toLowerCase().includes(slashQuery) ||
-            r.body.toLowerCase().includes(slashQuery),
-        )
-        .slice(0, 6)
+        .map((r) => {
+          const t = r.title.toLowerCase();
+          const rank = t.startsWith(slashQuery)
+            ? 0
+            : t.includes(slashQuery)
+              ? 1
+              : r.body.toLowerCase().includes(slashQuery)
+                ? 2
+                : 3;
+          return { r, rank };
+        })
+        .filter((x) => x.rank < 3)
+        .sort((a, b) => a.rank - b.rank)
     : [];
+  const slashMatches = slashRanked.slice(0, 6).map((x) => x.r);
+  const slashMore = Math.max(0, slashRanked.length - slashMatches.length);
   const showSlash = slashActive && slashMatches.length > 0 && !slashHidden;
   const selectSlash = (r: CannedReply) => {
     // The `/token` itself is never worth undoing — only a real draft is.
@@ -2246,6 +2261,11 @@ export default function ThreadPage() {
                     </span>
                   </button>
                 ))}
+                {slashMore > 0 && (
+                  <div className="px-3 py-1.5 text-xs text-gray-400 border-t border-gray-100">
+                    +{slashMore} more — keep typing to narrow
+                  </div>
+                )}
               </div>
             )}
             {(draftRestored || undo) && (

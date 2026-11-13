@@ -72,6 +72,8 @@ import SavedViews from '@/components/orders/saved-views';
 import { EditAddressModal } from '@/components/orders/edit-address-modal';
 import { logOrderContact } from '@/lib/agents-report';
 import { ApiError, apiFetch } from '@/lib/api';
+import { useDebouncedValue } from '@/lib/use-list-query';
+import { SearchInput } from '@/components/ui/search-input';
 import { StorePill } from '@/components/store-pill';
 import { fmtDate, fmtDateTime, fmtTime, cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
@@ -1309,16 +1311,21 @@ function ShortfallsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [resolveFor, setResolveFor] = useState<CourierShortfall | null>(null);
   const [resolveBusy, setResolveBusy] = useState(false);
 
+  // Stale-response guard: quick "Show cleared" toggles used to race.
+  const sfSeq = useRef(0);
   const load = useCallback(
     async (includeResolved = false) => {
+      const my = ++sfSeq.current;
       setLoading(true);
       try {
-        setData(await getCourierShortfalls(includeResolved));
+        const d = await getCourierShortfalls(includeResolved);
+        if (my === sfSeq.current) setData(d);
       } catch (e) {
+        if (my !== sfSeq.current) return;
         toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load shortfalls');
         setData(null);
       } finally {
-        setLoading(false);
+        if (my === sfSeq.current) setLoading(false);
       }
     },
     [toast],
@@ -1400,7 +1407,9 @@ function ShortfallsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
     URL.revokeObjectURL(url);
   };
 
-  if (loading) {
+  // Full-panel spinner only on the FIRST load; a "Show cleared" toggle keeps
+  // the panel mounted (it used to blank the whole panel on every toggle).
+  if (loading && !data) {
     return (
       <div className="flex items-center justify-center py-16 text-gray-400">
         <Loader2 className="animate-spin" size={22} />
@@ -1409,6 +1418,7 @@ function ShortfallsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   }
 
   if (!data || (data.totals.count === 0 && data.items.length === 0)) {
+    const hidden = data?.resolvedHidden ?? 0;
     return (
       <div className="space-y-3">
         {canManageShortfalls && (
@@ -1425,8 +1435,26 @@ function ShortfallsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
           </div>
         )}
         <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
-          No shortfalls found. Every applied statement paid the full COD on every
-          matched parcel.
+          {hidden > 0 ? (
+            <>
+              No open shortfalls. {hidden.toLocaleString()} cleared shortfall
+              {hidden === 1 ? ' is' : 's are'} hidden.{' '}
+              {canManageShortfalls && (
+                <button
+                  type="button"
+                  onClick={toggleResolved}
+                  className="font-semibold text-brand-700 underline underline-offset-2"
+                >
+                  Show cleared
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              No shortfalls found. Every applied statement paid the full COD on every
+              matched parcel.
+            </>
+          )}
         </div>
       </div>
     );
@@ -1666,13 +1694,14 @@ async function fetchAllPendingPayments(
   courierType: CourierType,
   bucket: 'receivable' | 'transit',
   sort: 'oldest' | 'value',
+  search = '',
 ): Promise<{ rows: PendingPaymentRow[]; total: number }> {
   const CHUNK = 200;
   const all: PendingPaymentRow[] = [];
   let page = 1;
   let total = 0;
   for (;;) {
-    const res = await listPendingPayments({ courierType, bucket, page, pageSize: CHUNK, sort });
+    const res = await listPendingPayments({ courierType, bucket, page, pageSize: CHUNK, sort, search });
     total = res.total;
     all.push(...res.rows);
     if (all.length >= total || res.rows.length < CHUNK || all.length >= PENDING_ALL_CAP) break;
@@ -1687,6 +1716,11 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
   const [courier, setCourier] = useState<CourierType | null>(null);
   const [bucket, setBucket] = useState<'receivable' | 'transit'>('receivable');
   const [sort, setSort] = useState<'oldest' | 'value'>('oldest');
+  // Server-side search over the drill-down (order #, tracking, phone in any
+  // format, city, customer) — finance couldn't find a parcel in a 1,000-row list.
+  const [ppSearchInput, setPpSearchInput] = useState('');
+  const ppSearch = useDebouncedValue(ppSearchInput.trim(), 300);
+  const listSeq = useRef(0);
   const [rows, setRows] = useState<PendingPaymentRow[]>([]);
   // COD row whose courier tracking timeline is open (reuses the inbox modal).
   const [trackRow, setTrackRow] = useState<PendingPaymentRow | null>(null);
@@ -1744,10 +1778,14 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
 
   const loadList = useCallback(async () => {
     if (!courier) return;
+    // Stale-response guard: switching courier/bucket quickly used to show the
+    // PREVIOUS courier's rows — and Settle would then act on them.
+    const my = ++listSeq.current;
     setListLoading(true);
     try {
       if (pageSize === 'all') {
-        const res = await fetchAllPendingPayments(courier, bucket, sort);
+        const res = await fetchAllPendingPayments(courier, bucket, sort, ppSearch);
+        if (my !== listSeq.current) return;
         setRows(res.rows);
         setTotal(res.total);
       } else {
@@ -1757,21 +1795,29 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
           page,
           pageSize,
           sort,
+          search: ppSearch,
         });
+        if (my !== listSeq.current) return;
         setRows(res.rows);
         setTotal(res.total);
       }
       setSelected(new Set());
     } catch (e) {
+      if (my !== listSeq.current) return;
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load list');
     } finally {
-      setListLoading(false);
+      if (my === listSeq.current) setListLoading(false);
     }
-  }, [courier, bucket, page, pageSize, sort, toast]);
+  }, [courier, bucket, page, pageSize, sort, ppSearch, toast]);
 
   useEffect(() => {
     if (courier) loadList();
   }, [courier, bucket, page, pageSize, sort, loadList]);
+
+  // A new search starts from page 1.
+  useEffect(() => {
+    setPage(1);
+  }, [ppSearch]);
 
   const cur = summary?.currency ?? null;
   const lastPage = pageSize === 'all' ? 1 : Math.max(1, Math.ceil(total / pageSize));
@@ -1779,6 +1825,9 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
   const openCourier = (c: CourierType) => {
     setPage(1);
     setBucket('receivable');
+    // Never show one courier's rows under another's header while loading.
+    setRows([]);
+    setSelected(new Set());
     setCourier(c);
   };
 
@@ -1970,7 +2019,17 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
               ? "Delivered parcels the courier owes you. Tick the ones they've remitted, or settle the whole courier at once."
               : 'Parcels still with the courier — expected COD once delivered. Nothing to reconcile yet.'}
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <SearchInput
+              value={ppSearchInput}
+              onChange={setPpSearchInput}
+              placeholder="Order #, tracking or phone"
+              aria-label="Search pending payments"
+              loading={listLoading && !!ppSearchInput}
+              size="sm"
+              detect
+              className="w-full sm:w-64"
+            />
             {/* Sort: chase the longest-owed money, or the biggest tickets. */}
             <div className="flex overflow-hidden rounded-lg border border-gray-300 bg-white text-xs">
               {([

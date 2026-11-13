@@ -5,6 +5,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { SipTrunkAuthService } from '../../common/services/sip-trunk-auth.service';
 import { InboxGateway } from '../inbox/inbox.gateway';
 import { CallEventDto } from './dto/call-event.dto';
+import { clampQuery } from '../../common/utils/search';
+import { phoneSearchDigits } from '../../common/utils/contact-phone';
 
 const digits = (s?: string | null) => (s ?? '').replace(/\D/g, '');
 
@@ -435,8 +437,10 @@ export class CallsService {
     viewer: { userId: number; role: string },
     opts: { page?: number; limit?: number; filter?: string; search?: string },
   ) {
-    const page = Math.max(1, opts.page ?? 1);
-    const limit = Math.min(Math.max(1, opts.limit ?? 30), 100);
+    // NaN-safe: a junk ?page=abc used to reach Prisma as skip:NaN (500).
+    const toInt = (v: unknown, d: number) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.floor(Number(v)) : d);
+    const page = toInt(opts.page, 1);
+    const limit = Math.min(toInt(opts.limit, 30), 100);
     const where: Record<string, unknown> = { company_id: companyId };
 
     if (opts.filter === 'missed') where.status = { in: ['missed', 'failed'] };
@@ -457,14 +461,17 @@ export class CallsService {
     }
     // Inbox-v2: server-side search (was client-side over loaded rows only, so a
     // match on an unloaded page was invisible).
-    const q = opts.search?.trim();
+    // Phone fields match format-tolerantly (0300… / +92300… / 92300…) via
+    // phoneSearchDigits; the name matches the raw text.
+    const q = clampQuery(opts.search);
     if (q) {
+      const pd = phoneSearchDigits(q) || q;
       and.push({
         OR: [
           { contact: { is: { name: { contains: q } } } },
-          { contact: { is: { phone: { contains: q } } } },
-          { from_number: { contains: q } },
-          { to_number: { contains: q } },
+          { contact: { is: { phone: { contains: pd } } } },
+          { from_number: { contains: pd } },
+          { to_number: { contains: pd } },
         ],
       });
     }

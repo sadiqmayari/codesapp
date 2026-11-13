@@ -56,7 +56,9 @@ export function phoneVariants(raw: string | null | undefined, country = 'PK'): s
  */
 export function phoneSearchDigits(q: string): string {
   const d = q.replace(/\D/g, '');
-  if (d.length < 3) return '';
-  return d.startsWith('0') ? d.replace(/^0+/, '') : d;
+  const out = d.startsWith('0') ? d.replace(/^0+/, '') : d;
+  // Re-check AFTER stripping the trunk 0: "030" -> "30" would match a huge
+  // range of numbers.
+  return out.length < 3 ? '' : out;
 }
 

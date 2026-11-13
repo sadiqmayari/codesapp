@@ -43,6 +43,7 @@ import {
   exportInventory,
 } from '@/lib/inventory';
 import { SkeletonRows } from '@/components/ui/skeleton';
+import { NoResults } from '@/components/ui/empty-state';
 
 interface StoreRow {
   id: number;
@@ -82,14 +83,24 @@ export default function InventoryPage() {
   const [sort, setSort] = useState<InventorySortKey>('product');
   const [dir, setDir] = useState<'asc' | 'desc'>('asc');
 
-  // Pre-fill the search box from ?q= (deep-link from the Analytics tab).
+  // Pre-fill the search box from ?q= (deep-link from the Analytics tab) and
+  // the store from ?store= (Analytics spans all stores; without it a
+  // secondary-store product was searched in the primary store and not found).
+  const urlStoreRef = useRef<number | null>(null);
   useEffect(() => {
-    const q = new URLSearchParams(window.location.search).get('q');
+    const sp = new URLSearchParams(window.location.search);
+    const q = sp.get('q');
     if (q) {
       setSearch(q);
       setDebounced(q.trim());
     }
+    const st = Number(sp.get('store'));
+    if (st > 0) urlStoreRef.current = st;
   }, []);
+  // The first fetch waits until the store list resolved, so the page doesn't
+  // flash "all stores" and then switch to the primary store.
+  const [storesReady, setStoresReady] = useState(false);
+  const loadSeq = useRef(0);
 
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -122,11 +133,20 @@ export default function InventoryPage() {
       .then((list) => {
         const arr = Array.isArray(list) ? list : [];
         setStores(arr);
-        const primary = arr.find((s) => s.isPrimary) ?? arr[0];
+        const fromUrl = arr.find((s) => s.id === urlStoreRef.current);
+        const primary = fromUrl ?? arr.find((s) => s.isPrimary) ?? arr[0];
         if (primary) setStoreId(primary.id);
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setStoresReady(true));
   }, []);
+  // Categories are per store: a stale category from the previous store would
+  // silently filter the new store to nothing.
+  const prevStoreRef = useRef(storeId);
+  useEffect(() => {
+    if (prevStoreRef.current !== storeId) setCategory('');
+    prevStoreRef.current = storeId;
+  }, [storeId]);
 
   const loadAux = useCallback(() => {
     getInventoryStats(storeId).then(setStats).catch(() => undefined);
@@ -146,6 +166,8 @@ export default function InventoryPage() {
   }, [storeId]);
 
   const load = useCallback(async () => {
+    if (!storesReady) return;
+    const my = ++loadSeq.current;
     setLoading(true);
     try {
       const { rows: r, total: t } = await listInventory({
@@ -158,21 +180,23 @@ export default function InventoryPage() {
         sort,
         dir,
       });
+      if (my !== loadSeq.current) return; // superseded by a newer filter
       setRows(r);
       setTotal(t);
     } catch (e) {
+      if (my !== loadSeq.current) return;
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load inventory');
     } finally {
-      setLoading(false);
+      if (my === loadSeq.current) setLoading(false);
     }
-  }, [storeId, debounced, filter, category, page, sort, dir, toast]);
+  }, [storesReady, storeId, debounced, filter, category, page, sort, dir, toast]);
 
   useEffect(() => {
     void load();
   }, [load]);
   useEffect(() => {
-    loadAux();
-  }, [loadAux]);
+    if (storesReady) loadAux();
+  }, [loadAux, storesReady]);
 
   const patchRow = (id: number, patch: Partial<InventoryVariant>) =>
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -505,8 +529,27 @@ export default function InventoryPage() {
               ) : rows.length === 0 ? (
                 <tr>
                   <td colSpan={12} className="px-4 py-16 text-center text-gray-500">
-                    No products yet. Click <b>Sync from Shopify</b> to import your
-                    catalogue.
+                    {debounced || filter !== 'all' || category ? (
+                      // Filtered empty: never tell the user to Sync from Shopify
+                      // when the real cause is their search / filter.
+                      <NoResults
+                        compact
+                        query={debounced}
+                        noun="products"
+                        hint="Searched title, SKU, item code, alias, barcode and variant."
+                        onClear={() => {
+                          setSearch('');
+                          setDebounced('');
+                          setFilter('all');
+                          setCategory('');
+                        }}
+                      />
+                    ) : (
+                      <>
+                        No products yet. Click <b>Sync from Shopify</b> to import your
+                        catalogue.
+                      </>
+                    )}
                   </td>
                 </tr>
               ) : (

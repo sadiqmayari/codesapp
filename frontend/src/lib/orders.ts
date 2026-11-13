@@ -109,8 +109,11 @@ export interface OrdersResult {
 
 export type OrdersScope = 'agent' | 'ad';
 
-export function listAbandonedCheckouts() {
-  return apiFetch<AbandonedCheckout[]>('/shopify/abandoned-checkouts');
+/** Server-side search (name / phone in any format / email / items) + store. */
+export function listAbandonedCheckouts(opts: { search?: string; store?: number } = {}) {
+  return apiFetch<AbandonedCheckout[]>('/shopify/abandoned-checkouts', {
+    params: { search: opts.search?.trim() || undefined, store: opts.store },
+  });
 }
 
 export function getAbandonedStats() {

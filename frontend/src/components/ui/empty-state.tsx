@@ -1,4 +1,4 @@
-import { Inbox } from 'lucide-react';
+import { Inbox, SearchX } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
@@ -42,5 +42,51 @@ export function EmptyState({
       )}
       {action && <div className="mt-2">{action}</div>}
     </div>
+  );
+}
+
+/**
+ * Filtered empty state (Search & filter conventions): use when a list is empty
+ * BECAUSE of a search/filter — never show "No X yet" / "Sync from Shopify" in
+ * that case. Names the query and offers Clear filters.
+ */
+export function NoResults({
+  query,
+  noun = 'results',
+  hint,
+  onClear,
+  compact,
+  className,
+}: {
+  /** The trimmed search text, if any. */
+  query?: string;
+  /** Plural noun, e.g. "orders", "contacts". */
+  noun?: string;
+  /** Extra line, e.g. "with filters: Courier: Trax · This month". */
+  hint?: React.ReactNode;
+  onClear?: () => void;
+  compact?: boolean;
+  className?: string;
+}) {
+  const q = query?.trim();
+  return (
+    <EmptyState
+      icon={SearchX}
+      compact={compact}
+      className={className}
+      title={q ? `No ${noun} match “${q}”` : `No ${noun} match these filters`}
+      description={hint}
+      action={
+        onClear ? (
+          <button
+            type="button"
+            onClick={onClear}
+            className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-700"
+          >
+            Clear filters
+          </button>
+        ) : undefined
+      }
+    />
   );
 }

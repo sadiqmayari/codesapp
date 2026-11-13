@@ -26,10 +26,6 @@ import { LeaveRequestDto, ReviewLeaveDto } from './dto/leave.dto';
 
 type JwtUser = { userId: number; companyId: number; role: string };
 
-const dayStr = (v: string | undefined, fallback: string) => (v ? v.slice(0, 10) : fallback);
-const defaultFrom = (days: number) =>
-  new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
-const today = () => new Date().toISOString().slice(0, 10);
 const clientIp = (req: Request) => normalizeIp(req.ip ?? '');
 
 @Controller('attendance')
@@ -54,17 +50,13 @@ export class AttendanceController {
   }
 
   @Get('me')
-  myHistory(
+  async myHistory(
     @CurrentUser() user: JwtUser,
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    return this.attendance.myHistory(
-      user.companyId,
-      user.userId,
-      dayStr(from, defaultFrom(30)),
-      dayStr(to, today()),
-    );
+    const [f, t] = await this.attendance.dayRange(user.companyId, from, to, 30);
+    return this.attendance.myHistory(user.companyId, user.userId, f, t);
   }
 
   // ── leave requests ───────────────────────────────────────────────────────
@@ -133,16 +125,13 @@ export class AttendanceController {
   @Get('report')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
-  report(
+  async report(
     @CurrentUser() user: JwtUser,
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    return this.attendance.report(
-      user.companyId,
-      dayStr(from, defaultFrom(6)),
-      dayStr(to, today()),
-    );
+    const [f, t] = await this.attendance.dayRange(user.companyId, from, to, 6);
+    return this.attendance.report(user.companyId, f, t);
   }
 
   @Get('report/export')
@@ -154,11 +143,8 @@ export class AttendanceController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    const csv = await this.attendance.reportCsv(
-      user.companyId,
-      dayStr(from, defaultFrom(6)),
-      dayStr(to, today()),
-    );
+    const [f, t] = await this.attendance.dayRange(user.companyId, from, to, 6);
+    const csv = await this.attendance.reportCsv(user.companyId, f, t);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="attendance.csv"');
     res.send(csv);
@@ -167,8 +153,8 @@ export class AttendanceController {
   @Get('summary')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
-  summary(@CurrentUser() user: JwtUser, @Query('month') month?: string) {
-    return this.attendance.summary(user.companyId, month || today().slice(0, 7));
+  async summary(@CurrentUser() user: JwtUser, @Query('month') month?: string) {
+    return this.attendance.summary(user.companyId, await this.attendance.monthOrCurrent(user.companyId, month));
   }
 
   @Get('today-summary')
@@ -181,8 +167,8 @@ export class AttendanceController {
   @Get('payroll')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
-  payroll(@CurrentUser() user: JwtUser, @Query('month') month?: string) {
-    return this.attendance.payroll(user.companyId, month || today().slice(0, 7));
+  async payroll(@CurrentUser() user: JwtUser, @Query('month') month?: string) {
+    return this.attendance.payroll(user.companyId, await this.attendance.monthOrCurrent(user.companyId, month));
   }
 
   @Patch(':userId/:date')

@@ -5,13 +5,29 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
+import { clampQuery } from '../../common/utils/search';
+import { phoneSearchDigits } from '../../common/utils/contact-phone';
 import { InboxService } from '../inbox/inbox.service';
 import { SendMessageType } from '../inbox/dto/send-message.dto';
-import { UpdateTicketDto } from './dto/update-ticket.dto';
-import { CreateTicketDto } from './dto/create-ticket.dto';
+import { UpdateTicketDto, TICKET_STATUSES as TICKET_STATUS_LIST } from './dto/update-ticket.dto';
+import { CreateTicketDto, TICKET_TYPES as TICKET_TYPE_LIST } from './dto/create-ticket.dto';
 
 /** Statuses that count as still-open (a chat won't get a 2nd open ticket). */
 const OPEN_STATUSES = ['open', 'in_progress', 'awaiting_customer'];
+// Whitelists for list filters (a junk value is ignored, never sent to SQL).
+const TICKET_STATUSES: readonly string[] = TICKET_STATUS_LIST;
+const TICKET_TYPES: readonly string[] = TICKET_TYPE_LIST;
+
+export type TicketViewer = { userId: number; role: string };
+export interface ListTicketsOpts {
+  status?: string;
+  type?: string;
+  search?: string;
+  sort?: string;
+  page?: number | string;
+  limit?: number | string;
+}
 
 @Injectable()
 export class TicketsService {
@@ -50,24 +66,113 @@ export class TicketsService {
     }
   }
 
-  /** Tenant-scoped list, newest first, optional status/type filter. */
-  list(
-    companyId: number,
-    opts?: { status?: string; type?: string },
-  ) {
-    return this.prisma.supportTicket.findMany({
-      where: {
-        company_id: companyId,
-        ...(opts?.status ? { status: opts.status } : {}),
-        ...(opts?.type ? { type: opts.type } : {}),
-      },
-      orderBy: { updated_at: 'desc' },
-      include: {
-        contact: { select: { id: true, name: true, phone: true } },
-        assigned_user: { select: { id: true, name: true } },
-      },
-      take: 200,
+  /**
+   * Pool-model visibility (mirrors InboxService.listConversations): owners /
+   * admins see every ticket; an agent sees tickets assigned to them OR on a
+   * chat assigned to them / unassigned. Returns null for privileged viewers.
+   */
+  private agentScope(viewer?: TicketViewer): Prisma.SupportTicketWhereInput | null {
+    if (!viewer || viewer.role === 'owner' || viewer.role === 'admin') return null;
+    return {
+      OR: [
+        { assigned_user_id: viewer.userId },
+        { conversation: { assigned_user_id: viewer.userId } },
+        { conversation: { assigned_user_id: null } },
+      ],
+    };
+  }
+
+  /** 404 (not 403) when an agent opens a ticket outside their pool. */
+  async assertVisible(companyId: number, id: number, viewer?: TicketViewer) {
+    const scope = this.agentScope(viewer);
+    if (!scope) return;
+    const ok = await this.prisma.supportTicket.count({
+      where: { id, company_id: companyId, AND: [scope] },
     });
+    if (!ok) throw new NotFoundException('Ticket not found');
+  }
+
+  /**
+   * Tenant-scoped, SERVER-paginated list. Filters: status (or the virtual
+   * `open_any` = every still-open status), type, free-text search (ticket #,
+   * linked order, contact name, contact phone in any format). Sorts:
+   *  - `overdue` (default): still-open tickets first, OLDEST first, then the
+   *    closed ones by most-recently updated. Done as two windowed queries so
+   *    paging stays correct (it used to be a client sort over a 200-row cap,
+   *    which hid the oldest overdue tickets).
+   *  - `recent`: updated_at desc.
+   */
+  async list(companyId: number, opts: ListTicketsOpts = {}, viewer?: TicketViewer) {
+    const page = Math.max(1, Math.floor(Number(opts.page) || 1));
+    const limit = Math.min(100, Math.max(1, Math.floor(Number(opts.limit) || 50)));
+    const skip = (page - 1) * limit;
+
+    const and: Prisma.SupportTicketWhereInput[] = [];
+    const scope = this.agentScope(viewer);
+    if (scope) and.push(scope);
+    if (opts.status === 'open_any') and.push({ status: { in: OPEN_STATUSES } });
+    else if (opts.status && TICKET_STATUSES.includes(opts.status)) and.push({ status: opts.status });
+    if (opts.type && TICKET_TYPES.includes(opts.type)) and.push({ type: opts.type });
+    const q = clampQuery(opts.search);
+    if (q) {
+      const pd = phoneSearchDigits(q);
+      const or: Prisma.SupportTicketWhereInput[] = [
+        { ticket_number: { contains: q } },
+        { linked_order_name: { contains: q.replace(/^#/, '') } },
+        { contact: { name: { contains: q } } },
+        { contact: { phone: { contains: q } } },
+      ];
+      if (pd && pd !== q) or.push({ contact: { phone: { contains: pd } } });
+      and.push({ OR: or });
+    }
+    const where: Prisma.SupportTicketWhereInput = { company_id: companyId, AND: and };
+    const include = {
+      contact: { select: { id: true, name: true, phone: true } },
+      assigned_user: { select: { id: true, name: true } },
+    } as const;
+
+    if (opts.sort === 'recent') {
+      const [total, rows] = await this.prisma.$transaction([
+        this.prisma.supportTicket.count({ where }),
+        this.prisma.supportTicket.findMany({
+          where,
+          orderBy: [{ updated_at: 'desc' }, { id: 'desc' }],
+          include,
+          skip,
+          take: limit,
+        }),
+      ]);
+      return { rows, total, page, limit };
+    }
+
+    const openWhere: Prisma.SupportTicketWhereInput = { AND: [where, { status: { in: OPEN_STATUSES } }] };
+    const closedWhere: Prisma.SupportTicketWhereInput = { AND: [where, { status: { notIn: OPEN_STATUSES } }] };
+    const [openTotal, closedTotal] = await Promise.all([
+      this.prisma.supportTicket.count({ where: openWhere }),
+      this.prisma.supportTicket.count({ where: closedWhere }),
+    ]);
+    const openRows =
+      skip < openTotal
+        ? await this.prisma.supportTicket.findMany({
+            where: openWhere,
+            orderBy: [{ created_at: 'asc' }, { id: 'asc' }],
+            include,
+            skip,
+            take: limit,
+          })
+        : [];
+    const remaining = limit - openRows.length;
+    const closedRows =
+      remaining > 0
+        ? await this.prisma.supportTicket.findMany({
+            where: closedWhere,
+            orderBy: [{ updated_at: 'desc' }, { id: 'desc' }],
+            include,
+            skip: Math.max(0, skip - openTotal),
+            take: remaining,
+          })
+        : [];
+    return { rows: [...openRows, ...closedRows], total: openTotal + closedTotal, page, limit };
   }
 
   async get(companyId: number, id: number) {

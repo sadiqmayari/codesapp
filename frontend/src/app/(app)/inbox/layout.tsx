@@ -114,7 +114,9 @@ function readFiltersFromUrl(): ListFilters {
   return {
     status: st && STATUSES.includes(st) ? st : 'all',
     mine: q.get('mine') === '1',
-    assignee: q.get('assignee') ?? '',
+    // Numeric agent id only — a junk ?assignee=x became Number('x') = NaN and
+    // a 400 error toast.
+    assignee: /^\d+$/.test(q.get('assignee') ?? '') ? (q.get('assignee') as string) : '',
     label: q.get('label') ?? '',
     search: q.get('q') ?? '',
   };
@@ -196,11 +198,15 @@ export default function InboxLayout({
 
   // Restore filters from the URL once on mount.
   const hydratedRef = useRef(false);
+  // State twin of hydratedRef: the first list fetch waits for it so the list
+  // isn't fetched twice on load (once with defaults, then with the URL's).
+  const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     const f = readFiltersFromUrl();
     hydratedRef.current = true;
     setFilters(f);
     setSearchInput(f.search);
+    setHydrated(true);
   }, []);
 
   // Mirror filters into the URL (replaceState keeps history clean).
@@ -414,13 +420,14 @@ export default function InboxLayout({
 
   // New filter → fresh list from the top.
   useEffect(() => {
+    if (!hydrated) return;
     filterSeq.current += 1;
     anchorsRef.current = [];
     setNewAbove(0);
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchPage]);
+  }, [fetchPage, hydrated]);
 
   // ── Scroll-anchor preservation (unchanged behaviour) ─────────────────────
   const anchorsRef = useRef<{ id: number; delta: number }[]>([]);
@@ -899,11 +906,28 @@ export default function InboxLayout({
                   type="search"
                   name="inbox-conversation-search"
                   autoComplete="off"
-                  className="w-full pl-9 pr-10 py-2 text-sm bg-surface border border-line rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  className="w-full pl-9 pr-10 py-2 text-sm bg-surface border border-line rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 [&::-webkit-search-cancel-button]:hidden"
                 />
-                <kbd className="pointer-events-none absolute right-2.5 top-2 hidden rounded border border-line px-1.5 text-xs text-muted md:inline">
-                  /
-                </kbd>
+                {searchInput ? (
+                  // Explicit clear (search & filter conventions) — the native
+                  // type=search × only shows in some browsers and the "/" hint
+                  // used to sit on top of it.
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchInput('');
+                      searchRef.current?.focus();
+                    }}
+                    className="absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full bg-sunken text-muted hover:text-ink"
+                    aria-label="Clear search"
+                  >
+                    <X size={12} />
+                  </button>
+                ) : (
+                  <kbd className="pointer-events-none absolute right-2.5 top-2 hidden rounded border border-line px-1.5 text-xs text-muted md:inline">
+                    /
+                  </kbd>
+                )}
               </div>
               <div className="flex gap-1 flex-wrap" role="group" aria-label="Filter by status">
                 {STATUSES.map((s) => (

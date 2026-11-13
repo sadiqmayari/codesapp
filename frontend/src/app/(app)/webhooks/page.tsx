@@ -1,11 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Plus, Power, Send, Trash2, Pencil, RefreshCw } from 'lucide-react';
 import { apiFetch, apiFetchEnvelope, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { Modal, ConfirmDialog } from '@/components/ui/modal';
-import { cn, fmtDateTime } from '@/lib/utils';
+import { cn, fmtDateTime, zonedDayRange } from '@/lib/utils';
+import { FilterSelect } from '@/components/ui/filter-bar';
 import type {
   WebhookEndpoint,
   WebhookLog,
@@ -456,17 +457,29 @@ function Logs({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
+  // Event + date filters (the backend ListLogsDto always supported them; the
+  // UI only exposed status). Dates are inclusive tenant-clock days.
+  const [event, setEvent] = useState('');
+  const [fromDay, setFromDay] = useState('');
+  const [toDay, setToDay] = useState('');
+  const loadSeq = useRef(0);
 
   const load = useCallback(async () => {
+    const my = ++loadSeq.current;
     setLoading(true);
     try {
+      const range = zonedDayRange(fromDay, toDay);
       const env = await apiFetchEnvelope<WebhookLog[]>('/webhooks/logs', {
         params: {
           status: status === 'all' ? undefined : status,
+          event: event || undefined,
+          from: range.from,
+          to: range.to,
           page,
           limit: LIMIT,
         },
       });
+      if (my !== loadSeq.current) return; // superseded
       setRows(env.data);
       setTotal((env.meta?.total as number) ?? env.data.length);
     } catch (e) {
@@ -476,7 +489,7 @@ function Logs({ toast }: { toast: ReturnType<typeof useToast> }) {
     } finally {
       setLoading(false);
     }
-  }, [status, page, toast]);
+  }, [status, event, fromDay, toDay, page, toast]);
 
   useEffect(() => {
     load();
@@ -499,6 +512,54 @@ function Logs({ toast }: { toast: ReturnType<typeof useToast> }) {
 
   return (
     <div>
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <FilterSelect
+          label="Event"
+          value={event}
+          options={[{ value: '', label: 'Any' }, ...EVENTS.map((e) => ({ value: e, label: e }))]}
+          onChange={(v) => {
+            setEvent(v);
+            setPage(1);
+          }}
+        />
+        <input
+          type="date"
+          aria-label="From date"
+          value={fromDay}
+          max={toDay || undefined}
+          onChange={(e) => {
+            setFromDay(e.target.value);
+            setPage(1);
+          }}
+          className="h-8 rounded-lg border border-line bg-surface px-2 text-[13px] text-ink"
+        />
+        <span className="text-muted text-sm">–</span>
+        <input
+          type="date"
+          aria-label="To date"
+          value={toDay}
+          min={fromDay || undefined}
+          onChange={(e) => {
+            setToDay(e.target.value);
+            setPage(1);
+          }}
+          className="h-8 rounded-lg border border-line bg-surface px-2 text-[13px] text-ink"
+        />
+        {(event || fromDay || toDay) && (
+          <button
+            type="button"
+            onClick={() => {
+              setEvent('');
+              setFromDay('');
+              setToDay('');
+              setPage(1);
+            }}
+            className="text-[13px] text-muted underline underline-offset-2 hover:text-ink"
+          >
+            Clear
+          </button>
+        )}
+      </div>
       <div className="flex gap-1 flex-wrap mb-3">
         {(['all', 'pending', 'success', 'failed'] as const).map((s) => (
           <button

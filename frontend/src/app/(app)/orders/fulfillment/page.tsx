@@ -69,7 +69,7 @@ import {
 } from '@/lib/payfast';
 import { OrderNameButton, OrderDetailDrawer } from '@/components/orders/order-detail-view';
 import { RowMenu, type RowMenuItem } from '@/components/orders/board/row-menu';
-import { EmptyState } from '@/components/ui/empty-state';
+import { EmptyState, NoResults } from '@/components/ui/empty-state';
 import { ItemsPopover, CustomerPopover } from '@/components/orders/queue-popovers';
 import { OrdersKpiStrip } from '@/components/orders/orders-kpi-strip';
 import ScanToFind from '@/components/orders/scan-to-find';
@@ -93,7 +93,7 @@ import { useSocket } from '@/context/socket-context';
 import { AnimatedNumber } from '@/components/ui/animated-number';
 import { Modal, ConfirmDialog } from '@/components/ui/modal';
 import { PeriodSelect } from '@/components/orders/period-select';
-import { periodRange, PeriodKey } from '@/lib/date-period';
+import { periodRange, PeriodKey, PERIOD_OPTIONS } from '@/lib/date-period';
 import {
   loadsheetStaging,
   listShipments,
@@ -2088,6 +2088,9 @@ function FulfillmentQueue({
   const [rowViewMenuOpen, setRowViewMenuOpen] = useState(false);
   const rowViewMenuRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
+  const loadSeqRef = useRef(0);
+  const countsSeqRef = useRef(0);
+  const [boardHydrated, setBoardHydrated] = useState(false);
   const [wrongAddrGid, setWrongAddrGid] = useState<string | null>(null);
   // Bulk RTO receive: comma-separated order-number box + confirm state.
   const [receiveInput, setReceiveInput] = useState('');
@@ -2228,6 +2231,10 @@ function FulfillmentQueue({
     async (opts?: { silent?: boolean; keepSelection?: boolean }) => {
       const silent = opts?.silent === true;
       const keepSelection = opts?.keepSelection === true;
+      // Stale-response guard: a slow earlier request (previous tab / filter /
+      // search) must never overwrite newer rows.
+      const my = ++loadSeqRef.current;
+      const stale = () => my !== loadSeqRef.current;
       if (!silent) setLoading(true);
       try {
         const range = periodRange(period, { from: customFrom, to: customTo });
@@ -2248,6 +2255,7 @@ function FulfillmentQueue({
         // aren't currently loaded. Nothing selected → skip the request.
         const selectedGids = rowView === 'selected' ? Array.from(selectedRef.current) : null;
         if (selectedGids && selectedGids.length === 0) {
+          if (stale()) return;
           setRows([]);
           setTotal(0);
           if (!keepSelection) setSelected(new Set());
@@ -2266,6 +2274,7 @@ function FulfillmentQueue({
           let p = 1;
           for (;;) {
             const res = await fetchPage(p, 200);
+            if (stale()) return;
             grandTotal = res.total;
             all = all.concat(res.rows);
             if (all.length >= res.total || res.rows.length < 200 || all.length >= ALL_ROWS_CAP) break;
@@ -2279,15 +2288,18 @@ function FulfillmentQueue({
           setTotal(grandTotal);
         } else {
           const res = await fetchPage(page, pageSize);
+          if (stale()) return;
           setRows(res.rows);
           setTotal(res.total);
         }
         if (!keepSelection) setSelected(new Set()); // clear on reload/page change
       } catch (e) {
+        if (stale()) return;
         toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load orders');
         if (!silent) setRows([]);
       } finally {
-        if (!silent) setLoading(false);
+        // Only the LATEST request may end the spinner (silent or not).
+        if (!stale()) setLoading(false);
         // Keep the lane tiles in step with the table: most in-app actions
         // (book / confirm / cancel / RTO / archive …) reload the rows but used
         // to leave the counts stale until a manual refresh. Counts are a single
@@ -2303,25 +2315,24 @@ function FulfillmentQueue({
   // NOT the active lane — the whole point is seeing the other lanes' workload
   // without opening them. Best-effort: a counts failure must never blank the board.
   const loadCounts = useCallback(async () => {
+    const my = ++countsSeqRef.current;
     try {
       const range = periodRange(period, { from: customFrom, to: customTo });
-      setCounts(
-        await fulfillmentLaneCounts({
-          search,
-          courier: courierFilter === 'all' ? undefined : courierFilter,
-          store: storeFilter === 'all' ? undefined : storeFilter,
-          from: range.from,
-          to: range.to,
-        }),
-      );
+      const c = await fulfillmentLaneCounts({
+        search,
+        courier: courierFilter === 'all' ? undefined : courierFilter,
+        store: storeFilter === 'all' ? undefined : storeFilter,
+        from: range.from,
+        to: range.to,
+      });
+      if (my === countsSeqRef.current) setCounts(c);
     } catch {
-      setCounts(null);
+      if (my === countsSeqRef.current) setCounts(null);
     }
   }, [search, courierFilter, storeFilter, period, customFrom, customTo]);
-
-  useEffect(() => {
-    loadCounts();
-  }, [loadCounts]);
+  // No separate useEffect(loadCounts): every filter that changes the counts
+  // also changes load(), whose finally refreshes them. The extra effect fetched
+  // the counts twice per filter change.
 
   // Multi-Store: load the tenant's connected stores once for the board's store
   // filter + row pills. Best-effort; single-store tenants get an empty list and
@@ -2491,11 +2502,81 @@ function FulfillmentQueue({
   const filterSignature = [status, sort, confSub, courierFilter, storeFilter, period, customFrom, customTo].join(' ');
   const prevFilterSigRef = useRef(filterSignature);
   useEffect(() => {
+    if (!boardHydrated) return;
     const filtersChanged = prevFilterSigRef.current !== filterSignature;
     prevFilterSigRef.current = filterSignature;
     load({ keepSelection: !filtersChanged });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load]);
+  }, [load, boardHydrated]);
+
+  // Search & filter conventions: the board's filters live in the URL (lane,
+  // sub-tab, courier, store, period, search, sort, page) so refresh, Back and a
+  // shared link restore the exact view. ?view= is owned by orders/layout and
+  // preserved. Read once on mount; mirrored with replaceState (no history spam).
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const lane = q.get('lane');
+    if (lane && /^[a-z_]+$/.test(lane)) setStatus(lane as QueueStatusFilter);
+    const conf = q.get('conf');
+    if (conf === 'confirmed' || conf === 'unconfirmed') setConfSub(conf);
+    const c = q.get('courier');
+    if (c && c in COURIER_LABELS) setCourierFilter(c as CourierType);
+    const st = Number(q.get('store'));
+    if (st > 0) setStoreFilter(st);
+    const per = q.get('period');
+    if (per && PERIOD_OPTIONS.some((o) => o.key === per)) setPeriod(per as PeriodKey);
+    if (q.get('from')) setCustomFrom(q.get('from') as string);
+    if (q.get('to')) setCustomTo(q.get('to') as string);
+    const so = q.get('sort');
+    if (so === 'newest' || so === 'value' || so === 'oldest') setSort(so);
+    const sq = q.get('q');
+    if (sq) {
+      setSearchInput(sq);
+      setSearch(sq.trim());
+    }
+    const pg = Number(q.get('page'));
+    if (pg > 1) setPage(pg);
+    setBoardHydrated(true);
+  }, []);
+  useEffect(() => {
+    if (!boardHydrated) return;
+    const q = new URLSearchParams(window.location.search);
+    const put = (k: string, v: string | null | undefined) => (v ? q.set(k, v) : q.delete(k));
+    put('lane', status !== 'unfulfilled' ? status : null);
+    put('conf', status === 'unfulfilled' && confSub !== 'all' ? confSub : null);
+    put('courier', courierFilter !== 'all' ? courierFilter : null);
+    put('store', storeFilter !== 'all' ? String(storeFilter) : null);
+    put('period', period !== 'all' ? period : null);
+    put('from', period === 'custom' ? customFrom : null);
+    put('to', period === 'custom' ? customTo : null);
+    put('sort', sort !== 'oldest' ? sort : null);
+    put('q', search || null);
+    put('page', page > 1 ? String(page) : null);
+    const qs = q.toString();
+    const url = window.location.pathname + (qs ? '?' + qs : '');
+    if (url !== window.location.pathname + window.location.search) {
+      window.history.replaceState(window.history.state, '', url);
+    }
+  }, [boardHydrated, status, confSub, courierFilter, storeFilter, period, customFrom, customTo, sort, search, page]);
+
+  // Any narrowing filter beyond the lane itself (drives the filtered empty
+  // state + its Clear filters action).
+  const boardFiltered =
+    courierFilter !== 'all' ||
+    storeFilter !== 'all' ||
+    period !== 'all' ||
+    (status === 'unfulfilled' && confSub !== 'all');
+  const clearBoardFilters = () => {
+    setSearchInput('');
+    setSearch('');
+    setCourierFilter('all');
+    setStoreFilter('all');
+    setPeriod('all');
+    setCustomFrom('');
+    setCustomTo('');
+    setConfSub('all');
+    setPage(1);
+  };
 
   // Multi-Store: the Sync actions honour the board's store filter — "All stores"
   // syncs every connected store, a selected store syncs just that one.
@@ -2842,11 +2923,14 @@ function FulfillmentQueue({
   // is a no-op, so hitting Enter then the debounce firing won't double-load.)
   useEffect(() => {
     const t = setTimeout(() => {
+      const next = searchInput.trim();
+      // Only a real change resets the page (a trailing space used to).
+      if (next === search) return;
       setPage(1);
-      setSearch(searchInput.trim());
+      setSearch(next);
     }, 300);
     return () => clearTimeout(t);
-  }, [searchInput]);
+  }, [searchInput, search]);
 
   // Is this order currently being booked by SOMEONE ELSE? Returns the booker's
   // name (for the "Being booked by …" label) or null. Our own in-flight book is
@@ -3003,6 +3087,8 @@ function FulfillmentQueue({
       const ids = await getQueueIds({
         search,
         status,
+        // Select-all used to ignore the sub-tab and pick unconfirmed orders too.
+        confirmation: status === 'unfulfilled' && confSub !== 'all' ? confSub : undefined,
         courier: courierFilter === 'all' ? undefined : courierFilter,
         store: storeFilter === 'all' ? undefined : storeFilter,
         from: range.from,
@@ -3823,11 +3909,16 @@ function FulfillmentQueue({
         </div>
       ) : rows.length === 0 ? (
         <div className="rounded-xl border border-line bg-surface">
-          {search ? (
-            <EmptyState
-              icon={Search}
-              title="No orders match your search"
-              description="Check the order number or phone, or clear the filters above."
+          {search || boardFiltered ? (
+            <NoResults
+              query={search}
+              noun="orders"
+              hint={
+                boardFiltered
+                  ? 'Courier, store, period or sub-tab filters are on. Order #, phone (any format) and tracking are all searched.'
+                  : 'Order #, phone (any format), tracking and customer name are all searched.'
+              }
+              onClear={clearBoardFilters}
             />
           ) : status === 'unfulfilled' ? (
             <EmptyState

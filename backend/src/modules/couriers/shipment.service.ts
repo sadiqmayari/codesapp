@@ -27,6 +27,7 @@ import {
 import { CourierOpsService } from './courier-ops.service';
 import { InboxGateway } from '../inbox/inbox.gateway';
 import { AgentActivityService } from '../../common/services/agent-activity.service';
+import { classifySearch, likeContains } from '../../common/utils/search';
 import {
   formatLineItemsSummary,
   SummaryLineItem,
@@ -997,17 +998,31 @@ export class ShipmentService implements OnModuleInit {
     // resolve matching orders' gids and fold them into the OR.
     let searchClause: Prisma.ShopifyOrderWhereInput = {};
     if (search) {
+      // Search & filter conventions: classifySearch decides the extra
+      // normalised matches. Phone = last 10 national digits, so 0300…, +92300…,
+      // 92300… and "0300 123-4567" all hit the same order (the mirror stores
+      // whatever Shopify sent). The raw text still ORs against every field.
+      const cs = classifySearch(search);
       const or: Prisma.ShopifyOrderWhereInput[] = [
         { order_name: { contains: search } },
         { customer_name: { contains: search } },
         { phone: { contains: search } },
         { city: { contains: search } },
       ];
-      const trackHits = await this.prisma.shipment.findMany({
-        where: { company_id: companyId, courier_tracking_number: { contains: search } },
-        select: { shopify_order_gid: true },
-        take: 100,
-      });
+      if (cs.kind === 'phone' && cs.phoneTail && cs.phoneTail !== search) {
+        or.push({ phone: { contains: cs.phoneTail } });
+      }
+      // Tracking numbers: >=4 chars (a 1-3 char prefix matches thousands of
+      // AWBs), newest first, generous cap (was 100 and silently dropped hits).
+      const trackHits =
+        search.length >= 4
+          ? await this.prisma.shipment.findMany({
+              where: { company_id: companyId, courier_tracking_number: { contains: search } },
+              select: { shopify_order_gid: true },
+              orderBy: { id: 'desc' },
+              take: 1000,
+            })
+          : [];
       if (trackHits.length) {
         or.push({
           shopify_order_gid: {
@@ -1058,17 +1073,23 @@ export class ShipmentService implements OnModuleInit {
           : status === 'attempted'
             ? { shipper_advice_required_at: null }
             : {};
-      const ships = await this.prisma.shipment.findMany({
-        where: {
-          company_id: companyId,
-          status: { in: statuses },
-          ...adviceClause,
-          ...(courier ? { courier_type: courier } : {}),
-        },
-        select: { shopify_order_gid: true },
-        take: 20000,
+      const hideArchivedEarly = [
+        'delivered',
+        'returned',
+        'failed',
+        'attempted',
+        'shipper_advice',
+        'needs_attention',
+      ].includes(status);
+      const gids = await this.resolveShipmentStatusGids(companyId, {
+        statuses,
+        adviceClause,
+        courier,
+        search: !!search,
+        hideArchived: hideArchivedEarly,
+        store,
+        dateRange,
       });
-      const gids = ships.map((s) => s.shopify_order_gid);
       // Terminal-outcome tabs are actionable worklists: once the order is
       // closed (archived) the parcel's lifecycle is done and it belongs under
       // the Archived tab, not still cluttering these. Delivered is terminal too
@@ -1080,14 +1101,7 @@ export class ShipmentService implements OnModuleInit {
       // full record — those are open by definition anyway.
       // Terminal-outcome + attention worklists hide archived orders (the parcel
       // lifecycle is done); in-flight lanes stay a full record.
-      const hideArchived = [
-        'delivered',
-        'returned',
-        'failed',
-        'attempted',
-        'shipper_advice',
-        'needs_attention',
-      ].includes(status);
+      const hideArchived = hideArchivedEarly;
       return {
         company_id: companyId,
         // A Shopify-cancelled order is closed — it shouldn't clutter ANY parcel
@@ -1097,12 +1111,17 @@ export class ShipmentService implements OnModuleInit {
         // findable by number/name even if cancelled/archived.
         ...(search ? {} : { cancelled_at: null }),
         ...(hideArchived && !search ? { archived_at: null } : {}),
-        // No matches → an impossible filter (empty result), not "all".
-        shopify_order_gid: gids.length ? { in: gids } : { in: ['__none__'] },
-        ...searchClause,
-        ...confirmationClause,
         ...dateClause,
         ...storeClause,
+        // AND (never spread): the status gid set, the confirmation gid set and
+        // the search OR all key on shopify_order_gid / OR — spreading let the
+        // later one silently overwrite the earlier.
+        AND: [
+          // No matches → an impossible filter (empty result), not "all".
+          { shopify_order_gid: gids.length ? { in: gids } : { in: ['__none__'] } },
+          searchClause,
+          confirmationClause,
+        ],
       };
     }
 
@@ -1161,13 +1180,86 @@ export class ShipmentService implements OnModuleInit {
       // voided/returned one) is findable by number regardless of tab.
       ...(search ? {} : { cancelled_at: null }),
       ...statusFilter,
-      ...courierClause,
-      ...addressIssueExclusion,
-      ...searchClause,
-      ...confirmationClause,
       ...dateClause,
       ...storeClause,
+      // AND (never spread): courier + confirmation both key on
+      // shopify_order_gid — spreading made the To-book Confirmed/Awaiting
+      // sub-tab silently DROP the courier filter.
+      AND: [courierClause, addressIssueExclusion, searchClause, confirmationClause],
     };
+  }
+
+  /**
+   * Order gids for a shipment-status tab, with the ORDER-side filters
+   * (cancelled / archived / store / date) applied in the same SQL via EXISTS,
+   * so the list is only the orders that can actually appear. It used to fetch
+   * every shipment of that status capped at 20,000 with no ORDER BY (Delivered
+   * is ~9k and growing), so past the cap an arbitrary subset vanished from rows
+   * AND counts. Falls back to the plain Prisma lookup if the raw query fails.
+   */
+  private async resolveShipmentStatusGids(
+    companyId: number,
+    o: {
+      statuses: ShipmentStatus[];
+      adviceClause: Prisma.ShipmentWhereInput;
+      courier?: CourierType;
+      search: boolean;
+      hideArchived: boolean;
+      store?: number;
+      dateRange?: { from?: Date; to?: Date };
+    },
+  ): Promise<string[]> {
+    const sc: Prisma.Sql[] = [
+      Prisma.sql`s.company_id = ${companyId}`,
+      Prisma.sql`s.status IN (${Prisma.join(o.statuses)})`,
+    ];
+    if ('shipper_advice_required_at' in o.adviceClause) {
+      sc.push(
+        o.adviceClause.shipper_advice_required_at === null
+          ? Prisma.sql`s.shipper_advice_required_at IS NULL`
+          : Prisma.sql`s.shipper_advice_required_at IS NOT NULL`,
+      );
+    }
+    if (o.courier) sc.push(Prisma.sql`s.courier_type = ${o.courier}`);
+    const oc: Prisma.Sql[] = [
+      Prisma.sql`o.company_id = s.company_id`,
+      Prisma.sql`o.shopify_order_gid = s.shopify_order_gid`,
+    ];
+    if (!o.search) oc.push(Prisma.sql`o.cancelled_at IS NULL`);
+    if (o.hideArchived && !o.search) oc.push(Prisma.sql`o.archived_at IS NULL`);
+    if (o.store) oc.push(Prisma.sql`o.shopify_store_id = ${o.store}`);
+    if (o.dateRange?.from) oc.push(Prisma.sql`o.shopify_created_at >= ${o.dateRange.from}`);
+    if (o.dateRange?.to) oc.push(Prisma.sql`o.shopify_created_at <= ${o.dateRange.to}`);
+    try {
+      const rows = await this.prisma.$queryRaw<{ g: string }[]>(Prisma.sql`
+        SELECT s.shopify_order_gid AS g
+        FROM shipments s
+        WHERE ${Prisma.join(sc, ' AND ')}
+          AND EXISTS (SELECT 1 FROM shopify_orders o WHERE ${Prisma.join(oc, ' AND ')})
+        ORDER BY s.id DESC
+        LIMIT 60000
+      `);
+      if (rows.length >= 60000) {
+        this.logger.warn(`queue gid set truncated at 60000 (company ${companyId}, ${o.statuses.join(',')})`);
+      }
+      return rows.map((r) => r.g);
+    } catch (e) {
+      this.logger.warn(
+        `resolveShipmentStatusGids raw query failed, falling back: ${e instanceof Error ? e.message : e}`,
+      );
+      const ships = await this.prisma.shipment.findMany({
+        where: {
+          company_id: companyId,
+          status: { in: o.statuses },
+          ...o.adviceClause,
+          ...(o.courier ? { courier_type: o.courier } : {}),
+        },
+        select: { shopify_order_gid: true },
+        orderBy: { id: 'desc' },
+        take: 20000,
+      });
+      return ships.map((s) => s.shopify_order_gid);
+    }
   }
 
   /** gid IN/NOT-IN the set of confirmed orders (manual_confirmed_at set OR a
@@ -1373,14 +1465,16 @@ export class ShipmentService implements OnModuleInit {
     );
     const multiStore = storeRows.length > 1;
 
-    const orderBy: Prisma.ShopifyOrderOrderByWithRelationInput =
+    // Unique `id` tie-breaker: equal timestamps / equal totals used to make
+    // OFFSET paging skip or repeat rows between pages.
+    const orderBy: Prisma.ShopifyOrderOrderByWithRelationInput[] =
       opts.sort === 'newest'
-        ? { shopify_created_at: 'desc' }
+        ? [{ shopify_created_at: 'desc' }, { id: 'desc' }]
         : opts.sort === 'value'
-          ? { total_price: 'desc' }
-          : { shopify_created_at: 'asc' };
+          ? [{ total_price: 'desc' }, { id: 'asc' }]
+          : [{ shopify_created_at: 'asc' }, { id: 'asc' }];
 
-    const [total, rows] = await Promise.all([
+    const [total, pageRows] = await Promise.all([
       this.prisma.shopifyOrder.count({ where }),
       this.prisma.shopifyOrder.findMany({
         where,
@@ -1389,6 +1483,21 @@ export class ShipmentService implements OnModuleInit {
         take: pageSize,
       }),
     ]);
+    // Exact order number ranks FIRST: "1001" also substring-matches #11001 /
+    // #10012, which could push the one the agent meant off page 1.
+    let rows = pageRows;
+    const sq = classifySearch(search);
+    if (page === 1 && sq.kind === 'order' && sq.orderNo) {
+      const exact = await this.prisma.shopifyOrder.findMany({
+        where: { AND: [where, { order_name: { in: [`#${sq.orderNo}`, sq.orderNo] } }] },
+        orderBy: { id: 'desc' },
+        take: 5,
+      });
+      if (exact.length) {
+        const ids = new Set(exact.map((e) => e.id));
+        rows = [...exact, ...pageRows.filter((r) => !ids.has(r.id))].slice(0, Math.max(pageSize, exact.length));
+      }
+    }
 
     // Existing shipments for this page's orders (so the UI shows "already
     // booked" and disables re-selection).
@@ -1577,6 +1686,7 @@ export class ShipmentService implements OnModuleInit {
     opts: {
       search?: string;
       status?: QueueStatus;
+      confirmation?: 'confirmed' | 'unconfirmed';
       courier?: CourierType;
       from?: Date;
       to?: Date;
@@ -1589,7 +1699,7 @@ export class ShipmentService implements OnModuleInit {
       companyId,
       search,
       status,
-      undefined,
+      opts.confirmation,
       opts.courier,
       { from: opts.from, to: opts.to },
       opts.store,
@@ -1930,12 +2040,26 @@ export class ShipmentService implements OnModuleInit {
       to?: Date;
       page?: number;
       pageSize?: number;
+      // Multi-Store: one connected store (shipments carry shopify_store_id).
+      store?: number;
+      // Order # / tracking / city.
+      search?: string;
     } = {},
   ) {
     const page = Math.max(1, Math.floor(filters.page ?? 1));
     const pageSize = Math.min(200, Math.max(1, Math.floor(filters.pageSize ?? 50)));
+    const sq = classifySearch(filters.search);
+    const searchOr: Prisma.ShipmentWhereInput[] = sq.raw
+      ? [
+          { shopify_order_name: { contains: sq.orderNo ?? sq.raw } },
+          { courier_tracking_number: { contains: sq.raw } },
+          { destination_city: { contains: sq.raw } },
+        ]
+      : [];
     const where: Prisma.ShipmentWhereInput = {
       company_id: companyId,
+      ...(filters.store ? { shopify_store_id: filters.store } : {}),
+      ...(searchOr.length ? { AND: [{ OR: searchOr }] } : {}),
       // Replacements live on their own Dispatch board, never the normal worklist.
       is_replacement: false,
       ...(filters.courierType ? { courier_type: filters.courierType } : {}),
@@ -2179,22 +2303,35 @@ export class ShipmentService implements OnModuleInit {
    * its discrepancies aren't real losses yet.
    */
   async courierShortfalls(companyId: number, opts: { includeResolved?: boolean } = {}) {
-    const invoices = await this.prisma.courierInvoice.findMany({
-      where: { company_id: companyId, status: 'applied' },
-      orderBy: { created_at: 'desc' },
-      take: 200,
-      select: {
-        id: true,
-        courier_type: true,
-        invoice_number: true,
-        report_date: true,
-        created_at: true,
-        currency: true,
-        lines: true,
-      },
-    });
+    // EVERY applied statement, in id-keyed batches of 200 (it used to read only
+    // the latest 200, so shortfalls on older statements silently vanished from
+    // the list AND the headline totals). Only mismatched lines are kept.
+    const select = {
+      id: true,
+      courier_type: true,
+      invoice_number: true,
+      report_date: true,
+      created_at: true,
+      currency: true,
+      lines: true,
+    } as const;
+    const invoices: Array<Prisma.CourierInvoiceGetPayload<{ select: typeof select }>> = [];
+    for (let cursor: number | undefined; ; ) {
+      const batch = await this.prisma.courierInvoice.findMany({
+        where: { company_id: companyId, status: 'applied', ...(cursor ? { id: { lt: cursor } } : {}) },
+        orderBy: { id: 'desc' },
+        take: 200,
+        select,
+      });
+      invoices.push(...batch);
+      if (batch.length < 200) break;
+      cursor = batch[batch.length - 1].id;
+    }
 
     const items: ShortfallItem[] = [];
+    // Cleared lines hidden by the default view (so the UI can say "N cleared
+    // hidden" instead of the false "No shortfalls found").
+    let resolvedHidden = 0;
     for (const inv of invoices) {
       const lines = Array.isArray(inv.lines)
         ? (inv.lines as unknown as Array<Record<string, unknown>>)
@@ -2213,7 +2350,10 @@ export class ShipmentService implements OnModuleInit {
             ? (l.shortfallResolution as ShortfallItem['resolution'])
             : null;
         // Resolved ("cleared") lines drop off the standing list unless asked for.
-        if (resolution && !opts.includeResolved) continue;
+        if (resolution && !opts.includeResolved) {
+          resolvedHidden++;
+          continue;
+        }
         items.push({
           invoiceId: inv.id,
           courier: inv.courier_type,
@@ -2257,6 +2397,7 @@ export class ShipmentService implements OnModuleInit {
     return {
       items: items.slice(0, 500),
       truncated: items.length > 500,
+      resolvedHidden,
       couriers: Array.from(byCourier.values()).sort((a, b) => b.total - a.total),
       totals: {
         count: active.length,
@@ -2345,6 +2486,10 @@ export class ShipmentService implements OnModuleInit {
       pageSize?: number;
       /** 'oldest' chases the longest-owed money first; 'value' the biggest. */
       sort?: 'value' | 'oldest';
+      /** Order # / tracking / phone (any format) / city. */
+      search?: string;
+      /** Multi-Store: restrict to one connected store. */
+      store?: number;
     } = {},
   ) {
     const page = Math.max(1, Math.floor(opts.page ?? 1));
@@ -2362,6 +2507,25 @@ export class ShipmentService implements OnModuleInit {
     const courierClause = opts.courierType
       ? Prisma.sql`AND s.courier_type = ${opts.courierType}`
       : Prisma.empty;
+    const storeClause = opts.store
+      ? Prisma.sql`AND o.shopify_store_id = ${opts.store}`
+      : Prisma.empty;
+    // Search & filter conventions: escaped LIKE; phone matched on the last 10
+    // digits so 0300… / +92300… / 92300… all hit.
+    const sq = classifySearch(opts.search);
+    let searchClause: Prisma.Sql = Prisma.empty;
+    if (sq.raw) {
+      const like = likeContains(sq.raw);
+      const parts: Prisma.Sql[] = [
+        Prisma.sql`s.shopify_order_name LIKE ${likeContains(sq.orderNo ?? sq.raw)}`,
+        Prisma.sql`s.courier_tracking_number LIKE ${like}`,
+        Prisma.sql`o.phone LIKE ${like}`,
+        Prisma.sql`s.destination_city LIKE ${like}`,
+        Prisma.sql`o.customer_name LIKE ${like}`,
+      ];
+      if (sq.kind === 'phone' && sq.phoneTail) parts.push(Prisma.sql`o.phone LIKE ${likeContains(sq.phoneTail)}`);
+      searchClause = Prisma.sql`AND (${Prisma.join(parts, ' OR ')})`;
+    }
     const orderBy =
       bucket === 'receivable'
         ? opts.sort === 'oldest'
@@ -2384,6 +2548,8 @@ export class ShipmentService implements OnModuleInit {
         AND s.is_replacement = 0
         AND ${PAYMENT_DEAD_EXCLUSION}
         ${courierClause}
+        ${storeClause}
+        ${searchClause}
         AND (${bucketClause})
     `;
 
@@ -2411,7 +2577,7 @@ export class ShipmentService implements OnModuleInit {
         s.status, s.delivered_at, s.booked_at, s.courier_tracking_number,
         o.phone, o.total_outstanding, o.currency
       ${where}
-      ORDER BY ${orderBy}
+      ORDER BY ${orderBy}, s.id ASC
       LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
     `);
 
@@ -3446,8 +3612,10 @@ export class ShipmentService implements OnModuleInit {
       orderNames?: string[];
       userId?: number;
       receivedAt?: Date;
+      /** Multi-Store: scope order-name matching to one store. */
+      store?: number;
     },
-  ): Promise<{ received: number; skipped: number; notFound: string[] }> {
+  ): Promise<{ received: number; skipped: number; notFound: string[]; ambiguous?: string[] }> {
     // A physically-returned parcel can be received from ANY in-flight state —
     // the courier status often lags the parcel arriving back in hand (e.g. an
     // 'out_for_delivery' RTO). Only a delivered or already-cancelled parcel can't
@@ -3466,6 +3634,9 @@ export class ShipmentService implements OnModuleInit {
 
     let shipments: { id: number; status: ShipmentStatus; shopify_order_name: string | null }[] = [];
     let requested: string[] = [];
+    // Order numbers that match parcels in MORE THAN ONE store (no store given).
+    // Receiving both would RTO the wrong store's parcel, so they're skipped.
+    const ambiguous: string[] = [];
 
     if (params.shipmentIds?.length) {
       const ids = [...new Set(params.shipmentIds.filter((n) => Number.isFinite(n)))];
@@ -3483,14 +3654,26 @@ export class ShipmentService implements OnModuleInit {
             .map((n) => `#${n.replace(/^#+/, '')}`),
         ),
       ];
-      shipments = await this.prisma.shipment.findMany({
-        where: { company_id: companyId, shopify_order_name: { in: requested } },
-        select: { id: true, status: true, shopify_order_name: true },
+      const byName = await this.prisma.shipment.findMany({
+        where: {
+          company_id: companyId,
+          shopify_order_name: { in: requested },
+          ...(params.store ? { shopify_store_id: params.store } : {}),
+        },
+        select: { id: true, status: true, shopify_order_name: true, shopify_store_id: true },
       });
+      const storesByName = new Map<string, Set<number | null>>();
+      for (const s of byName) {
+        const k = s.shopify_order_name ?? '';
+        if (!storesByName.has(k)) storesByName.set(k, new Set());
+        storesByName.get(k)!.add(s.shopify_store_id);
+      }
+      for (const [name, set] of storesByName) if (set.size > 1) ambiguous.push(name);
+      shipments = byName.filter((s) => !ambiguous.includes(s.shopify_order_name ?? ''));
     }
 
     const foundNames = new Set(shipments.map((s) => s.shopify_order_name));
-    const notFound = requested.filter((n) => !foundNames.has(n));
+    const notFound = requested.filter((n) => !foundNames.has(n) && !ambiguous.includes(n));
 
     let received = 0;
     let skipped = 0;
@@ -3506,7 +3689,7 @@ export class ShipmentService implements OnModuleInit {
         skipped++;
       }
     }
-    return { received, skipped, notFound };
+    return { received, skipped: skipped + ambiguous.length, notFound, ambiguous };
   }
 
   /**

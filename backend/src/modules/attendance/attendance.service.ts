@@ -204,6 +204,38 @@ export class AttendanceService {
     };
   }
 
+  /**
+   * Normalise a report/history range to TENANT-LOCAL `YYYY-MM-DD` days. A bare
+   * day passes through; a full ISO instant is converted on the company clock
+   * (it used to be `.slice(0,10)` = the UTC day, so a PKT midnight
+   * `...T19:00:00Z` landed one day early). Missing bounds default to
+   * `defaultDays` back -> today (tenant clock). from > to is swapped.
+   */
+  async dayRange(
+    companyId: number,
+    from: string | undefined,
+    to: string | undefined,
+    defaultDays: number,
+  ): Promise<[string, string]> {
+    const { tz } = await this.companyDefaults(companyId);
+    const norm = (v?: string): string | null => {
+      if (!v) return null;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+      const t = Date.parse(v);
+      return Number.isNaN(t) ? null : this.localParts(new Date(t), tz).dateStr;
+    };
+    const t = norm(to) ?? this.localParts(new Date(), tz).dateStr;
+    const f = norm(from) ?? this.localParts(new Date(Date.now() - defaultDays * 86_400_000), tz).dateStr;
+    return f > t ? [t, f] : [f, t];
+  }
+
+  /** Validated `YYYY-MM`, else the current TENANT-LOCAL month. */
+  async monthOrCurrent(companyId: number, month?: string): Promise<string> {
+    if (month && /^\d{4}-\d{2}$/.test(month)) return month;
+    const { tz } = await this.companyDefaults(companyId);
+    return this.localParts(new Date(), tz).dateStr.slice(0, 7);
+  }
+
   // ── timezone helpers ──────────────────────────────────────────────────────
   private localParts(at: Date, tz: string | null): { dateStr: string; minutes: number } {
     if (!tz) {

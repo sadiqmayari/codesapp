@@ -1,10 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { LifeBuoy, RefreshCw, Clock } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { LifeBuoy, RefreshCw, Clock, Tag, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useToast } from '@/components/toast';
 import { cn } from '@/lib/utils';
 import { ApiError } from '@/lib/api';
+import { useLatestRequest, useSearchBox, useUrlFilters } from '@/lib/use-list-query';
+import { SearchInput } from '@/components/ui/search-input';
+import { ActiveFilters, FilterSelect, StatusChips } from '@/components/ui/filter-bar';
+import { NoResults } from '@/components/ui/empty-state';
 import { TicketDetailModal } from '@/components/tickets/ticket-detail-modal';
 import {
   listTickets,
@@ -13,6 +17,7 @@ import {
   ticketTypeLabel,
   codeLabel,
   RESOLUTION_CODES,
+  TICKET_TYPES,
   TicketListItem,
 } from '@/lib/tickets';
 import { DataTable } from '@/components/ui/data-table';
@@ -44,45 +49,73 @@ const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: 'rejected', label: 'Rejected' },
 ];
 
+const PAGE_SIZE = 50;
+
 export default function TicketsPage() {
   const toast = useToast();
   const [rows, setRows] = useState<TicketListItem[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [status, setStatus] = useState('');
   const [openId, setOpenId] = useState<number | null>(null);
-  const [sort, setSort] = useState<'overdue' | 'recent'>('overdue');
+  // Status / type / search / sort / page live in the URL (refresh + Back keep them).
+  const { values: f, set, clearAll, ready } = useUrlFilters({
+    status: '',
+    type: '',
+    q: '',
+    sort: 'overdue',
+    page: '1',
+  });
+  const [qInput, setQInput] = useSearchBox(f.q, ready, (q) => set({ q }));
+  const run = useLatestRequest();
+  const page = Math.max(1, Number(f.page) || 1);
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  // Most-overdue: open tickets first, oldest open on top; then everyone else by
-  // most-recently updated. "recent" = the server's updated-desc order.
-  const sorted = useMemo(() => {
-    if (sort === 'recent') return rows;
-    return [...rows].sort((a, b) => {
-      const ao = OPEN_STATUSES.includes(a.status) ? 1 : 0;
-      const bo = OPEN_STATUSES.includes(b.status) ? 1 : 0;
-      if (ao !== bo) return bo - ao; // open before closed
-      if (ao === 1)
-        return (
-          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-        ); // oldest open first
-      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-    });
-  }, [rows, sort]);
-
+  // Server-side: paginated, filtered, and sorted (overdue = oldest open first).
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await listTickets({ status: status || undefined });
-      setRows(data);
+      const data = await run((signal) =>
+        listTickets(
+          {
+            status: f.status,
+            type: f.type,
+            search: f.q,
+            sort: f.sort === 'recent' ? 'recent' : 'overdue',
+            page,
+            limit: PAGE_SIZE,
+          },
+          signal,
+        ),
+      );
+      if (!data) return; // superseded by a newer request
+      setRows(data.rows);
+      setTotal(data.total);
+      setLoading(false);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load tickets');
-    } finally {
       setLoading(false);
     }
-  }, [status, toast]);
+  }, [f.status, f.type, f.q, f.sort, page, run, toast]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (ready) load();
+  }, [load, ready]);
+
+  // Deleted/closed tickets can leave us past the last page.
+  useEffect(() => {
+    if (!loading && page > pages) set({ page: String(pages) });
+  }, [loading, page, pages, set]);
+
+  const active = [
+    f.q && { key: 'q', label: `“${f.q}”`, onRemove: () => set({ q: '' }) },
+    f.type && { key: 'type', label: `Type: ${ticketTypeLabel(f.type)}`, onRemove: () => set({ type: '' }) },
+    f.status && {
+      key: 'status',
+      label: `Status: ${STATUS_FILTERS.find((s) => s.value === f.status)?.label ?? f.status}`,
+      onRemove: () => set({ status: '' }),
+    },
+  ].filter(Boolean) as { key: string; label: string; onRemove: () => void }[];
+  const clearFilters = () => clearAll(['sort']);
 
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">
@@ -101,10 +134,11 @@ export default function TicketsPage() {
             ).map(([v, label]) => (
               <button
                 key={v}
-                onClick={() => setSort(v)}
+                onClick={() => set({ sort: v })}
+                aria-pressed={f.sort === v}
                 className={cn(
                   'px-3 py-1.5',
-                  sort === v ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-50',
+                  f.sort === v ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-50',
                 )}
               >
                 {label}
@@ -120,30 +154,48 @@ export default function TicketsPage() {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 mb-4">
-        {STATUS_FILTERS.map((f) => (
-          <button
-            key={f.value}
-            onClick={() => setStatus(f.value)}
-            className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
-              status === f.value
-                ? 'bg-brand-600 text-white border-brand-600'
-                : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
+      <div className="flex flex-col gap-2 mb-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <SearchInput
+            value={qInput}
+            onChange={setQInput}
+            placeholder="Search ticket #, order, customer or phone"
+            loading={loading && !!qInput}
+            slashShortcut
+            className="w-full sm:w-80"
+          />
+          <FilterSelect
+            icon={Tag}
+            label="Type"
+            value={f.type}
+            options={[
+              { value: '', label: 'Any' },
+              ...TICKET_TYPES.map((t) => ({ value: t, label: ticketTypeLabel(t) })),
+            ]}
+            onChange={(v) => set({ type: v })}
+          />
+        </div>
+        <StatusChips
+          options={STATUS_FILTERS}
+          value={f.status}
+          onChange={(v) => set({ status: v })}
+        />
+        <ActiveFilters filters={active} onClearAll={clearFilters} />
       </div>
 
       <DataTable<TicketListItem>
-        rows={sorted}
-        loading={loading}
+        rows={rows}
+        loading={loading && rows.length === 0}
         rowKey={(t) => t.id}
         onRowClick={(t) => setOpenId(t.id)}
+        emptyNode={
+          active.length ? (
+            <NoResults query={f.q} noun="tickets" onClear={clearFilters} compact />
+          ) : undefined
+        }
         empty={{
           icon: LifeBuoy,
-          title: status ? 'No tickets with this status' : 'No tickets yet',
+          title: 'No tickets yet',
           description: 'Disputes raised by customers appear here.',
         }}
         columns={[
@@ -227,6 +279,37 @@ export default function TicketsPage() {
           },
         ]}
       />
+
+      {total > PAGE_SIZE && (
+        <div className="mt-3 flex items-center justify-between text-sm text-gray-600">
+          <span className="tabular-nums">
+            {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => set({ page: String(page - 1) })}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 disabled:opacity-40"
+              aria-label="Previous page"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <span className="px-2 tabular-nums">
+              {page} / {pages}
+            </span>
+            <button
+              type="button"
+              disabled={page >= pages}
+              onClick={() => set({ page: String(page + 1) })}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 disabled:opacity-40"
+              aria-label="Next page"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {openId != null && (
         <TicketDetailModal

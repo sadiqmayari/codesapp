@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronLeft, ChevronRight, Play, Wrench } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
@@ -66,14 +66,22 @@ export default function SuperAdminBillingPage() {
     }>;
   } | null>(null);
 
+  // Server-side status filter (it used to filter the current page only, so
+  // "Unpaid" could show an empty page while page 3 had unpaid invoices).
+  const seqRef = useRef(0);
+  useEffect(() => {
+    setPage(1);
+  }, [filter]);
   const load = useCallback(async () => {
+    const my = ++seqRef.current;
     setLoading(true);
     setError('');
     try {
       const res = await apiFetch<Paged<AdminInvoice>>('/super-admin/invoices', {
-        params: { page, limit: LIMIT },
+        params: { page, limit: LIMIT, status: filter === 'all' ? undefined : filter },
         noOnboardingRedirect: true,
       });
+      if (my !== seqRef.current) return;
       setRows(res.items);
       setTotal(res.meta.total);
     } catch (e) {
@@ -86,7 +94,7 @@ export default function SuperAdminBillingPage() {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
+  }, [page, filter]);
 
   useEffect(() => {
     load();

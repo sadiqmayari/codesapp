@@ -20,6 +20,7 @@ import {
   zonedTodayRange,
   zonedYesterdayRange,
   zonedMonthRange,
+  zonedDayRange,
 } from '@/lib/utils';
 import {
   getAgentsReport,
@@ -78,10 +79,9 @@ export default function AgentsReportPage() {
     if (preset === 'month') return zonedMonthRange(0);
     if (preset === 'lastmonth') return zonedMonthRange(-1);
     if (customFrom && customTo) {
-      return {
-        from: new Date(`${customFrom}T00:00:00`).toISOString(),
-        to: new Date(`${customTo}T23:59:59.999`).toISOString(),
-      };
+      // Tenant clock, not the browser's.
+      const r = zonedDayRange(customFrom, customTo);
+      if (r.from && r.to) return { from: r.from, to: r.to };
     }
     return zonedMonthRange(0);
   }, [preset, customFrom, customTo]);

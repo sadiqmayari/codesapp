@@ -356,11 +356,17 @@ export class ShopifyOrdersController {
 
   /** Current line items of an order, for the in-app item editor. */
   @Get('orders/editable')
-  orderEditable(
+  async orderEditable(
     @CurrentUser() user: { companyId: number },
     @Query('orderGid') orderGid: string,
   ) {
-    return this.shopifyService.getOrderEditableItems(user.companyId, orderGid);
+    // + the order's storeId, so the item editor searches THAT store's
+    // catalogue (it used to search the primary store for every order).
+    const [res, storeId] = await Promise.all([
+      this.shopifyService.getOrderEditableItems(user.companyId, orderGid),
+      this.shopifyService.orderStoreId(user.companyId, orderGid),
+    ]);
+    return { ...res, storeId };
   }
 
   /** Edit an order's items (qty/remove/add + a per-line discount set to an
@@ -411,8 +417,15 @@ export class ShopifyOrdersController {
    * ordered today (the "ordered today" ones are filtered out server-side).
    */
   @Get('abandoned-checkouts')
-  listAbandonedCheckouts(@CurrentUser() user: { companyId: number }) {
-    return this.shopifyService.listAbandonedCheckouts(user.companyId);
+  listAbandonedCheckouts(
+    @CurrentUser() user: { companyId: number },
+    @Query('search') search?: string,
+    @Query('store') store?: string,
+  ) {
+    return this.shopifyService.listAbandonedCheckouts(user.companyId, {
+      search: search?.slice(0, 100),
+      store: this.intOrUndef(store),
+    });
   }
 
   /** Abandoned-cart KPIs for the dashboard tile (carts, value at risk, recovery). */
@@ -530,8 +543,10 @@ export class ShopifyOrdersController {
     @CurrentUser() user: { companyId: number },
     @Query('gid') gid?: string,
     @Query('number') number?: string,
+    @Query('store') store?: string,
   ) {
-    return this.shopifyService.getOrderDetail(user.companyId, { gid, number });
+    const storeId = Number(store) > 0 ? Math.trunc(Number(store)) : undefined;
+    return this.shopifyService.getOrderDetail(user.companyId, { gid, number, store: storeId });
   }
 
   @Get('orders/detail/live')

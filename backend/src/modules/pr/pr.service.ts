@@ -22,6 +22,8 @@ import {
   UpdateVideoDto,
 } from './dto/pr.dto';
 import { influencerKey, slugify } from './pr.util';
+import { clampQuery } from '../../common/utils/search';
+import { phoneSearchDigits } from '../../common/utils/contact-phone';
 
 /** Shape the influencer upsert reads from (submission or send). */
 type InfluencerSeed = {
@@ -431,7 +433,11 @@ export class PrService {
     companyId: number,
     filter: { status?: string; q?: string },
   ) {
-    const q = filter.q?.trim();
+    const q = clampQuery(filter.q);
+    // "@handle" matches the stored handle/URL; phone matches in any format
+    // (0300… / +92300… / 92300…); TikTok is searched too.
+    const handle = q.replace(/^@+/, '');
+    const pd = phoneSearchDigits(q);
     return this.prisma.prInfluencer.findMany({
       where: {
         company_id: companyId,
@@ -440,8 +446,10 @@ export class PrService {
           ? {
               OR: [
                 { name: { contains: q } },
-                { instagram: { contains: q } },
+                { instagram: { contains: handle || q } },
+                { tiktok: { contains: handle || q } },
                 { phone: { contains: q } },
+                ...(pd && pd !== q ? [{ phone: { contains: pd } }] : []),
                 { email: { contains: q } },
               ],
             }

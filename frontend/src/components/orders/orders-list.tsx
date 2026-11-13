@@ -14,7 +14,7 @@ import {
   Truck,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { fmtDate, zonedPresetRange, zonedStartOfDay, cn } from '@/lib/utils';
+import { fmtDate, zonedPresetRange, zonedStartOfDay, zonedYMDString, cn } from '@/lib/utils';
 import {
   listCreatedOrders,
   type CreatedOrderRow,
@@ -283,12 +283,11 @@ function toCsv(rows: CreatedOrderRow[], scope: OrdersScope): string {
 
 export function OrdersList({ scope }: { scope: OrdersScope }) {
   const [preset, setPreset] = useState<Preset>('30d');
+  // Tenant-clock defaults (the UTC day is still "yesterday" before 05:00 PKT).
   const [customFrom, setCustomFrom] = useState(() =>
-    new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10),
+    zonedYMDString(new Date(Date.now() - 30 * 86_400_000)),
   );
-  const [customTo, setCustomTo] = useState(() =>
-    new Date().toISOString().slice(0, 10),
-  );
+  const [customTo, setCustomTo] = useState(() => zonedYMDString());
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -317,23 +316,26 @@ export function OrdersList({ scope }: { scope: OrdersScope }) {
     setPage(1);
   }, [scope, range.from, range.to, search]);
 
+  // Stale-response guard: a filter change fires the page-reset effect AND load
+  // with the old page first; only the latest request may write the list.
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const my = ++loadSeq.current;
     setLoading(true);
     setError(null);
     try {
-      setData(
-        await listCreatedOrders(scope, {
-          from: range.from,
-          to: range.to,
-          page,
-          pageSize: PAGE_SIZE,
-          search,
-        }),
-      );
+      const res = await listCreatedOrders(scope, {
+        from: range.from,
+        to: range.to,
+        page,
+        pageSize: PAGE_SIZE,
+        search,
+      });
+      if (my === loadSeq.current) setData(res);
     } catch (e) {
-      setError(e instanceof ApiError ? e.userMessage : 'Failed to load orders');
+      if (my === loadSeq.current) setError(e instanceof ApiError ? e.userMessage : 'Failed to load orders');
     } finally {
-      setLoading(false);
+      if (my === loadSeq.current) setLoading(false);
     }
   }, [scope, range.from, range.to, page, search]);
 

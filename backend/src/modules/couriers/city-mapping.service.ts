@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { CourierType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { COURIER_TYPES } from './courier-registry.service';
+import { likePrefix } from '../../common/utils/search';
 
 function normalizeCity(city: string): string {
   return city.trim().toLowerCase();
@@ -269,7 +270,7 @@ export class CityMappingService {
       SELECT DISTINCT city_name
       FROM courier_city_mappings
       WHERE (company_id = ${companyId} OR company_id IS NULL)
-        AND city_name LIKE ${q + '%'}
+        AND city_name LIKE ${likePrefix(q)}
       ORDER BY city_name ASC
       LIMIT ${limit}
     `;

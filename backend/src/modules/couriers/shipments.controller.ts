@@ -185,6 +185,8 @@ export class ShipmentsController {
     @Query('to') to?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('store') store?: string,
+    @Query('search') search?: string,
   ) {
     return this.shipments.listShipments(user.companyId, {
       status,
@@ -193,8 +195,10 @@ export class ShipmentsController {
       loadsheetPending: loadsheetPending === 'true' || loadsheetPending === '1',
       from: asDate(from),
       to: asDate(to),
-      page: page ? Number(page) : undefined,
-      pageSize: pageSize ? Number(pageSize) : undefined,
+      page: Number(page) || undefined,
+      pageSize: Number(pageSize) || undefined,
+      store: asStore(store),
+      search: search?.slice(0, 100),
     });
   }
 
@@ -217,13 +221,18 @@ export class ShipmentsController {
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @Query('sort') sort?: string,
+    @Query('search') search?: string,
+    @Query('store') store?: string,
   ) {
     return this.shipments.listPendingPayments(user.companyId, {
-      courierType,
+      courierType: asCourierType(courierType),
       bucket: bucket === 'transit' ? 'transit' : 'receivable',
-      page: page ? Number(page) : undefined,
-      pageSize: pageSize ? Number(pageSize) : undefined,
+      // `|| undefined`: a junk ?page=abc must not reach SQL as OFFSET NaN.
+      page: Number(page) || undefined,
+      pageSize: Number(pageSize) || undefined,
       sort: sort === 'oldest' ? 'oldest' : 'value',
+      search: search?.slice(0, 100),
+      store: asStore(store),
     });
   }
 
@@ -677,10 +686,15 @@ export class ShipmentsController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('store') store?: string,
+    // The To-book Confirmed/Awaiting sub-tab: Select-all used to ignore it and
+    // return unconfirmed orders too, which bulk-book then acted on.
+    @Query('confirmation') confirmation?: string,
   ) {
     return this.shipments.listQueueIds(user.companyId, {
       search,
       status: asQueueStatus(status),
+      confirmation:
+        confirmation === 'confirmed' || confirmation === 'unconfirmed' ? confirmation : undefined,
       courier: asCourierType(courier),
       from: asDate(from),
       to: asDate(to),
@@ -970,11 +984,12 @@ export class ShipmentsController {
   @Post('bulk-receive')
   bulkReceive(
     @CurrentUser() user: { companyId: number; userId: number },
-    @Body() body: { shipmentIds?: number[]; orderNames?: string[]; receivedAt?: string },
+    @Body() body: { shipmentIds?: number[]; orderNames?: string[]; receivedAt?: string; store?: number },
   ) {
     return this.shipments.bulkReceive(user.companyId, {
       shipmentIds: body?.shipmentIds,
       orderNames: body?.orderNames,
+      store: asStore(body?.store != null ? String(body.store) : undefined),
       userId: user.userId,
       receivedAt: parseReturnDate(body?.receivedAt),
     });

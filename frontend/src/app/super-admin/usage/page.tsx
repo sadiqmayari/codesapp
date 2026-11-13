@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch, ApiError } from '@/lib/api';
 import type { AdminUsageRow } from '@/lib/crm-types';
@@ -35,6 +35,10 @@ export default function SuperAdminUsagePage() {
   const [rows, setRows] = useState<AdminUsageRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Company search + "near / over a limit" filter. The usage list is ONE
+  // unpaginated array (every tenant this month), so client-side is complete.
+  const [q, setQ] = useState('');
+  const [onlyFlagged, setOnlyFlagged] = useState(false);
 
   const period = rows[0]?.period ?? new Date().toISOString().slice(0, 7);
 
@@ -60,15 +64,47 @@ export default function SuperAdminUsagePage() {
     load();
   }, [load]);
 
+  const shown = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (needle) {
+        const name = (r.company?.company_name ?? '').toLowerCase();
+        if (!name.includes(needle) && String(r.company_id) !== needle) return false;
+      }
+      if (!onlyFlagged) return true;
+      const sub = r.company?.subscription;
+      const near = (v: number, lim?: number | null) => typeof lim === 'number' && lim > 0 && v >= lim * 0.8;
+      return near(r.contacts_stored, sub?.contact_limit) || near(r.templates_used, sub?.template_limit);
+    });
+  }, [rows, q, onlyFlagged]);
+
   return (
     <div className="sa-content">
       <SaPageHeader
         title="Platform usage"
         subtitle="Per-tenant metering for the current calendar month. Amber ≥ 80%, red at/over limit."
         actions={
-          <span className="sa-btn" style={{ cursor: 'default' }}>
-            Period: <b className="sa-mono" style={{ marginLeft: 4 }}>{period}</b>
-          </span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            <input
+              className="sa-input"
+              style={{ minWidth: 220 }}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search company or #id…"
+              aria-label="Search companies"
+            />
+            <button
+              type="button"
+              className={onlyFlagged ? 'sa-btn primary' : 'sa-btn'}
+              onClick={() => setOnlyFlagged((v) => !v)}
+              aria-pressed={onlyFlagged}
+            >
+              Near / over limit
+            </button>
+            <span className="sa-btn" style={{ cursor: 'default' }}>
+              Period: <b className="sa-mono" style={{ marginLeft: 4 }}>{period}</b>
+            </span>
+          </div>
         }
       />
 
@@ -90,8 +126,10 @@ export default function SuperAdminUsagePage() {
                 <tr><td colSpan={9}><SaSpinner /></td></tr>
               ) : rows.length === 0 ? (
                 <tr><td colSpan={9} className="sa-faint" style={{ textAlign: 'center', padding: 40 }}>No usage recorded for this period yet.</td></tr>
+              ) : shown.length === 0 ? (
+                <tr><td colSpan={9} className="sa-faint" style={{ textAlign: 'center', padding: 40 }}>No companies match these filters.</td></tr>
               ) : (
-                rows.map((r) => {
+                shown.map((r) => {
                   const sub = r.company?.subscription ?? null;
                   const aiBilled = r.ai_billed_cents ?? 0;
                   return (

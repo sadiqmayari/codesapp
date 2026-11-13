@@ -25,7 +25,8 @@ import { MailService } from '../../common/services/mail.service';
 import { ObservabilityService } from '../../common/services/observability.service';
 import {
 } from '../../common/features/feature.constants';
-import { Prisma } from '@prisma/client';
+import { ActivationStatus, Prisma } from '@prisma/client';
+import { clampQuery } from '../../common/utils/search';
 import { PUBLIC_PRICING_CACHE_KEY } from '../public/public.service';
 import { COURIER_DISPLAY_NAME } from '../couriers/couriers.constants';
 
@@ -797,19 +798,45 @@ export class SuperAdminService {
     return result;
   }
 
-  async getClients(page = 1, limit = 20) {
-    const skip = (page - 1) * limit;
-    const [items, total] = await Promise.all([
+  /**
+   * Server-side filtered + paginated clients (search & filter conventions):
+   * the page used to filter status/search over the current 20 rows only, so
+   * "Pending 3" meant "3 on this page". `statusCounts` are global (with the
+   * search applied) so the tab counts are true totals.
+   */
+  async getClients(page = 1, limit = 20, opts: { q?: string; status?: string } = {}) {
+    const skip = (Math.max(1, page) - 1) * limit;
+    const q = clampQuery(opts.q);
+    const base: Prisma.CompanyWhereInput = q
+      ? {
+          OR: [
+            { company_name: { contains: q } },
+            ...(/^\d+$/.test(q) ? [{ id: Number(q) }] : []),
+            { users: { some: { role: 'owner', email: { contains: q } } } },
+          ],
+        }
+      : {};
+    const status = ['pending', 'active', 'suspended'].includes(opts.status ?? '')
+      ? (opts.status as ActivationStatus)
+      : undefined;
+    const where: Prisma.CompanyWhereInput = status ? { AND: [base, { activation_status: status }] } : base;
+    const [items, total, grouped] = await Promise.all([
       this.prisma.company.findMany({
+        where,
         skip,
         take: limit,
         include: { subscription: true },
-        orderBy: { created_at: 'desc' },
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       }),
-      this.prisma.company.count(),
+      this.prisma.company.count({ where }),
+      this.prisma.company.groupBy({ by: ['activation_status'], where: base, _count: { _all: true } }),
     ]);
-
-    return numifyDecimals({ items, meta: { page, limit, total } });
+    const statusCounts: Record<string, number> = { all: 0, pending: 0, active: 0, suspended: 0 };
+    for (const g of grouped) {
+      statusCounts[g.activation_status] = g._count._all;
+      statusCounts.all += g._count._all;
+    }
+    return numifyDecimals({ items, meta: { page, limit, total, statusCounts } });
   }
 
   async getClient(id: number) {
@@ -1672,16 +1699,30 @@ export class SuperAdminService {
     return numifyDecimals(updated);
   }
 
-  async getInvoices(page = 1, limit = 20) {
-    const skip = (page - 1) * limit;
+  /** Server-side status/search filter (was a per-page client filter). */
+  async getInvoices(page = 1, limit = 20, opts: { status?: string; q?: string } = {}) {
+    const skip = (Math.max(1, page) - 1) * limit;
+    const q = clampQuery(opts.q);
+    const and: Prisma.InvoiceWhereInput[] = [];
+    if (opts.status === 'unpaid') and.push({ status: { in: ['pending', 'overdue'] } });
+    else if (opts.status && ['pending', 'overdue', 'paid', 'cancelled'].includes(opts.status)) {
+      and.push({ status: opts.status as Prisma.InvoiceWhereInput['status'] } as Prisma.InvoiceWhereInput);
+    }
+    if (q) {
+      and.push({
+        OR: [{ invoice_number: { contains: q } }, { company: { company_name: { contains: q } } }],
+      });
+    }
+    const where: Prisma.InvoiceWhereInput = and.length ? { AND: and } : {};
     const [items, total] = await Promise.all([
       this.prisma.invoice.findMany({
+        where,
         skip,
         take: limit,
         include: { company: { select: { company_name: true } } },
-        orderBy: { created_at: 'desc' },
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       }),
-      this.prisma.invoice.count(),
+      this.prisma.invoice.count({ where }),
     ]);
     return numifyDecimals({ items, meta: { page, limit, total } });
   }
@@ -1760,16 +1801,45 @@ export class SuperAdminService {
     return numifyDecimals(rows);
   }
 
-  async getAuditLogs(page = 1, limit = 50) {
-    const skip = (page - 1) * limit;
+  /**
+   * Server-side filtered audit log: free text (action / entity / user name or
+   * email), exact action prefix, entity, and an inclusive from/to range. It
+   * used to filter the current 50 rows client-side only.
+   */
+  async getAuditLogs(
+    page = 1,
+    limit = 50,
+    opts: { q?: string; entity?: string; from?: string; to?: string } = {},
+  ) {
+    const skip = (Math.max(1, page) - 1) * limit;
+    const q = clampQuery(opts.q);
+    const and: Prisma.AuditLogWhereInput[] = [];
+    if (q) {
+      and.push({
+        OR: [
+          { action: { contains: q } },
+          { entity: { contains: q } },
+          { user: { is: { name: { contains: q } } } },
+          { user: { is: { email: { contains: q } } } },
+          ...(/^\d+$/.test(q) ? [{ entity_id: Number(q) }, { company_id: Number(q) }] : []),
+        ],
+      });
+    }
+    if (opts.entity) and.push({ entity: opts.entity.slice(0, 64) });
+    const from = opts.from ? new Date(opts.from) : null;
+    const to = opts.to ? new Date(opts.to) : null;
+    if (from && !Number.isNaN(from.getTime())) and.push({ created_at: { gte: from } });
+    if (to && !Number.isNaN(to.getTime())) and.push({ created_at: { lte: to } });
+    const where: Prisma.AuditLogWhereInput = and.length ? { AND: and } : {};
     const [items, total] = await Promise.all([
       this.prisma.auditLog.findMany({
+        where,
         skip,
         take: limit,
         include: { user: { select: { name: true, email: true } } },
-        orderBy: { created_at: 'desc' },
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       }),
-      this.prisma.auditLog.count(),
+      this.prisma.auditLog.count({ where }),
     ]);
     return { items, meta: { page, limit, total } };
   }

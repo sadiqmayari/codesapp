@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
-import { fmtDateTime } from '@/lib/utils';
+import { fmtDateTime, zonedDayRange } from '@/lib/utils';
+import { useDebouncedValue } from '@/lib/use-list-query';
 import type { AdminAuditLog, Paged } from '@/lib/crm-types';
 import { SaCard, SaPageHeader, SaSpinner } from '../_components/sa-ui';
 
@@ -20,15 +21,27 @@ export default function SuperAdminAuditPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
+  const [fromDay, setFromDay] = useState('');
+  const [toDay, setToDay] = useState('');
+  // Server-side search + date range across ALL entries (it used to filter only
+  // the 50 rows on screen). Debounced; stale responses dropped.
+  const dq = useDebouncedValue(q.trim(), 300);
+  const seqRef = useRef(0);
+  useEffect(() => {
+    setPage(1);
+  }, [dq, fromDay, toDay]);
 
   const load = useCallback(async () => {
+    const my = ++seqRef.current;
     setLoading(true);
     setError('');
     try {
+      const range = zonedDayRange(fromDay, toDay);
       const res = await apiFetch<Paged<AdminAuditLog>>('/super-admin/audit-logs', {
-        params: { page, limit: LIMIT },
+        params: { page, limit: LIMIT, q: dq || undefined, from: range.from, to: range.to },
         noOnboardingRedirect: true,
       });
+      if (my !== seqRef.current) return;
       setRows(res.items);
       setTotal(res.meta.total);
     } catch (e) {
@@ -41,22 +54,13 @@ export default function SuperAdminAuditPage() {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
+  }, [page, dq, fromDay, toDay]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const visible = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return rows;
-    return rows.filter(
-      (r) =>
-        r.action.toLowerCase().includes(s) ||
-        r.entity.toLowerCase().includes(s) ||
-        (r.user?.email ?? '').toLowerCase().includes(s),
-    );
-  }, [rows, q]);
+  const visible = rows;
 
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
 
@@ -66,10 +70,22 @@ export default function SuperAdminAuditPage() {
         title="Audit log"
         subtitle="Mutations recorded across the platform — immutable, append-only."
         actions={
-          <div style={{ position: 'relative', minWidth: 260 }}>
-            <Search size={16} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--sa-fg-faint)' }} />
-            <input className="sa-input" style={{ paddingLeft: 34 }} value={q} onChange={(e) => setQ(e.target.value)}
-              placeholder="Filter action / entity / user on this page…" />
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            <div style={{ position: 'relative', minWidth: 260 }}>
+              <Search size={16} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--sa-fg-faint)' }} />
+              <input className="sa-input" style={{ paddingLeft: 34 }} value={q} onChange={(e) => setQ(e.target.value)}
+                aria-label="Search audit log"
+                placeholder="Action, entity, user, #id…" />
+            </div>
+            <input type="date" className="sa-input" style={{ width: 150 }} aria-label="From date"
+              value={fromDay} max={toDay || undefined} onChange={(e) => setFromDay(e.target.value)} />
+            <input type="date" className="sa-input" style={{ width: 150 }} aria-label="To date"
+              value={toDay} min={fromDay || undefined} onChange={(e) => setToDay(e.target.value)} />
+            {(q || fromDay || toDay) && (
+              <button type="button" className="sa-btn" onClick={() => { setQ(''); setFromDay(''); setToDay(''); }}>
+                Clear
+              </button>
+            )}
           </div>
         }
       />

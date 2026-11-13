@@ -89,8 +89,10 @@ export class SuperAdminController {
   getClients(
     @Query('page', new ParseIntPipe({ optional: true })) page = 1,
     @Query('limit', new ParseIntPipe({ optional: true })) limit = 20,
+    @Query('q') q?: string,
+    @Query('status') status?: string,
   ) {
-    return this.superAdminService.getClients(page, limit);
+    return this.superAdminService.getClients(page, Math.min(100, limit), { q, status });
   }
 
   @Get('clients/:id')
@@ -371,8 +373,10 @@ export class SuperAdminController {
   getInvoices(
     @Query('page', new ParseIntPipe({ optional: true })) page = 1,
     @Query('limit', new ParseIntPipe({ optional: true })) limit = 20,
+    @Query('status') status?: string,
+    @Query('q') q?: string,
   ) {
-    return this.superAdminService.getInvoices(page, limit);
+    return this.superAdminService.getInvoices(page, Math.min(100, limit), { status, q });
   }
 
   @Get('usage')
@@ -388,8 +392,12 @@ export class SuperAdminController {
   getAuditLogs(
     @Query('page', new ParseIntPipe({ optional: true })) page = 1,
     @Query('limit', new ParseIntPipe({ optional: true })) limit = 50,
+    @Query('q') q?: string,
+    @Query('entity') entity?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
-    return this.superAdminService.getAuditLogs(page, limit);
+    return this.superAdminService.getAuditLogs(page, Math.min(200, limit), { q, entity, from, to });
   }
 
   @Post('impersonate/:companyId')

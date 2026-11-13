@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { likeContains } from '../../common/utils/search';
 import { FeatureService } from '../../common/services/feature.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { UpdateVariantDto } from './dto/inventory.dto';
@@ -240,7 +241,7 @@ export class InventoryService {
     if (opts.category) parts.push(Prisma.sql`v.category = ${opts.category}`);
     const q = (opts.search ?? '').trim();
     if (q) {
-      const like = `%${q}%`;
+      const like = likeContains(q); // escaped: "_" / "%" match literally
       parts.push(
         Prisma.sql`(p.title LIKE ${like} OR v.sku LIKE ${like} OR v.item_code LIKE ${like} OR v.alias LIKE ${like} OR v.barcode LIKE ${like} OR v.variant_title LIKE ${like})`,
       );

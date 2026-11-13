@@ -1,6 +1,17 @@
-// Time-period presets for the Orders / Shipments date filter. Ranges are
-// computed in the browser's LOCAL time (so "Today" means the user's today) and
-// returned as UTC ISO strings for the API (which stores timestamps in UTC).
+// Time-period presets for the Orders / Shipments / Attendance date filters.
+// Ranges are computed on the TENANT's clock (`lib/utils` zoned helpers, driven
+// by `companies.timezone`) — NOT the browser's — so "Today" means the shop's
+// today even when the viewer's laptop is set to another zone. Returned as UTC
+// ISO strings for the API.
+
+import {
+  zonedDayRange,
+  zonedMonthRange,
+  zonedPresetRange,
+  zonedTodayRange,
+  zonedYesterdayRange,
+  zonedYMDString as toTenantYMD,
+} from './utils';
 
 export type PeriodKey =
   | 'all'
@@ -21,56 +32,41 @@ export const PERIOD_OPTIONS: { key: PeriodKey; label: string }[] = [
   { key: 'custom', label: 'Custom' },
 ];
 
-const startOfDay = (d: Date): Date => {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-};
-const endOfDay = (d: Date): Date => {
-  const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x;
-};
-
 /**
  * Resolve a period key (+ optional custom from/to `YYYY-MM-DD`) to a UTC ISO
- * range. `{}` means no bound (all time). Custom uses inclusive day boundaries.
+ * range. `{}` means no bound (all time). Custom uses inclusive tenant-day
+ * boundaries.
  */
 export function periodRange(
   key: PeriodKey,
   custom?: { from?: string; to?: string },
 ): { from?: string; to?: string } {
-  const now = new Date();
   switch (key) {
     case 'today':
-      return { from: startOfDay(now).toISOString(), to: endOfDay(now).toISOString() };
-    case 'yesterday': {
-      const y = new Date(now);
-      y.setDate(y.getDate() - 1);
-      return { from: startOfDay(y).toISOString(), to: endOfDay(y).toISOString() };
-    }
-    case '7d': {
-      const f = new Date(now);
-      f.setDate(f.getDate() - 6); // last 7 days incl. today
-      return { from: startOfDay(f).toISOString(), to: endOfDay(now).toISOString() };
-    }
-    case '30d': {
-      const f = new Date(now);
-      f.setDate(f.getDate() - 29);
-      return { from: startOfDay(f).toISOString(), to: endOfDay(now).toISOString() };
-    }
-    case 'month': {
-      const f = new Date(now.getFullYear(), now.getMonth(), 1);
-      return { from: startOfDay(f).toISOString(), to: endOfDay(now).toISOString() };
-    }
-    case 'custom': {
-      const out: { from?: string; to?: string } = {};
-      if (custom?.from) out.from = startOfDay(new Date(`${custom.from}T00:00:00`)).toISOString();
-      if (custom?.to) out.to = endOfDay(new Date(`${custom.to}T00:00:00`)).toISOString();
-      return out;
-    }
+      return zonedTodayRange();
+    case 'yesterday':
+      return zonedYesterdayRange();
+    case '7d':
+      return zonedPresetRange(6); // last 7 days incl. today
+    case '30d':
+      return zonedPresetRange(29);
+    case 'month':
+      return zonedMonthRange(0);
+    case 'custom':
+      return zonedDayRange(custom?.from, custom?.to);
     case 'all':
     default:
       return {};
   }
+}
+
+/** Tenant-zone `YYYY-MM-DD` bounds of a period (for APIs that take bare days). */
+export function periodDays(
+  key: PeriodKey,
+  custom?: { from?: string; to?: string },
+): { from?: string; to?: string } {
+  if (key === 'custom') return { from: custom?.from, to: custom?.to };
+  const r = periodRange(key);
+  const ymd = (iso?: string) => (iso ? toTenantYMD(new Date(iso)) : undefined);
+  return { from: ymd(r.from), to: ymd(r.to) };
 }

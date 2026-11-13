@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Plus, RefreshCw, FileText } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
@@ -10,7 +10,9 @@ import { TemplateFormModal } from '@/components/templates/template-form-modal';
 import { WhatsAppPreview } from '@/components/templates/whatsapp-preview';
 import type { Template, TemplateStatus } from '@/lib/crm-types';
 import { Skeleton } from '@/components/ui/skeleton';
-import { EmptyState } from '@/components/ui/empty-state';
+import { EmptyState, NoResults } from '@/components/ui/empty-state';
+import { SearchInput } from '@/components/ui/search-input';
+import { FilterSelect } from '@/components/ui/filter-bar';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,6 +45,8 @@ export default function TemplatesPage() {
   const [items, setItems] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<TemplateStatus | 'all'>('all');
+  const [category, setCategory] = useState('');
+  const [query, setQuery] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [detail, setDetail] = useState<Template | null>(null);
@@ -53,7 +57,10 @@ export default function TemplatesPage() {
     setLoading(true);
     try {
       const res = await apiFetch<Template[]>('/templates', {
-        params: { status: filter === 'all' ? undefined : filter },
+        params: {
+          status: filter === 'all' ? undefined : filter,
+          category: category || undefined,
+        },
       });
       setItems(res);
     } catch (e) {
@@ -63,7 +70,18 @@ export default function TemplatesPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, toast]);
+  }, [filter, category, toast]);
+
+  // The template list is loaded WHOLE (not paginated), so a name / body search
+  // over it client-side is complete — not a page-only filter.
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((t) =>
+      [t.name, t.category, JSON.stringify(t.content ?? '')].join(' ').toLowerCase().includes(q),
+    );
+  }, [items, query]);
+  const filtersOn = filter !== 'all' || !!category || !!query.trim();
 
   useEffect(() => {
     load();
@@ -125,6 +143,26 @@ export default function TemplatesPage() {
         </button>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <SearchInput
+          value={query}
+          onChange={setQuery}
+          placeholder="Search template name or text"
+          slashShortcut
+          className="w-full sm:w-72"
+        />
+        <FilterSelect
+          label="Category"
+          value={category}
+          options={[
+            { value: '', label: 'Any' },
+            { value: 'marketing', label: 'Marketing' },
+            { value: 'utility', label: 'Utility' },
+            { value: 'authentication', label: 'Authentication' },
+          ]}
+          onChange={setCategory}
+        />
+      </div>
       <div className="flex flex-wrap gap-2 mb-5">
         {FILTERS.map((f) => (
           <button
@@ -148,6 +186,16 @@ export default function TemplatesPage() {
             <Skeleton key={i} className="h-40 rounded-xl" />
           ))}
         </div>
+      ) : shown.length === 0 && filtersOn ? (
+        <NoResults
+          query={query}
+          noun="templates"
+          onClear={() => {
+            setQuery('');
+            setCategory('');
+            setFilter('all');
+          }}
+        />
       ) : items.length === 0 ? (
         <EmptyState
           icon={FileText}
@@ -156,7 +204,7 @@ export default function TemplatesPage() {
         />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {items.map((t) => (
+          {shown.map((t) => (
             <button
               key={t.id}
               onClick={() => setDetail(t)}

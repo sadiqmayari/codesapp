@@ -22,6 +22,9 @@ import * as os from 'os';
 import { spawn } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
+import { phoneSearchDigits } from '../../common/utils/contact-phone';
+import { clampQuery } from '../../common/utils/search';
 import { UsageMeteringService } from '../usage-metering/usage-metering.service';
 import { InboxGateway } from './inbox.gateway';
 import { MetaClientService, MetaSendPayload } from './meta-client.service';
@@ -344,28 +347,27 @@ export class InboxService implements OnModuleInit {
       where.assigned_user_id = dto.assignedUserId;
     }
     if (dto.label) {
-      // Substring match (case-insensitive via the column collation) so the
-      // label-filter box narrows results as the user types, instead of needing
-      // the exact full label.
-      where.labels = { some: { label: { contains: dto.label } } };
+      // The label filter is a PICKER of labels in use (inbox/layout LabelFilter),
+      // so match the chosen label exactly (case-insensitive via the column
+      // collation). `contains` made "vip" also return "vip-gold" / "not-vip".
+      where.labels = { some: { label: dto.label.trim() } };
     }
-    if (dto.search) {
+    const search = clampQuery(dto.search);
+    if (search) {
       // Match the contact (name / phone) OR any message text inside the
-      // conversation — so an agent can find a chat by something that was said
-      // in it, not just by who it's with.
-      where.OR = [
-        {
-          contact: {
-            is: {
-              OR: [
-                { name: { contains: dto.search } },
-                { phone: { contains: dto.search } },
-              ],
-            },
-          },
-        },
-        { messages: { some: { content: { contains: dto.search } } } },
+      // conversation. Phone matching is format-tolerant (0300… / +92300… /
+      // 92300… all hit the canonical row) via phoneSearchDigits, the same rule
+      // the Contacts list uses. Message-text search needs >=2 chars (it scans
+      // unindexed message content).
+      const phoneDigits = phoneSearchDigits(search);
+      const contactOr: Prisma.ContactWhereInput[] = [
+        { name: { contains: search } },
+        { phone: { contains: search } },
       ];
+      if (phoneDigits && phoneDigits !== search) contactOr.push({ phone: { contains: phoneDigits } });
+      const or: Prisma.ConversationWhereInput[] = [{ contact: { is: { OR: contactOr } } }];
+      if (search.length >= 2) or.push({ messages: { some: { content: { contains: search } } } });
+      where.OR = or;
     }
 
     // PER-USER pins (≤ MAX_PINS_PER_USER) float to the top of THIS viewer's list.

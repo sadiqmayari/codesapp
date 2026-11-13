@@ -5,6 +5,8 @@ import { Loader2, Search } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { getOrderDetail, type OrderKey } from '@/lib/orders';
+import { lookupByTracking } from '@/lib/couriers';
+import { classifySearch } from '@/lib/search';
 import { OrderDetailDrawer } from '@/components/orders/order-detail-view';
 import {
   getContactOrders,
@@ -54,6 +56,7 @@ export default function FinancePage() {
  * every mutating control hidden).
  *
  * Routing of the query:
+ *  • tracking / AWB (letters+digits or a long digit string) → courier resolver first.
  *  • ≥9 digits  → treated as a phone → by-contact lookup (one-to-many). One hit
  *    opens straight away; several show a pick-list.
  *  • otherwise  → treated as an order number → direct mirror lookup.
@@ -71,15 +74,31 @@ function OrderSearch() {
   const run = async () => {
     const raw = term.trim();
     const digits = raw.replace(/\D/g, '');
+    const kind = classifySearch(raw);
     if (!digits) {
       setResults(null);
-      setMsg('Enter an order number or customer phone.');
+      setMsg('Enter an order number, tracking number or customer phone.');
       return;
     }
     setBusy(true);
     setMsg(null);
     setResults(null);
     try {
+      // Tracking / AWB numbers go to the courier tracking resolver FIRST — a
+      // long numeric AWB used to fall into the phone lookup and always return
+      // "No orders found". A long digit string tries tracking, then phone.
+      if (kind === 'tracking' || (kind === 'phone' && /^\d+$/.test(raw))) {
+        const hit = await lookupByTracking(raw).catch(() => null);
+        if (hit?.orderName) {
+          const d = await getOrderDetail({ number: hit.orderName });
+          setOpen({ gid: d.order.orderGid });
+          return;
+        }
+        if (kind === 'tracking') {
+          setMsg(`No parcel with tracking ${raw} found.`);
+          return;
+        }
+      }
       if (digits.length >= 9) {
         // Phone — a customer may have several orders.
         const res = await getContactOrders(raw);
@@ -117,7 +136,7 @@ function OrderSearch() {
               setTerm(e.target.value);
               if (msg) setMsg(null);
             }}
-            placeholder="Search an order — number or customer phone"
+            placeholder="Search an order — number, tracking or customer phone"
             aria-label="Search orders"
             className="min-w-0 flex-1 bg-transparent py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-400"
           />
