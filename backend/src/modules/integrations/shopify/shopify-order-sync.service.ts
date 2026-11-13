@@ -6,6 +6,7 @@ import { ShopifyTokenService } from './shopify-token.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { formatLineItemsSummary } from '../../../common/utils/line-items-summary';
 import { CustomerRegistryService } from '../../../common/services/customer-registry.service';
+import { classify } from '../../growth/attribution/attribution';
 
 const DEFAULT_API_VERSION = 'v19.0';
 const TIMEOUT_MS = 20_000;
@@ -413,11 +414,17 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       'webhook',
       storeId,
     );
-    // Ad attribution: a web order (has a landing page) → fetch its first-touch
-    // customer journey (UTM) async for better attribution than landing_site alone.
-    if (payload.landing_site) {
-      await this.enqueueJourney(companyId, gid, storeId);
-    }
+    // Growth attribution: fetch the order's full customer journey (every visit
+    // → order_touchpoints). Orders without a web journey simply return nothing.
+    await this.enqueueJourney(companyId, gid, storeId);
+    // Refresh the Growth facts shortly (debounced per tenant) so dashboards stay live.
+    await this.jobQueue
+      .enqueue(
+        'growth-facts',
+        { companyId, mode: 'incremental' },
+        { dedupKey: `growth:facts:${companyId}:incremental`, delayMs: 20_000, maxAttempts: 2 },
+      )
+      .catch(() => undefined);
   }
 
   /**
@@ -1326,9 +1333,12 @@ export class ShopifyOrderSyncService implements OnModuleInit {
   }
 
   /**
-   * Fetch an order's customerJourneySummary and stamp the FIRST-touch utm_campaign
-   * (falls back to last-touch) onto the mirror. Best-effort — never throws. If
-   * Shopify hasn't computed the journey yet (`ready:false`), re-enqueue once.
+   * Fetch an order's Shopify customer journey and store EVERY visit as an
+   * `order_touchpoints` row (first visit, up to 20 moments, last visit) — the
+   * input for the Growth attribution models (first click, last click, linear,
+   * position, time decay). Also keeps the mirror's utm_* (first touch, else
+   * last) for legacy readers. Best-effort — never throws. If Shopify has not
+   * computed the journey yet (`ready:false`), re-enqueue once.
    */
   async fetchOrderJourney(
     companyId: number,
@@ -1336,109 +1346,142 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     storeId?: number | null,
     attempt = 0,
   ): Promise<void> {
-    const query = `query($id: ID!){
-      order(id:$id){
-        customerJourneySummary {
-          ready
-          firstVisit { source landingPage utmParameters { campaign source medium content } }
-          lastVisit { utmParameters { campaign source medium content } }
-        }
-      }
-    }`;
+    const visit = 'occurredAt landingPage referrerUrl source utmParameters { campaign source medium content }';
+    const full = `query($id: ID!){ order(id:$id){ createdAt customerJourneySummary { ready
+      firstVisit { ${visit} } lastVisit { ${visit} }
+      moments(first: 20) { nodes { occurredAt ... on CustomerVisit { landingPage referrerUrl source utmParameters { campaign source medium content } } } } } } }`;
+    const lite = `query($id: ID!){ order(id:$id){ createdAt customerJourneySummary { ready
+      firstVisit { ${visit} } lastVisit { ${visit} } } } }`;
+    type Utm = { campaign?: string | null; source?: string | null; medium?: string | null; content?: string | null } | null;
+    type Visit = {
+      occurredAt?: string | null;
+      landingPage?: string | null;
+      referrerUrl?: string | null;
+      source?: string | null;
+      utmParameters?: Utm;
+    } | null;
     type JourneyResp = {
+      errors?: unknown;
       data?: {
         order?: {
+          createdAt?: string;
           customerJourneySummary?: {
             ready?: boolean;
-            firstVisit?: {
-              source?: string | null;
-              landingPage?: string | null;
-              utmParameters?: {
-                campaign?: string | null;
-                source?: string | null;
-                medium?: string | null;
-                content?: string | null;
-              } | null;
-            } | null;
-            lastVisit?: {
-              utmParameters?: {
-                campaign?: string | null;
-                source?: string | null;
-                medium?: string | null;
-                content?: string | null;
-              } | null;
-            } | null;
+            firstVisit?: Visit;
+            lastVisit?: Visit;
+            moments?: { nodes?: Visit[] } | null;
           } | null;
         } | null;
       };
     };
-    let resp: JourneyResp;
-    try {
-      resp = await this.graphql<JourneyResp>(companyId, query, { id: orderGid }, storeId);
-    } catch (e) {
-      this.logger.debug(
-        `journey fetch failed (company ${companyId}, ${orderGid}): ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
-      return;
+    let resp: JourneyResp | null = null;
+    for (const query of [full, lite]) {
+      try {
+        resp = await this.graphql<JourneyResp>(companyId, query, { id: orderGid }, storeId);
+        if (!resp.errors) break;
+      } catch (e) {
+        this.logger.debug(
+          `journey fetch failed (company ${companyId}, ${orderGid}): ${e instanceof Error ? e.message : String(e)}`,
+        );
+        resp = null;
+      }
     }
-    const cj = resp.data?.order?.customerJourneySummary;
+    const cj = resp?.data?.order?.customerJourneySummary;
     if (!cj) return;
     if (cj.ready === false && attempt < 1) {
       await this.enqueueJourney(companyId, orderGid, storeId, attempt + 1);
       return;
     }
+
+    // De-duplicate visits by timestamp (firstVisit/lastVisit also appear in moments).
+    const seen = new Set<string>();
+    const visits: NonNullable<Visit>[] = [];
+    for (const v of [cj.firstVisit, ...(cj.moments?.nodes ?? []), cj.lastVisit]) {
+      if (!v?.occurredAt || seen.has(v.occurredAt)) continue;
+      seen.add(v.occurredAt);
+      visits.push(v);
+    }
+    visits.sort((a, b) => Date.parse(a.occurredAt!) - Date.parse(b.occurredAt!));
+    if (visits.length) {
+      const rows = visits.slice(0, 40).map((v, i) => {
+        const u = v.utmParameters ?? {};
+        const c = classify({
+          occurredAt: new Date(v.occurredAt!),
+          source: 'shopify_journey',
+          utmSource: u.source,
+          utmMedium: u.medium,
+          utmCampaign: u.campaign,
+          utmContent: u.content,
+          landingPage: v.landingPage,
+          referrer: v.referrerUrl || v.source,
+        });
+        return {
+          company_id: companyId,
+          order_gid: orderGid,
+          seq: i,
+          occurred_at: new Date(v.occurredAt!),
+          source: 'shopify_journey',
+          channel: c.channel,
+          platform: c.platform,
+          utm_source: u.source?.slice(0, 255) ?? null,
+          utm_medium: u.medium?.slice(0, 255) ?? null,
+          utm_campaign: u.campaign?.slice(0, 512) ?? null,
+          utm_content: u.content?.slice(0, 512) ?? null,
+          click_id_type: c.clickIdType,
+          landing_page: v.landingPage ?? null,
+          referrer: (v.referrerUrl || v.source) ?? null,
+        };
+      });
+      await this.prisma
+        .$transaction([
+          this.prisma.orderTouchpoint.deleteMany({ where: { company_id: companyId, order_gid: orderGid } }),
+          this.prisma.orderTouchpoint.createMany({ data: rows, skipDuplicates: true }),
+        ])
+        .catch((e) => this.logger.warn(`touchpoints write failed (${orderGid}): ${(e as Error).message}`));
+    }
+
     const fv = cj.firstVisit?.utmParameters;
     const lv = cj.lastVisit?.utmParameters;
     const campaign = fv?.campaign || lv?.campaign || null;
-    if (!campaign) return; // keep the existing landing_site-parsed value
-    const data: Record<string, string | null> = {
-      utm_campaign: campaign.slice(0, 512),
-      utm_source: (fv?.source || lv?.source || cj.firstVisit?.source || null)?.slice(0, 255) ?? null,
-      utm_medium: (fv?.medium || lv?.medium || null)?.slice(0, 255) ?? null,
-      utm_content: (fv?.content || lv?.content || null)?.slice(0, 512) ?? null,
-    };
+    // synced_at bump → @updatedAt moves → the Growth facts builder re-attributes this order.
+    const data: Record<string, string | Date | null> = { synced_at: new Date() };
+    if (campaign) {
+      data.utm_campaign = campaign.slice(0, 512);
+      data.utm_source = (fv?.source || lv?.source || cj.firstVisit?.source || null)?.slice(0, 255) ?? null;
+      data.utm_medium = (fv?.medium || lv?.medium || null)?.slice(0, 255) ?? null;
+      data.utm_content = (fv?.content || lv?.content || null)?.slice(0, 512) ?? null;
+    }
     await this.prisma.shopifyOrder
-      .updateMany({
-        where: { company_id: companyId, shopify_order_gid: orderGid },
-        data,
-      })
+      .updateMany({ where: { company_id: companyId, shopify_order_gid: orderGid }, data })
       .catch(() => undefined);
   }
 
   /**
-   * Retroactively fetch journeys for recent web orders that have no utm_campaign
-   * yet (so attribution works on history, not just going forward). Bounded.
+   * Retroactively fetch journeys for recent Shopify orders that have no
+   * touchpoints yet (so first/last-click attribution works on history). Bounded.
    */
   async backfillAttribution(
     companyId: number,
-    days = 60,
+    days = 90,
   ): Promise<{ enqueued: number }> {
     const since = new Date(Date.now() - Math.min(days, 180) * 86_400_000);
-    const orders = await this.prisma.shopifyOrder.findMany({
-      where: {
-        company_id: companyId,
-        shopify_created_at: { gte: since },
-        utm_campaign: null,
-        provider: 'shopify',
-      },
-      select: { shopify_order_gid: true, shopify_store_id: true },
-      take: 2000,
-      orderBy: { shopify_created_at: 'desc' },
-    });
+    const orders = await this.prisma.$queryRawUnsafe<Array<{ gid: string; store: number | null }>>(
+      `SELECT o.shopify_order_gid gid, o.shopify_store_id store
+         FROM shopify_orders o
+        WHERE o.company_id = ? AND o.provider = 'shopify' AND o.shopify_created_at >= ?
+          AND NOT EXISTS (SELECT 1 FROM order_touchpoints t WHERE t.company_id = o.company_id
+                AND t.order_gid COLLATE utf8mb4_general_ci = o.shopify_order_gid COLLATE utf8mb4_general_ci)
+        ORDER BY o.shopify_created_at DESC
+        LIMIT 5000`,
+      companyId,
+      since,
+    );
     for (const o of orders) {
       await this.jobQueue
         .enqueue(
           JOURNEY_QUEUE,
-          {
-            kind: 'journey',
-            companyId,
-            orderGid: o.shopify_order_gid,
-            storeId: o.shopify_store_id,
-            attempt: 1, // no re-enqueue delay churn on backfill
-          } as JourneyJob,
-          { dedupKey: `journey:${companyId}:${o.shopify_order_gid}`, maxAttempts: 1 },
+          { kind: 'journey', companyId, orderGid: o.gid, storeId: o.store, attempt: 1 } as JourneyJob,
+          { dedupKey: `journey:${companyId}:${o.gid}`, maxAttempts: 1 },
         )
         .catch(() => undefined);
     }

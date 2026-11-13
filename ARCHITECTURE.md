@@ -1348,3 +1348,18 @@ Backend sits in AnalyticsService (not InventoryService) to keep InventoryModule 
 
 ## Orders board redesign (Nov-2026)
 Frontend-only. `orders/layout.tsx` is the module shell (header + one tab bar; board views are `?view=` on `/orders/fulfillment`). The 6k-line `orders/fulfillment/page.tsx` keeps its state/data wiring; presentational pieces moved to `components/orders/board/` (`header-slot`, `toolbar`, `row-menu`). Page actions portal from the mounted board into the layout header. No API, socket or schema change — every action still calls the same `lib/couriers.ts` / `lib/orders.ts` functions.
+
+## Growth module (Nov-2026) — supersedes the "Meta Ads / Ad Report" section above
+```
+ Meta / Google / TikTok / Snap ──(AdPlatformAdapter)──► AdSyncService ──► ad_entities, ad_insights_daily (+FX → spend_base)
+ Shopify orders webhook ─► fetchOrderJourney ─► order_touchpoints
+ orders · shipments · confirmations · touchpoints · CTWA chats ─► GrowthFactsService ─► growth_order_facts + growth_attribution
+                                                                     │                       │
+                                                       CapiService (DeliveredPurchase)   GrowthMirrorService ─► ClickHouse (optional)
+ GrowthQueryService / Forecast / Opportunity / AI  ◄── GrowthStore (ClickHouse when mirrored+healthy, else MariaDB)
+          │
+ /api/growth/* ──► /growth (ECharts dashboards) ◄── socket growth.updated (version bump → cache invalidation)
+```
+Every number on every Growth surface is an aggregate over `growth_order_facts` / `growth_attribution` / `ad_insights_daily`,
+so a definition changes in exactly one place (`GrowthFactsService.build` + `kpisOf` + `metrics/catalog.ts`).
+

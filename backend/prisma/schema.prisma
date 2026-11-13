@@ -419,21 +419,6 @@ model Company {
   gdrive_email                     String?           @db.VarChar(255)
   gdrive_folder_id                 String?           @db.VarChar(128)
   gdrive_connected_at              DateTime?
-  // ── Meta Ads (daily spend → product ROAS report) ──────────────────────────
-  // One token for everything: by default the ads spend-sync reuses the tenant's
-  // existing onboarding/primary Meta token (reissued with the `ads_read` scope).
-  // meta_ads_token_encrypted is an OPTIONAL override only (AES-GCM) — NULL means
-  // reuse the WhatsApp token. meta_ad_account_id (numeric; code prefixes `act_`)
-  // is what marks Ads as "connected". Spend is pulled daily from the Meta
-  // Marketing API (Ads Insights) and stored per-campaign in ad_spend_daily.
-  meta_ads_token_encrypted         String?           @db.Text
-  meta_ad_account_id               String?           @db.VarChar(64)
-  meta_ads_currency                String?           @db.VarChar(8)
-  meta_ads_connected_at            DateTime?
-  meta_ads_sync_last_at            DateTime?
-  // Per-tenant auto-sync cadence (minutes) for the Meta spend pull. NULL =
-  // platform default (240 = 4h). In-process scheduler gates on sync_last_at.
-  meta_ads_sync_interval_minutes   Int?
   // Team attendance: tenant work-start time "HH:MM" (24h, tenant-local clock via
   // `timezone`). A self check-in later than this marks the day Late. NULL →
   // app default "09:30". work_end_time = general shift end (early-leave +
@@ -494,79 +479,15 @@ model Company {
   inventory_products   InventoryProduct[]
   inventory_variants   InventoryVariant[]
   inventory_movements  InventoryMovement[]
-  ad_spend_daily       AdSpendDaily[]
-  product_targets      ProductTarget[]
-  ad_campaigns         AdCampaign[]
+  ad_accounts          AdAccount[]
   attendance_records   AttendanceRecord[]
   attendance_leaves    AttendanceLeaveRequest[]
 
   @@map("companies")
 }
 
-// Meta Ads daily spend, stored per CAMPAIGN per DAY (campaign-level so the
-// campaign→product name match can be re-run at report time without re-syncing).
-// Pulled by MetaAdsSyncService from the Marketing API (Ads Insights).
-model AdSpendDaily {
-  id            Int      @id @default(autoincrement())
-  company_id    Int
-  spend_date    DateTime @db.Date
-  campaign_id   String   @db.VarChar(64)
-  campaign_name String   @db.VarChar(512)
-  spend         Decimal  @db.Decimal(12, 2)
-  impressions   Int?
-  clicks        Int?
-  // Meta-native pixel attribution for this campaign/day (from Ads Insights
-  // actions/action_values). meta_conversion_value ÷ spend = Meta ROAS. Counts
-  // placed-order checkout value (COD-inflated vs Shopify net). NULL = not pulled.
-  meta_purchases         Int?
-  meta_conversion_value  Decimal? @db.Decimal(12, 2)
-  currency      String?  @db.VarChar(8)
-  synced_at     DateTime @default(now())
 
-  company Company @relation(fields: [company_id], references: [id])
 
-  @@unique([company_id, spend_date, campaign_id])
-  @@index([company_id, spend_date])
-  @@map("ad_spend_daily")
-}
-
-// Per-campaign advertised product, derived from the ad's destination URL
-// (Marketing API creative → Shopify /products/<handle>). Lets the report attribute
-// a campaign's spend to the product it ADVERTISES even when no order has been
-// attributed yet (collapses the "Unattributed" bucket). Refreshed on sync.
-model AdCampaign {
-  id                Int       @id @default(autoincrement())
-  company_id        Int
-  campaign_id       String    @db.VarChar(64)
-  campaign_name     String?   @db.VarChar(512)
-  advertised_handle String?   @db.VarChar(255)
-  advertised_title  String?   @db.VarChar(255)
-  synced_at         DateTime  @default(now())
-
-  company Company @relation(fields: [company_id], references: [id])
-
-  @@unique([company_id, campaign_id])
-  @@map("ad_campaigns")
-}
-
-// Per-product MONTHLY target (value + units) for the ad ROAS report. product_key
-// is the Shopify line-item title (there is no product_id in line_items). Keyed by
-// calendar month "YYYY-MM"; Achieved = month-to-date actuals.
-model ProductTarget {
-  id           Int      @id @default(autoincrement())
-  company_id   Int
-  product_key  String   @db.VarChar(255)
-  period_month String   @db.VarChar(7)
-  target_value Decimal  @db.Decimal(12, 2) @default(0)
-  target_units Int      @default(0)
-  updated_at   DateTime @updatedAt
-
-  company Company @relation(fields: [company_id], references: [id])
-
-  @@unique([company_id, product_key, period_month])
-  @@index([company_id, period_month])
-  @@map("product_targets")
-}
 
 model User {
   id            Int        @id @default(autoincrement())
@@ -2532,4 +2453,207 @@ model CallLog {
   @@index([conversation_id, created_at])
   @@index([company_id, provider_call_id])
   @@map("call_logs")
+}
+
+// ─── Growth module (multi-platform ads + attribution + profit) ───────────────
+// One row per connected ad account on any platform (meta|google|tiktok|snap).
+// token_encrypted is an OPTIONAL override (AES-GCM); NULL on a Meta account
+// means "reuse the tenant's WhatsApp/onboarding token". Health is tracked with
+// separate attempt / success / error stamps (the old single sync_last_at was
+// stamped at enqueue time and showed "synced" even when the pull failed).
+model AdAccount {
+  id                Int       @id @default(autoincrement())
+  company_id        Int
+  platform          String    @db.VarChar(16)
+  external_id       String    @db.VarChar(64)
+  name              String?   @db.VarChar(255)
+  currency          String?   @db.VarChar(8)
+  timezone          String?   @db.VarChar(64)
+  token_encrypted   String?   @db.Text
+  store_id          Int?
+  status            String    @default("active") @db.VarChar(16)
+  sync_interval_min Int?
+  // Delivered-purchase Conversions API (Meta): send a "DeliveredPurchase" event
+  // per delivered order to this dataset (pixel) id so Meta learns real buyers.
+  capi_enabled      Boolean   @default(false)
+  capi_dataset_id   String?   @db.VarChar(64)
+  connected_at      DateTime  @default(now())
+  last_attempt_at   DateTime?
+  last_success_at   DateTime?
+  last_error        String?   @db.VarChar(500)
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@unique([company_id, platform, external_id])
+  @@index([company_id, status])
+  @@map("ad_accounts")
+}
+
+// Campaign / ad set / ad hierarchy + creative, refreshed on every sync.
+model AdEntity {
+  id                 Int      @id @default(autoincrement())
+  company_id         Int
+  account_id         Int
+  platform           String   @db.VarChar(16)
+  level              String   @db.VarChar(8)
+  external_id        String   @db.VarChar(64)
+  parent_external_id String?  @db.VarChar(64)
+  campaign_id        String?  @db.VarChar(64)
+  name               String?  @db.VarChar(512)
+  status             String?  @db.VarChar(32)
+  objective          String?  @db.VarChar(64)
+  daily_budget       Decimal? @db.Decimal(14, 2)
+  creative_thumb_url String?  @db.Text
+  destination_url    String?  @db.Text
+  advertised_handle  String?  @db.VarChar(255)
+  updated_at         DateTime @default(now())
+
+  @@unique([account_id, level, external_id])
+  @@index([company_id, level])
+  @@map("ad_entities")
+}
+
+// Daily insights at AD grain (legacy campaign-grain rows use ad_id "c:<campaign>").
+// spend_base / purchase_value_base = converted to the tenant's base currency.
+model AdInsightDaily {
+  id                  Int      @id @default(autoincrement())
+  company_id          Int
+  account_id          Int
+  platform            String   @db.VarChar(16)
+  date                DateTime @db.Date
+  campaign_id         String   @db.VarChar(64)
+  adset_id            String?  @db.VarChar(64)
+  ad_id               String   @db.VarChar(64)
+  currency            String?  @db.VarChar(8)
+  spend               Decimal  @default(0) @db.Decimal(14, 2)
+  spend_base          Decimal  @default(0) @db.Decimal(14, 2)
+  impressions         Int      @default(0)
+  reach               Int      @default(0)
+  clicks              Int      @default(0)
+  link_clicks         Int      @default(0)
+  video_3s            Int      @default(0)
+  thruplay            Int      @default(0)
+  add_to_cart         Int      @default(0)
+  checkouts           Int      @default(0)
+  purchases           Int      @default(0)
+  purchase_value      Decimal  @default(0) @db.Decimal(14, 2)
+  purchase_value_base Decimal  @default(0) @db.Decimal(14, 2)
+  messaging_started   Int      @default(0)
+  synced_at           DateTime @default(now())
+
+  @@unique([account_id, date, ad_id])
+  @@index([company_id, date])
+  @@map("ad_insights_daily")
+}
+
+// Daily FX rates (base→quote) for converting ad spend into the store currency.
+model FxRateDaily {
+  id     Int      @id @default(autoincrement())
+  base   String   @db.VarChar(8)
+  quote  String   @db.VarChar(8)
+  date   DateTime @db.Date
+  rate   Decimal  @db.Decimal(18, 8)
+  source String   @default("open.er-api.com") @db.VarChar(32)
+
+  @@unique([base, quote, date])
+  @@map("fx_rates_daily")
+}
+
+// Marketing touchpoints that preceded an order (Shopify customer-journey visits,
+// landing-site UTMs, click ids, Click-to-WhatsApp ad chats).
+model OrderTouchpoint {
+  id            Int      @id @default(autoincrement())
+  company_id    Int
+  order_gid     String   @db.VarChar(255)
+  seq           Int
+  occurred_at   DateTime
+  source        String   @db.VarChar(16)
+  channel       String   @db.VarChar(32)
+  platform      String?  @db.VarChar(16)
+  utm_source    String?  @db.VarChar(255)
+  utm_medium    String?  @db.VarChar(255)
+  utm_campaign  String?  @db.VarChar(512)
+  utm_content   String?  @db.VarChar(512)
+  click_id_type String?  @db.VarChar(16)
+  ad_ref        String?  @db.VarChar(191)
+  landing_page  String?  @db.Text
+  referrer      String?  @db.Text
+
+  @@unique([company_id, order_gid, seq])
+  @@index([company_id, order_gid])
+  @@map("order_touchpoints")
+}
+
+// Per-order materialized facts for the Growth dashboards (one row per order,
+// rebuilt incrementally by GrowthFactsService). Mirrored to ClickHouse when
+// CLICKHOUSE_URL is set; the dashboards read either store with identical SQL.
+model GrowthOrderFact {
+  company_id      Int
+  order_gid       String   @db.VarChar(255)
+  store_id        Int?
+  order_date      DateTime @db.Date
+  order_month     String   @db.VarChar(7)
+  cohort_month    String?  @db.VarChar(7)
+  created_at      DateTime
+  lifecycle       String   @db.VarChar(16)
+  payment         String   @db.VarChar(8)
+  gross           Decimal  @default(0) @db.Decimal(14, 2)
+  net             Decimal  @default(0) @db.Decimal(14, 2)
+  discounts       Decimal  @default(0) @db.Decimal(14, 2)
+  cogs            Decimal  @default(0) @db.Decimal(14, 2)
+  units           Int      @default(0)
+  units_no_cost   Int      @default(0)
+  ship_cost       Decimal  @default(0) @db.Decimal(14, 2)
+  ship_estimated  Boolean  @default(false)
+  fees            Decimal  @default(0) @db.Decimal(14, 2)
+  has_breakdown   Boolean  @default(false)
+  p_deliver       Decimal  @default(0) @db.Decimal(6, 4)
+  city            String?  @db.VarChar(128)
+  courier         String?  @db.VarChar(32)
+  customer_key    String?  @db.VarChar(255)
+  is_new          Boolean  @default(false)
+  ft_channel      String?  @db.VarChar(32)
+  ft_platform     String?  @db.VarChar(16)
+  ft_campaign_id  String?  @db.VarChar(64)
+  lt_channel      String?  @db.VarChar(32)
+  lt_platform     String?  @db.VarChar(16)
+  lt_campaign_id  String?  @db.VarChar(64)
+  touches         Int      @default(0)
+  days_to_convert Int?
+  version         BigInt   @default(0)
+  // Set once the delivered-purchase CAPI event was sent (never re-sent).
+  capi_sent_at    DateTime?
+  updated_at      DateTime @default(now())
+
+  @@id([company_id, order_gid])
+  @@index([company_id, order_date])
+  @@index([company_id, updated_at])
+  @@map("growth_order_facts")
+}
+
+// Attribution credit per order × model × window (credits sum to 1 per order/model/window).
+model GrowthAttribution {
+  id           Int      @id @default(autoincrement())
+  company_id   Int
+  order_gid    String   @db.VarChar(255)
+  order_date   DateTime @db.Date
+  model        String   @db.VarChar(12)
+  win          Int
+  channel      String   @db.VarChar(32)
+  platform     String?  @db.VarChar(16)
+  campaign_id  String?  @db.VarChar(64)
+  adset_id     String?  @db.VarChar(64)
+  ad_id        String?  @db.VarChar(64)
+  credit       Decimal  @db.Decimal(6, 4)
+  net          Decimal  @default(0) @db.Decimal(14, 2)
+  expected_net Decimal  @default(0) @db.Decimal(14, 2)
+  delivered    Decimal  @default(0) @db.Decimal(14, 2)
+  is_new       Boolean  @default(false)
+  version      BigInt   @default(0)
+
+  @@index([company_id, model, win, order_date])
+  @@index([company_id, order_gid])
+  @@map("growth_attribution")
 }

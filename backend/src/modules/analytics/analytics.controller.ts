@@ -119,30 +119,6 @@ export class AnalyticsController {
     return this.analytics.ordersAnalytics(user.companyId, dto);
   }
 
-  // Per-product daily ad-spend ROAS report (Meta spend × Shopify sales).
-  // OWNER/ADMIN only — exposes ad spend + targets.
-  @Get('product-roas')
-  @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
-  productRoas(
-    @CurrentUser() user: { companyId: number },
-    @Query() dto: DashboardDto,
-  ) {
-    return this.analytics.productRoasReport(user.companyId, dto);
-  }
-
-  // Ad Report v3: blended store Ads & Profit dashboard (gross/net, funnel,
-  // profit waterfall, MER). OWNER/ADMIN only. Arbitrary from/to range.
-  @Get('ads-summary')
-  @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
-  adsSummary(
-    @CurrentUser() user: { companyId: number },
-    @Query() dto: DashboardDto,
-  ) {
-    return this.analytics.adsSummary(user.companyId, dto);
-  }
-
   // Per-product inventory analytics dashboard (sell-through, turnover, GMROI,
   // ABC/Pareto star products, dead stock, return rate, reorder). OWNER/ADMIN.
   @Get('inventory-product')

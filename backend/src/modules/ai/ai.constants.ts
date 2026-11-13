@@ -61,7 +61,8 @@ export type AiFeature =
   | 'draft_order'
   | 'transcription'
   | 'embedding'
-  | 'address_quality';
+  | 'address_quality'
+  | 'growth';
 
 /**
  * RAG embeddings (OpenAI). Used independently of the active TEXT provider

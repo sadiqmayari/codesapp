@@ -78,7 +78,6 @@ import type {
   Template,
 } from '@/lib/crm-types';
 import { ASSIGNABLE_ROLES, ROLE_LABELS } from '@/lib/crm-types';
-import { MetaAdsTab } from '@/components/settings/meta-ads-tab';
 
 type Tab =
   | 'whatsapp'
@@ -123,7 +122,7 @@ export default function SettingsPage() {
     ...(canManageTeam ? ([['courier', 'Courier']] as Array<[Tab, string]>) : []),
     ['ai', 'AI'],
     ...(canManageTeam
-      ? ([['meta-ads', 'Meta Ads']] as Array<[Tab, string]>)
+      ? ([['meta-ads', 'Ad accounts']] as Array<[Tab, string]>)
       : []),
     ...(canManageTeam
       ? ([['competition', 'Competition']] as Array<[Tab, string]>)
@@ -157,7 +156,17 @@ export default function SettingsPage() {
       {tab === 'shopify' && canManageTeam && <ShopifyTab />}
       {tab === 'courier' && canManageTeam && <CourierTab />}
       {tab === 'ai' && <AiTab canManage={canManageTeam} />}
-      {tab === 'meta-ads' && canManageTeam && <MetaAdsTab />}
+      {tab === 'meta-ads' && canManageTeam && (
+        <div className="rounded-xl border border-line bg-surface p-5">
+          <h2 className="text-base font-bold text-ink">Ad accounts moved to Growth</h2>
+          <p className="mt-1 text-sm text-muted">
+            Connect Meta (and soon Google, TikTok and Snapchat), set sync schedules and turn on delivered-purchase events from Growth → Connections.
+          </p>
+          <Link href="/growth/connections" className="mt-3 inline-flex rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white">
+            Open Growth connections
+          </Link>
+        </div>
+      )}
       {tab === 'competition' && canManageTeam && <CompetitionTab />}
       {tab === 'security' && <SecurityTab />}
       {tab === 'profile' && <ProfileTab />}

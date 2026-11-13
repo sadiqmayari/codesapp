@@ -755,3 +755,27 @@ ALTER TABLE inventory_variants
   ADD COLUMN price_push_error  VARCHAR(500)  NULL;
 ```
 `price` already existed (synced, read-only) and is now editable too. Editing price/compare-at auto-pushes via `productVariantsBulkUpdate` — needs the **`write_products`** scope (not write_inventory). `compare_at_price` is also pulled from Shopify (`ProductVariant.compareAtPrice`) on sync.
+
+### Growth module foundation (migration `20261114000000_growth_foundation`, Nov-2026)
+Supersedes the Meta Ads / Ad Report tables above: **`ad_spend_daily`, `ad_campaigns`, `product_targets` and
+`companies.meta_ads_*` are DROPPED** after their data is copied (Meta connection → `ad_accounts`, spend →
+`ad_insights_daily` with `ad_id = 'c:<campaign_id>'`).
+- `ad_accounts` — one per connected ad account, any platform (`platform` meta|google|tiktok|snap, `external_id`,
+  `name`, `currency`, `timezone` auto-read from the platform, optional `token_encrypted` (AES-GCM; NULL on Meta =
+  reuse the WhatsApp token), `store_id`, `sync_interval_min`, `capi_enabled` + `capi_dataset_id`, health stamps
+  `last_attempt_at`/`last_success_at`/`last_error`). UNIQUE (company_id, platform, external_id).
+- `ad_entities` — campaign / adset / ad hierarchy + `creative_thumb_url`, `destination_url`, `advertised_handle`.
+  UNIQUE (account_id, level, external_id).
+- `ad_insights_daily` — AD-grain daily insights: spend (+`spend_base` in tenant currency), impressions, reach,
+  clicks, link_clicks, video_3s, thruplay, add_to_cart, checkouts, purchases, purchase_value(+`_base`),
+  messaging_started (CTWA). UNIQUE (account_id, date, ad_id); INDEX (company_id, date).
+- `fx_rates_daily` — (base, quote, date) → rate, daily snapshot.
+- `order_touchpoints` — per-order marketing visits (source shopify_journey|landing_site, channel, platform, utm_*,
+  click_id_type, landing_page, referrer). UNIQUE (company_id, order_gid, seq).
+- `growth_order_facts` — PK (company_id, order_gid): tenant-local `order_date`/`order_month`/`cohort_month`,
+  `lifecycle` (cancelled|rto|delivered|in_transit|confirmed|unconfirmed), `payment`, gross/net/discounts/cogs/
+  units/units_no_cost/ship_cost/ship_estimated/fees/has_breakdown, `p_deliver`, city, courier, `customer_key`,
+  `is_new`, first/last-touch channel/platform/campaign, `touches`, `days_to_convert`, `version`, `capi_sent_at`.
+- `growth_attribution` — credit per order × model (first|last|lnd|linear|position|decay) × window (1|7|28) ×
+  channel/platform/campaign/adset/ad, with credited net / expected_net / delivered. INDEX (company_id, model, win, order_date).
+

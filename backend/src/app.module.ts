@@ -35,7 +35,7 @@ import { InvoiceImportModule } from './modules/invoice-import/invoice-import.mod
 import { ContentModule } from './modules/content/content.module';
 import { PrModule } from './modules/pr/pr.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
-import { MetaAdsModule } from './modules/meta-ads/meta-ads.module';
+import { GrowthModule } from './modules/growth/growth.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -79,7 +79,7 @@ import { AppController } from './app.controller';
     ContentModule,
     PrModule,
     InventoryModule,
-    MetaAdsModule,
+    GrowthModule,
   ],
   controllers: [AppController],
 })

@@ -1,0 +1,60 @@
+<!--
+  CodesApp Growth — ClickHouse tuned for a SHARED 8 GB VPS (container capped at
+  1.5 GB). ClickHouse here is a derived, rebuildable copy of the Growth facts,
+  so durability features and every system log table are switched off.
+  Mounted at /etc/clickhouse-server/config.d/low-memory.xml.
+-->
+<clickhouse>
+    <logger>
+        <level>warning</level>
+        <size>50M</size>
+        <count>2</count>
+    </logger>
+
+    <!-- Hard ceiling below the container limit so ClickHouse refuses a query
+         instead of the kernel OOM-killing the container. -->
+    <max_server_memory_usage>1200000000</max_server_memory_usage>
+    <mark_cache_size>268435456</mark_cache_size>
+    <index_mark_cache_size>0</index_mark_cache_size>
+    <uncompressed_cache_size>0</uncompressed_cache_size>
+    <concurrent_threads_soft_limit_num>2</concurrent_threads_soft_limit_num>
+    <max_concurrent_queries>20</max_concurrent_queries>
+    <background_pool_size>2</background_pool_size>
+    <background_schedule_pool_size>4</background_schedule_pool_size>
+    <background_common_pool_size>2</background_common_pool_size>
+    <background_move_pool_size>1</background_move_pool_size>
+    <background_fetches_pool_size>1</background_fetches_pool_size>
+
+    <merge_tree>
+        <merge_max_block_size>1024</merge_max_block_size>
+        <max_bytes_to_merge_at_max_space_in_pool>1073741824</max_bytes_to_merge_at_max_space_in_pool>
+        <number_of_free_entries_in_pool_to_lower_max_size_of_merge>0</number_of_free_entries_in_pool_to_lower_max_size_of_merge>
+    </merge_tree>
+
+    <profiles>
+        <default>
+            <max_threads>2</max_threads>
+            <max_memory_usage>700000000</max_memory_usage>
+            <max_block_size>8192</max_block_size>
+            <max_download_threads>1</max_download_threads>
+            <input_format_parallel_parsing>0</input_format_parallel_parsing>
+            <output_format_parallel_formatting>0</output_format_parallel_formatting>
+        </default>
+    </profiles>
+
+    <!-- System log tables eat RAM + disk and are not needed for a derived store. -->
+    <query_log remove="1" />
+    <query_thread_log remove="1" />
+    <query_views_log remove="1" />
+    <part_log remove="1" />
+    <trace_log remove="1" />
+    <metric_log remove="1" />
+    <asynchronous_metric_log remove="1" />
+    <session_log remove="1" />
+    <text_log remove="1" />
+    <processors_profile_log remove="1" />
+    <opentelemetry_span_log remove="1" />
+    <asynchronous_insert_log remove="1" />
+    <backup_log remove="1" />
+    <error_log remove="1" />
+</clickhouse>

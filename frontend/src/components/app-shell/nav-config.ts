@@ -11,7 +11,7 @@ import {
   ShoppingBag,
   Webhook,
   BarChart3,
-  Target,
+  TrendingUp,
   Trophy,
   CreditCard,
   LifeBuoy,
@@ -117,6 +117,7 @@ export function buildNav(user: AuthUser | null): NavSection[] {
     {
       title: 'Growth',
       items: [
+        ...(isOwnerAdmin ? [{ href: '/growth', label: 'Growth', icon: TrendingUp }] : []),
         { href: '/templates', label: 'Templates', icon: FileText },
         { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone },
         { href: '/bots', label: 'Bots', icon: Bot },
@@ -130,9 +131,6 @@ export function buildNav(user: AuthUser | null): NavSection[] {
       title: 'Insights',
       items: [
         { href: '/analytics', label: 'Analytics', icon: BarChart3 },
-        ...(isOwnerAdmin
-          ? [{ href: '/ad-report', label: 'Ad Report', icon: Target }]
-          : []),
         { href: '/leaderboard', label: 'Leaderboard', icon: Trophy },
       ],
     },

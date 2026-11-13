@@ -131,6 +131,33 @@ services:
     networks:
       - codesapp_internal
 
+  # ClickHouse = the Growth module's analytical store. A DERIVED, rebuildable
+  # copy of growth_order_facts / growth_attribution / ad_insights_daily (MariaDB
+  # stays the system of record). Internal only, hard-capped for the shared 8 GB
+  # box, all system logs off (./clickhouse/low-memory.xml). If it is down the
+  # app falls back to MariaDB automatically. Create/update once with
+  #   docker compose up -d clickhouse
+  # and set CLICKHOUSE_URL=http://clickhouse:8123 (+ USER/PASSWORD/DB) in .env.
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    container_name: codesapp-clickhouse
+    restart: always
+    mem_limit: 1536m
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    environment:
+      CLICKHOUSE_DB: growth
+      CLICKHOUSE_USER: codesapp
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - codesapp_clickhouse:/var/lib/clickhouse
+      - ./clickhouse/low-memory.xml:/etc/clickhouse-server/config.d/low-memory.xml:ro
+    networks:
+      - codesapp_internal
+
 networks:
   n8n_default:
     external: true        # the existing network Traefik + n8n already use
@@ -140,3 +167,4 @@ networks:
 volumes:
   codesapp_mysql:
   codesapp_pgvector:
+  codesapp_clickhouse:

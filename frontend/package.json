@@ -17,6 +17,7 @@
     "@zxing/library": "^0.23.0",
     "axios": "^1.7.2",
     "clsx": "^2.1.1",
+    "echarts": "^5.5.1",
     "html2pdf.js": "^0.10.3",
     "jssip": "^3.13.9",
     "lucide-react": "^0.399.0",

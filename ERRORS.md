@@ -959,3 +959,21 @@ The COGS query joins a JSON_TABLE-extracted `variantId` to `inventory_variants.s
 
 ## [Contacts] JSON_TABLE tag names came back as "?" for emoji tags
 **Cause:** a `JSON_TABLE` string column without an explicit charset can fall back to a non-utf8mb4 charset. **Fix:** declare `tag VARCHAR(100) CHARACTER SET utf8mb4 PATH '$'` (`ContactsService.distinctTags`; it also falls back to an in-process count if JSON_TABLE errors). Note: seeding emoji via the Windows `mysql` CLI also stores `?` — seed through Prisma when testing.
+
+## [Growth / Ad Report] audit fixes (Nov-2026, Growth rebuild)
+The old `/ad-report` had these defects; each is fixed by the Growth module (see CLAUDE.md "Growth module"):
+- **Refresh did nothing** — it enqueued a sync then re-read the same 5-min cache key. Fix: per-tenant data version in every cache key, bumped after each sync/build (+ `growth.updated` socket).
+- **"Synced X ago" lied** — `meta_ads_sync_last_at` was stamped at enqueue. Fix: `last_attempt_at` / `last_success_at` / `last_error` per account.
+- **"Net = delivered & kept" included unfulfilled + in-transit COD** and returns counted only on `received_at`. Fix: one lifecycle per order (RTO = received OR returned/failed) + Realized / Pending / Expected (× delivery probability).
+- **Funnel stages didn't nest** (cancelled orders' shipments + never-booked `address_issue` counted as fulfilled; delivered+returned double-subtracted; "confirmed" = not cancelled). Fix: exclusive lifecycle CASE + real confirmation.
+- **Net margin ÷ gross vs gross margin ÷ net; AOV incl. cancelled; legacy rows mixed in shipping+tax.** Fix: margins ÷ net, AOV non-cancelled, `has_breakdown` coverage.
+- **Missing cost → 0 silently, bundles 0; shipping 0 without an invoice; fees hard-coded 0.** Fix: bundle component cost, `units_no_cost` coverage, per-courier shipping estimate, PayFast fee share.
+- **Spend currency never converted (hand-typed), ignored the store filter; inventory analytics also labelled store sales with the ad currency.** Fix: currency/timezone read from the platform + daily FX → `spend_base`; store mapping; inventory analytics uses the store order currency.
+- **New customers by raw Shopify phone (`+92…` ≠ `03…`), incl. cancelled.** Fix: last-10-digit/email customer key, first non-cancelled order.
+- **Trend keys from `String(Date)`** (MariaDB DATE → JS Date) risked weekday-alphabetical order; no zero-fill. Fix: `ymdCell()` normalisation + zero-filled day lists.
+- **Stale spend** — insights omit zero rows and the sync only upserted; disconnect kept old spend. Fix: window delete-then-insert; disconnect deletes the account's data.
+- **First vs last click impossible** — journey fetched only with a landing site and `utm_campaign` overwritten. Fix: every order's journey → `order_touchpoints` + six attribution models.
+
+## [Ops] mariadbd OOM-killed repeatedly on the shared VPS (found 2026-11-13)
+`dmesg` shows the kernel killing `mariadbd` at ~4–4.9 GB anon RSS on 2026-11-10 09:30, 11-12 12:04, 11-13 06:21 and 11-13 12:38 (buffer pool is only 1 GB → per-connection buffers / allocator fragmentation). Box at 40 MB free, swap 100 % used, load ~48, health ~18 s. This is why ClickHouse was NOT deployed with the Growth release. Remediation options: cap MariaDB (`--max-connections`, `tmp_table_size`/`max_heap_table_size`, `sort_buffer_size`, `performance_schema=OFF`), `MALLOC_ARENA_MAX=2` or jemalloc for the mariadb container, a `mem_limit`, and/or move ClickHouse (and later more) to a second small VPS.
+

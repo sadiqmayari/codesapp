@@ -1217,3 +1217,18 @@ Full audit of the contacts module (backend 11 files + frontend pages/components)
 - **Features:** STOP/START marketing consent; sort + multi-tag/city/consent/email/activity filters (URL-persisted); bulk tag/untag/block/opt-out/delete/restore by selection or "all matching"; CSV export; duplicate review + transactional merge; restore deleted; Contact 360 page (profile, LTV/orders/delivery stats, Timeline/Chats/Orders/Tickets/Calls/Notes); Open chat / Send template for any contact; CSV import v2 (drag-drop, `;`, custom fields, update/skip, per-row errors, background progress); segments manager with live counts + broadcast deep link; shared tag/field editors.
 - Verified: 17 unit tests + an end-to-end service run against a throwaway MySQL 8.4 (create/409, tag paging totals, RBAC 403s, bulk by filter, sendable audience, duplicates, merge re-pointing, export, CSV update/skip modes).
 - Migration `20261113010000_contacts_360` (auto-applies). No env change. Follow-up: merge prod duplicates (Contacts → Duplicates), then add unique `(company_id, phone)`.
+
+## Growth module (ex-Ad Report) — 2026-11-14
+- [x] Audit of the Ad Report: 21 defects found and fixed (ERRORS "[Growth / Ad Report] audit fixes").
+- [x] Rename `/ad-report` → `/growth` (redirect kept); `modules/meta-ads` → `modules/growth`; dead per-product ROAS + targets code deleted.
+- [x] Multi-platform ad layer (Meta live at ad grain; Google / TikTok / Snap adapters ready behind env-gated developer apps).
+- [x] Per-order growth facts (lifecycle, realized / pending / expected net, COGS incl. bundles, shipping estimate, fees, new-customer cohorts).
+- [x] Attribution: Shopify journeys (all visits) + Click-to-WhatsApp, 6 models × 3 windows, unit-tested.
+- [x] ClickHouse store + mirror with automatic MariaDB fallback (code ready; **not deployed — VPS memory**).
+- [x] Forecast (month pacing + 80 % band), budget simulator, rule-based opportunities, anomalies.
+- [x] AI: Growth Brief (rules fallback) + Ask Growth (tool-calling, charts); delivered-purchase CAPI (opt-in).
+- [x] Frontend: ECharts system, Overview / Channels / Campaigns / Creatives / Attribution / Customers / Forecast / Connections, compact / full / lakh number formats, live refresh, shortcuts.
+- [ ] Deploy ClickHouse once the VPS memory issue is fixed (or on a second VPS).
+- [ ] Google / TikTok / Snap: obtain developer approvals, set env, add OAuth connect buttons.
+- [ ] WhatsApp delivery of the daily brief (needs an approved utility template).
+
