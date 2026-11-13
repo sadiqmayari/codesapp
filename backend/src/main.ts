@@ -44,6 +44,7 @@ const BACKEND_ROOTS = [
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { RedisIoAdapter } from './common/adapters/redis-io.adapter';
+import { processRole, servesFrontend } from './common/utils/process-role';
 
 // Print env var presence (NEVER values) before NestJS DI runs.
 // This lets us diagnose missing env in Hostinger before the app throws.
@@ -105,7 +106,10 @@ async function bootstrap() {
     ),
     reason: '' as string,
   };
-  try {
+  if (!servesFrontend()) {
+    // APP_ROLE=worker: background jobs only — no UI, saves the Next.js heap.
+    console.log('[next] skipped (APP_ROLE=worker)');
+  } else try {
     const nextApp = createNextApp({ dev: false, dir: frontendDir });
     await nextApp.prepare();
     nextHandle = nextApp.getRequestHandler();
@@ -285,7 +289,7 @@ async function bootstrap() {
   const port = Number(config.get<string>('PORT') ?? process.env.PORT ?? 3001);
   await app.listen(port);
 
-  console.log(`CodesApp backend running on port ${port}`);
+  console.log(`CodesApp backend running on port ${port} (role=${processRole()})`);
 }
 
 bootstrap().catch((err) => {

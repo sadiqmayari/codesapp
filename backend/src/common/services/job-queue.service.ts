@@ -5,6 +5,11 @@ import {
   OnModuleDestroy,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { processRole, runsBackground } from '../utils/process-role';
+import { Redis } from 'ioredis';
+
+/** Redis channel the web container uses to wake the worker's poller instantly. */
+const WAKE_CHANNEL = 'codesapp:jobs:wake';
 import { Prisma } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -46,6 +51,11 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
   // Wake-on-enqueue coordination (keeps the strict non-overlapping guarantee).
   private polling = false;
   private wakeRequested = false;
+  // Split deployment (APP_ROLE=web|worker + REDIS_URL): web publishes, worker
+  // subscribes, so an enqueue on web still starts the job within ~50 ms.
+  private wakePub: Redis | null = null;
+  private wakeSub: Redis | null = null;
+  private lastRemoteWake = 0;
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -57,11 +67,39 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
     // piled up pending queries/promises in memory until the process was OOM-
     // killed and restarted. Self-scheduling guarantees only ONE poll at a time.
     this.stopped = false;
+    this.initRemoteWake();
+    if (!runsBackground()) {
+      // APP_ROLE=web: this container only ENQUEUES; the worker container polls.
+      this.logger.log('Job queue poller disabled (APP_ROLE=web)');
+      return;
+    }
     this.scheduleNextPoll();
     this.logger.log('Job queue poller started (every 2s, non-overlapping)');
   }
 
+  /** Redis pub/sub wake between containers. Best-effort: polling still works without it. */
+  private initRemoteWake() {
+    const url = process.env.REDIS_URL;
+    if (!url || processRole() === 'all') return;
+    const opts = { maxRetriesPerRequest: null, enableOfflineQueue: false, lazyConnect: false } as const;
+    try {
+      if (processRole() === 'web') {
+        this.wakePub = new Redis(url, opts);
+        this.wakePub.on('error', () => undefined);
+      } else {
+        this.wakeSub = new Redis(url, opts);
+        this.wakeSub.on('error', () => undefined);
+        void this.wakeSub.subscribe(WAKE_CHANNEL).catch(() => undefined);
+        this.wakeSub.on('message', () => this.wake());
+      }
+    } catch (e) {
+      this.logger.warn(`Remote wake unavailable: ${(e as Error).message}`);
+    }
+  }
+
   onModuleDestroy() {
+    this.wakePub?.disconnect();
+    this.wakeSub?.disconnect();
     this.stopped = true;
     if (this.pollTimer) {
       clearTimeout(this.pollTimer);
@@ -102,6 +140,15 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
    */
   wake(): void {
     if (this.stopped) return;
+    if (!runsBackground()) {
+      // Web container: nudge the worker (throttled to one publish per 50 ms).
+      const now = Date.now();
+      if (this.wakePub && now - this.lastRemoteWake > 50) {
+        this.lastRemoteWake = now;
+        void this.wakePub.publish(WAKE_CHANNEL, '1').catch(() => undefined);
+      }
+      return;
+    }
     if (this.polling) {
       this.wakeRequested = true;
       return;

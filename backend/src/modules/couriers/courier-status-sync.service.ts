@@ -15,6 +15,7 @@ import {
   CourierAdapter,
   UnmappedCourierStatusError,
 } from './adapters/courier-adapter.interface';
+import { runsBackground } from '../../common/utils/process-role';
 
 const SYNC_QUEUE = 'courier-status-sync';
 
@@ -94,6 +95,7 @@ export class CourierStatusSyncService implements OnModuleInit, OnModuleDestroy {
     // (Settings → Courier) without a crontab edit. The external
     // /cron/couriers/sync-status endpoint calls the SAME gated method, so it's a
     // harmless safety net (never double-enqueues — dedupKey + last-run gate).
+    if (!runsBackground()) return; // APP_ROLE=web: the worker container schedules.
     this.schedulerTimer = setInterval(() => {
       void this.syncAllCompanies().catch((e) =>
         this.logger.warn(`scheduler tick failed: ${(e as Error)?.message ?? e}`),

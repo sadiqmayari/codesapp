@@ -38,7 +38,11 @@ export class GrowthMirrorService implements OnModuleInit {
   onModuleInit() {
     if (!this.ch.enabled) return;
     this.jobs.registerWorker(MIRROR_QUEUE, (p) => this.handle(p as MirrorJob), 1, 3600);
-    setTimeout(() => void this.verifyAll().catch((e) => this.logger.warn(`verify: ${e}`)), 150_000);
+    // Every role re-verifies (the web container serves reads, the worker fills
+    // the mirror — this is how web learns a tenant's mirror became ready).
+    const run = () => void this.verifyAll().catch((e) => this.logger.warn(`verify: ${e}`));
+    setTimeout(run, 150_000);
+    setInterval(run, 10 * 60_000);
   }
 
   /** Read through the best available store. */
@@ -79,8 +83,13 @@ export class GrowthMirrorService implements OnModuleInit {
       const chCount = n(
         await this.ch.scalar('SELECT count() FROM growth_order_facts FINAL WHERE company_id = {co:Int32}', { co: c.company_id }),
       );
-      if (chCount === n(c.c) && chCount > 0) this.ready.add(c.company_id);
-      else await this.enqueue(c.company_id, 'full');
+      // Small lag between MariaDB and the incremental mirror is normal; only a
+      // real gap (missing >2% of orders) takes the tenant off ClickHouse.
+      if (chCount > 0 && chCount >= n(c.c) * 0.98) this.ready.add(c.company_id);
+      else {
+        this.ready.delete(c.company_id);
+        await this.enqueue(c.company_id, 'full');
+      }
     }
   }
 

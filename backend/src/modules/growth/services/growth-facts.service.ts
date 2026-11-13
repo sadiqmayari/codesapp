@@ -7,6 +7,7 @@ import { CapiService } from './capi.service';
 import { GrowthMirrorService } from '../store/growth-mirror.service';
 import { classify, credit, DEFAULT_WINDOW, MODELS, RawTouch, Touch, WINDOWS } from '../attribution/attribution';
 import { chunk, customerKey, localYmd, n, offsetMinutes, zoneOffset } from '../growth.util';
+import { runsBackground } from '../../../common/utils/process-role';
 
 export const FACTS_QUEUE = 'growth-facts';
 const BATCH = 300;
@@ -95,6 +96,7 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     this.jobs.registerWorker(FACTS_QUEUE, (p) => this.handle(p as FactsJob), 1, 3600);
+    if (!runsBackground()) return; // APP_ROLE=web: the worker container schedules.
     this.timer = setInterval(() => void this.tick().catch((e) => this.logger.warn(`tick: ${e}`)), TICK_MS);
     setTimeout(() => void this.tick().catch(() => undefined), 120_000);
   }

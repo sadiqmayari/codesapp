@@ -9,6 +9,7 @@ import { FxService } from './fx.service';
 import { GrowthVersionService } from './growth-version.service';
 import { GrowthMirrorService } from '../store/growth-mirror.service';
 import { addDays, chunk } from '../growth.util';
+import { runsBackground } from '../../../common/utils/process-role';
 
 export const ADS_QUEUE = 'growth-ads';
 export const DEFAULT_SYNC_INTERVAL_MIN = 240;
@@ -57,6 +58,7 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     this.jobs.registerWorker(ADS_QUEUE, (p) => this.handle(p as AdsJob), 2, 600);
+    if (!runsBackground()) return; // APP_ROLE=web: the worker container schedules.
     this.timer = setInterval(() => void this.tick().catch((e) => this.logger.warn(`tick: ${e}`)), TICK_MS);
     setTimeout(() => void this.bootstrap().catch((e) => this.logger.warn(`bootstrap: ${e}`)), 90_000);
   }

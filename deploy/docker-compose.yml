@@ -15,6 +15,13 @@ services:
     image: codesapp-app:latest
     container_name: codesapp-app
     restart: always
+    # Web role: HTTP + Socket.io + Next only. Jobs/schedulers run in `worker`.
+    mem_limit: 1600m
+    environment:
+      APP_ROLE: web
+      NODE_OPTIONS: --max-old-space-size=1280
+      DATABASE_URL: ${DATABASE_URL_WEB}
+      REDIS_URL: redis://redis:6379
     # Cap container logs so the verbose 2s poller can't slowly fill the disk.
     logging:
       driver: json-file
@@ -25,6 +32,7 @@ services:
       - .env
     depends_on:
       - mysql
+      - redis
     volumes:
       - ./storage:/app/storage
     networks:
@@ -62,30 +70,35 @@ services:
       - traefik.http.routers.codesapp-pr.service=codesapp
       - traefik.http.routers.codesapp-pr.middlewares=codesapp-compress
 
-  # DEDICATED Redis for CodesApp — NOT n8n's Redis (that lives in the n8n
-  # compose project; we must never touch it). This one is on codesapp_internal
-  # ONLY (never n8n_default), memory-capped, no exposed ports, no persistence
-  # (socket.io uses it for pub/sub fan-out, not storage).
-  #
-  # Gated behind the `scale` profile: a normal `docker compose up -d` does NOT
-  # start it. It only comes up with `--profile scale`, at which point you also
-  # set REDIS_URL in .env and run 2+ `app` replicas. Until then production is
-  # byte-for-byte the single-container, in-memory-socket setup it is today.
+  # Worker role: SAME image. Runs the job-queue poller + every in-process
+  # scheduler (courier sync, ad sync, Growth facts, ClickHouse mirror). No
+  # Next.js, no Traefik route. Socket events reach browsers via Redis.
+  worker:
+    image: codesapp-app:latest
+    container_name: codesapp-worker
+    restart: always
+    mem_limit: 1200m
+    env_file:
+      - .env
+    environment:
+      APP_ROLE: worker
+      NODE_OPTIONS: --max-old-space-size=900
+      DATABASE_URL: ${DATABASE_URL_WORKER}
+      REDIS_URL: redis://redis:6379
+    depends_on: [mysql, redis, app]
+    volumes:
+      - ./storage:/app/storage
+    networks:
+      - codesapp_internal
+
+  # Dedicated Redis (NOT n8n's): Socket.io fan-out web<->worker + job wake-ups.
+  # Internal only, memory-capped, no persistence.
   redis:
     image: redis:7-alpine
     container_name: codesapp-redis
     restart: always
-    profiles: ["scale"]
-    command:
-      - "redis-server"
-      - "--save"
-      - ""
-      - "--appendonly"
-      - "no"
-      - "--maxmemory"
-      - "128mb"
-      - "--maxmemory-policy"
-      - "noeviction"
+    mem_limit: 192m
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
     networks:
       - codesapp_internal   # private only — never n8n_default
 
@@ -96,14 +109,20 @@ services:
     image: mariadb:11.4
     container_name: codesapp-mysql
     restart: always
+    mem_limit: 3g
+    # Leak fix (Nov-2026): cap per-session memory, jemalloc returns freed memory
+    # to the OS; app pools recycle connections (max_connection_lifetime=300).
     command:
       - "--innodb-buffer-pool-size=1G"
-      - "--max-connections=80"
+      - "--max-connections=60"
+      - "--max-session-mem-used=671088640"
+      - "--performance-schema=OFF"
     environment:
       MYSQL_DATABASE: codes_app
       MYSQL_USER: app
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      LD_PRELOAD: /usr/lib/x86_64-linux-gnu/libjemalloc.so.2
     volumes:
       - codesapp_mysql:/var/lib/mysql
     networks:
@@ -119,6 +138,7 @@ services:
     image: pgvector/pgvector:pg16
     container_name: codesapp-postgres
     restart: always
+    mem_limit: 512m
     command:
       - "-c"
       - "shared_buffers=256MB"
