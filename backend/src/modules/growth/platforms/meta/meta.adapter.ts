@@ -250,6 +250,10 @@ export class MetaAdapter implements AdPlatformAdapter {
         const body = await fn();
         const code = (body as { error?: MetaError })?.error?.code;
         if (code != null && TRANSIENT_CODES.has(code)) throw new TransientMetaError(`Meta transient error ${code}`);
+        if (code != null && THROTTLE_CODES.has(code)) {
+          const err = (body as { error?: MetaError }).error ?? {};
+          this.throwMeta(err);
+        }
         return body;
       } catch (e) {
         const transient =
@@ -273,8 +277,8 @@ export class MetaAdapter implements AdPlatformAdapter {
     const code = err.code ?? 0;
     if (THROTTLE_CODES.has(code)) {
       throw new AdPlatformRateLimitError(
-        'Meta is rate-limiting this ad account; the sync will retry automatically.',
-        15 * 60_000,
+        'Meta API usage limit reached for this ad account — sync resumes automatically.',
+        30 * 60_000,
       );
     }
     if (TOKEN_CODES.has(code)) {
@@ -309,31 +313,6 @@ export class MetaAdapter implements AdPlatformAdapter {
           const chunks: Buffer[] = [];
           res.on('data', (c) => chunks.push(c as Buffer));
           res.on('end', () => {
-            // Business-use-case throttle: back off BEFORE Meta starts erroring.
-            const buc = res.headers['x-business-use-case-usage'];
-            if (typeof buc === 'string') {
-              try {
-                const usage = JSON.parse(buc) as Record<
-                  string,
-                  Array<{ estimated_time_to_regain_access?: number; call_count?: number }>
-                >;
-                for (const list of Object.values(usage)) {
-                  for (const u of list ?? []) {
-                    if ((u.estimated_time_to_regain_access ?? 0) > 0) {
-                      reject(
-                        new AdPlatformRateLimitError(
-                          'Meta usage limit reached for this ad account; retrying later.',
-                          (u.estimated_time_to_regain_access ?? 15) * 60_000,
-                        ),
-                      );
-                      return;
-                    }
-                  }
-                }
-              } catch {
-                /* header is advisory */
-              }
-            }
             const raw = Buffer.concat(chunks).toString('utf8');
             try {
               resolve((raw ? JSON.parse(raw) : {}) as T);

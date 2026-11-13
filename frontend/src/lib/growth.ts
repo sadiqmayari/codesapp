@@ -248,7 +248,7 @@ export interface AdAccount {
   lastAttemptAt: string | null;
   lastSuccessAt: string | null;
   lastError: string | null;
-  health: 'ok' | 'error' | 'pending';
+  health: 'ok' | 'error' | 'pending' | 'paused';
   currencyMismatch: boolean;
   timezoneMismatch: boolean;
 }

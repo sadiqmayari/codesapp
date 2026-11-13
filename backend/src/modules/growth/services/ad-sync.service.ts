@@ -14,6 +14,7 @@ import { runsBackground } from '../../../common/utils/process-role';
 export const ADS_QUEUE = 'growth-ads';
 export const DEFAULT_SYNC_INTERVAL_MIN = 240;
 const DEFAULT_WINDOW_DAYS = 3;
+const ENTITY_REFRESH_MS = 6 * 3_600_000;
 const CHUNK_DAYS = 7; // per insights request (big windows time out on Meta) // a day's spend keeps firming up for ~72h
 const MAX_WINDOW_DAYS = 90;
 const TICK_MS = 10 * 60_000;
@@ -146,6 +147,16 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
         .update({ where: { id: job.accountId }, data: { last_error: msg.slice(0, 500) } })
         .catch(() => undefined);
       if (e instanceof AdPlatformAuthError) return; // retrying a bad token is pointless
+      if (e instanceof AdPlatformRateLimitError) {
+        // Throttled: resume after Meta's cool-down instead of hammering it. Saved
+        // chunks are skipped on resume, so a long backfill finishes in steps.
+        await this.jobs.enqueue(ADS_QUEUE, { accountId: job.accountId, sinceDays: job.sinceDays } satisfies AdsJob, {
+          dedupKey: `growth:ads:resume:${job.accountId}`,
+          delayMs: Math.max(e.retryAfterMs, 15 * 60_000),
+          maxAttempts: 2,
+        });
+        return;
+      }
       throw e;
     }
   }
@@ -169,10 +180,20 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Hierarchy + creatives (best-effort: insights still land if this fails).
+    // Hierarchy + creatives are heavy (thousands of ads) and change slowly:
+    // refresh them at most every 6 hours to stay well inside Meta's quota.
     let entities: AdEntityRow[] = [];
+    const lastEntity = await this.prisma.adEntity.findFirst({
+      where: { account_id: acc.id },
+      orderBy: { updated_at: 'desc' },
+      select: { updated_at: true },
+    });
+    const entitiesFresh = !!lastEntity && Date.now() - lastEntity.updated_at.getTime() < ENTITY_REFRESH_MS;
     try {
-      entities = await adapter.listEntities(token, acc.external_id);
-      await this.saveEntities(acc.company_id, acc.id, acc.platform, entities);
+      if (!entitiesFresh) {
+        entities = await adapter.listEntities(token, acc.external_id);
+        await this.saveEntities(acc.company_id, acc.id, acc.platform, entities);
+      }
     } catch (e) {
       if (e instanceof AdPlatformAuthError && e.kind !== 'other') throw e;
       this.logger.warn(`entities failed (account ${acc.id}): ${(e as Error).message}`);
@@ -206,6 +227,20 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
     let total = 0;
     for (let chunkEnd = until; chunkEnd > since; chunkEnd = addDays(chunkEnd, -CHUNK_DAYS)) {
       const chunkStart = addDays(chunkEnd, -(CHUNK_DAYS - 1)) < since ? since : addDays(chunkEnd, -(CHUNK_DAYS - 1));
+      // Resume: older chunks already pulled at ad grain in the last 12h are kept
+      // (recent days are always re-pulled — their spend is still firming up).
+      if (chunkEnd < addDays(until, -DEFAULT_WINDOW_DAYS - 1)) {
+        const done = await this.prisma.adInsightDaily.findFirst({
+          where: {
+            account_id: acc.id,
+            date: { gte: new Date(`${chunkStart}T00:00:00.000Z`), lte: new Date(`${chunkEnd}T00:00:00.000Z`) },
+            NOT: { ad_id: { startsWith: 'c:' } },
+            synced_at: { gte: new Date(Date.now() - 12 * 3_600_000) },
+          },
+          select: { id: true },
+        });
+        if (done) continue;
+      }
       const rows = await adapter.fetchInsights(token, acc.external_id, chunkStart, chunkEnd);
       const data: Prisma.AdInsightDailyCreateManyInput[] = [];
       for (const r of rows) {

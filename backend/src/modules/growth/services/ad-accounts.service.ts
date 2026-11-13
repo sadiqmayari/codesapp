@@ -127,7 +127,13 @@ export class AdAccountsService {
         lastAttemptAt: a.last_attempt_at,
         lastSuccessAt: a.last_success_at,
         lastError: a.last_error,
-        health: a.last_error ? 'error' : a.last_success_at ? 'ok' : 'pending',
+        health: a.last_error
+          ? /usage limit|rate-limit|resumes automatically|did not respond in time/i.test(a.last_error)
+            ? 'paused'
+            : 'error'
+          : a.last_success_at
+            ? 'ok'
+            : 'pending',
         currencyMismatch: !!(a.currency && base && a.currency !== base),
         timezoneMismatch: !!(a.timezone && tenant?.timezone && zoneOffset(a.timezone) !== tenantOff),
       })),
