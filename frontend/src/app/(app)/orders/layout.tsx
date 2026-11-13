@@ -116,8 +116,14 @@ export default function OrdersLayout({ children }: { children: React.ReactNode }
   const insRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!insOpen) return;
+    // The menu renders OUTSIDE insRef (so the overflow-x nav can't clip it), and
+    // in the App Router React's event root is `document` itself — a synthetic
+    // stopPropagation can't shield this listener. So ignore clicks inside the
+    // menu explicitly, else mousedown closes it before the link's click lands.
     const onDoc = (e: MouseEvent) => {
-      if (insRef.current && !insRef.current.contains(e.target as Node)) setInsOpen(false);
+      const t = e.target as Element | null;
+      if (insRef.current?.contains(t as Node) || t?.closest?.('[data-insights-menu]')) return;
+      setInsOpen(false);
     };
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setInsOpen(false);
     document.addEventListener('mousedown', onDoc);
@@ -232,8 +238,8 @@ function InsightsMenu({
     <div
       role="menu"
       style={{ left: Math.max(8, Math.min(r.left, window.innerWidth - 232)), top: r.bottom + 4 }}
+      data-insights-menu
       className="fixed z-40 w-56 rounded-xl border border-line bg-surface p-1.5 shadow-lg"
-      onMouseDown={(e) => e.stopPropagation()}
     >
       {items.map((t) => (
         <Link
