@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -147,8 +148,15 @@ export function OrderDetailDrawer({
     };
   }, [onClose, chat, canNav, go]);
 
-  return (
-    <div className="fixed inset-0 z-[80] flex justify-end" data-order-drawer>
+  // Portal to <body>: the drawer is often opened from inside a `truncate` /
+  // nowrap chip or row, and CSS inheritance (white-space, text-align, case…)
+  // would otherwise leak in and stop long text from wrapping.
+  if (typeof document === 'undefined') return null;
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[80] flex justify-end whitespace-normal text-left font-normal normal-case tracking-normal"
+      data-order-drawer
+    >
       <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
       <div className="relative flex h-full w-full max-w-xl flex-col bg-sunken shadow-2xl">
         {chat ? (
@@ -195,7 +203,8 @@ export function OrderDetailDrawer({
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
