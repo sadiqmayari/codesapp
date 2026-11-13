@@ -73,7 +73,7 @@ async function bwipPng(opts: Record<string, unknown>): Promise<Buffer> {
 
 /** Strip chars Helvetica (WinAnsi) can't encode so drawText never throws. */
 const safe = (s: unknown): string =>
-  String(s == null ? '' : s).replace(/[^\x20-\x7E -ÿ]/g, '');
+  String(s == null ? '' : s).replace(/[^\x20-\x7E\u00A0-\u00FF]/g, '');
 
 /** Greedy word-wrap to a max pixel width (hard-breaks over-long words). */
 function wrap(text: string, maxW: number, font: PDFFont, size: number): string[] {

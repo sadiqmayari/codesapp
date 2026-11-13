@@ -301,7 +301,7 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
 
       for (const id of chosen) {
         worker.activeSlots++;
-        this.runJob(id, worker).finally(() => {
+        void this.runJob(id, worker).finally(() => {
           worker.activeSlots--;
         });
       }

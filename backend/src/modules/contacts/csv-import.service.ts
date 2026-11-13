@@ -61,7 +61,7 @@ const ALIASES: Record<string, string> = {
   tags: 'tags', tag: 'tags', labels: 'tags', segment: 'tags',
 };
 
-const keyOf = (h: string) => h.replace(/^﻿/, '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+const keyOf = (h: string) => h.replace(/^\uFEFF/, '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 interface ParsedRow {
@@ -137,7 +137,7 @@ export class CsvImportService {
 
   /** Exposed for tests. */
   parseFile(buf: Buffer): { rows: ParsedRow[]; errors: CsvRowError[] } {
-    const text = buf.toString('utf8').replace(/^﻿/, '');
+    const text = buf.toString('utf8').replace(/^\uFEFF/, '');
     const firstLine = text.split(/\r?\n/, 1)[0] ?? '';
     const delimiter =
       (firstLine.match(/;/g)?.length ?? 0) > (firstLine.match(/,/g)?.length ?? 0) ? ';' : ',';
@@ -161,7 +161,7 @@ export class CsvImportService {
     if (!records.length) return { rows: [], errors: [{ row: 1, reason: 'File is empty' }] };
 
     const header = records[0].map((h) => {
-      const raw = h.replace(/^﻿/, '').trim();
+      const raw = h.replace(/^\uFEFF/, '').trim();
       const m = raw.match(/^custom[._\s-](.+)$/i);
       if (m) return `custom:${m[1].trim().slice(0, 64)}`;
       return ALIASES[keyOf(raw)] ?? '';

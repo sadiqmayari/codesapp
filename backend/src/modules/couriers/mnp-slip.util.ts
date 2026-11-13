@@ -63,7 +63,7 @@ export async function buildMnpSlipPdf(data: MnpSlipData): Promise<Buffer> {
 
   // Strip chars Helvetica (WinAnsi) can't encode so drawText never throws.
   const safe = (s: unknown) =>
-    String(s == null ? '' : s).replace(/[^\x20-\x7E -ÿ]/g, '');
+    String(s == null ? '' : s).replace(/[^\x20-\x7E\u00A0-\u00FF]/g, '');
   const T = (s: string, x: number, y: number, size: number, f = font, color = ink) =>
     page.drawText(safe(s), { x, y: top(y), size, font: f, color });
   const Tc = (s: string, cx: number, y: number, size: number, f = font, color = ink) => {

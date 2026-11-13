@@ -759,7 +759,7 @@ function shiftDays(iso: string, days: number): string {
 
 function safeHeader(buffer: Buffer): string[] {
   const firstLine = buffer.toString('utf8').split(/\r?\n/)[0] ?? '';
-  return firstLine.split(',').map((h) => h.replace(/^﻿/, '').trim().toLowerCase());
+  return firstLine.split(',').map((h) => h.replace(/^\uFEFF/, '').trim().toLowerCase());
 }
 
 // ── Batching ────────────────────────────────────────────────────────────────

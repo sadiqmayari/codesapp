@@ -75,14 +75,14 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userId: number = client.data.userId;
     const role: string = client.data.role;
 
-    client.join(this.companyRoom(companyId));
+    void client.join(this.companyRoom(companyId));
     // Per-user + privileged rooms drive the pool-model RBAC for realtime:
     // message-content events go only to the assigned agent + owners/admins
     // (see emitToConversationScoped), so an agent never receives the content
     // of another agent's chat over the socket.
-    client.join(this.userRoom(userId));
+    void client.join(this.userRoom(userId));
     if (role === 'owner' || role === 'admin') {
-      client.join(this.privilegedRoom(companyId));
+      void client.join(this.privilegedRoom(companyId));
     }
     this.logger.log(
       `Socket ${client.id} connected (companyId=${companyId} userId=${userId} role=${role})`,
