@@ -10,7 +10,12 @@ import {
   AdPlatformRateLimitError,
 } from '../ad-platform.types';
 
-const REQUEST_TIMEOUT_MS = 30_000;
+const REQUEST_TIMEOUT_MS = 90_000;
+// Meta's ad-level insights endpoint is slow on big windows; a timeout or a
+// transient 5xx/code 1/2 is retried with backoff before the sync gives up.
+const RETRY_DELAYS_MS = [3_000, 10_000, 30_000];
+const TRANSIENT_CODES = new Set([1, 2]);
+class TransientMetaError extends Error {}
 const MAX_PAGES = 80;
 // Meta error codes → actionable categories.
 const TOKEN_CODES = new Set([190, 102, 463, 467]);
@@ -198,7 +203,7 @@ export class MetaAdapter implements AdPlatformAdapter {
     const fields =
       'campaign_id,adset_id,ad_id,spend,impressions,reach,clicks,inline_link_clicks,actions,action_values,video_thruplay_watched_actions';
     const path =
-      `/${this.act(externalId)}/insights?level=ad&time_increment=1&limit=500` +
+      `/${this.act(externalId)}/insights?level=ad&time_increment=1&limit=200` +
       `&fields=${fields}&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}`;
     const rows: AdInsightRow[] = [];
     for (const d of await this.pages<Ins>(path, token)) {
@@ -230,12 +235,34 @@ export class MetaAdapter implements AdPlatformAdapter {
     const out: T[] = [];
     let url: string | null = `https://graph.facebook.com/${this.version}${path}`;
     for (let hops = 0; url && hops < MAX_PAGES; hops++) {
-      const body: Paged<T> = await this.getUrl<Paged<T>>(url, token);
+      const body: Paged<T> = await this.withRetry(() => this.getUrl<Paged<T>>(url as string, token));
       if (body.error) this.throwMeta(body.error);
       out.push(...(body.data ?? []));
       url = body.paging?.next ?? null;
     }
     return out;
+  }
+
+  /** Retry timeouts / network drops / transient Meta errors; never auth or throttle errors. */
+  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const body = await fn();
+        const code = (body as { error?: MetaError })?.error?.code;
+        if (code != null && TRANSIENT_CODES.has(code)) throw new TransientMetaError(`Meta transient error ${code}`);
+        return body;
+      } catch (e) {
+        const transient =
+          e instanceof TransientMetaError ||
+          (e instanceof Error && /timed out|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up/i.test(e.message));
+        if (!transient || attempt >= RETRY_DELAYS_MS.length) {
+          if (transient) throw new Error('Meta did not respond in time after several retries; the next sync will try again.');
+          throw e;
+        }
+        this.logger.warn(`Meta request retry ${attempt + 1}: ${(e as Error).message}`);
+        await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+      }
+    }
   }
 
   private get<T>(path: string, token: string) {

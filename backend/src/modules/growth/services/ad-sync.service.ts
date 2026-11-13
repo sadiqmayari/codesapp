@@ -13,7 +13,8 @@ import { runsBackground } from '../../../common/utils/process-role';
 
 export const ADS_QUEUE = 'growth-ads';
 export const DEFAULT_SYNC_INTERVAL_MIN = 240;
-const DEFAULT_WINDOW_DAYS = 3; // a day's spend keeps firming up for ~72h
+const DEFAULT_WINDOW_DAYS = 3;
+const CHUNK_DAYS = 7; // per insights request (big windows time out on Meta) // a day's spend keeps firming up for ~72h
 const MAX_WINDOW_DAYS = 90;
 const TICK_MS = 10 * 60_000;
 
@@ -181,7 +182,6 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
     // covers the account's "today" (the platform clamps to the present).
     const until = addDays(new Date().toISOString().slice(0, 10), 1);
     const since = addDays(until, -days);
-    const rows = await adapter.fetchInsights(token, acc.external_id, since, until);
 
     // Fill campaign/adset ids the report omits (Snap) from the hierarchy.
     const adMap = new Map(
@@ -197,49 +197,62 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
         .filter((e) => e.level === 'ad')
         .map((e) => [e.externalId, e]),
     );
-
     const base = await this.accounts.baseCurrency(acc.company_id);
     const fxCache = new Map<string, number>();
-    const data: Prisma.AdInsightDailyCreateManyInput[] = [];
-    for (const r of rows) {
-      let fx = fxCache.get(r.date);
-      if (fx === undefined) {
-        fx = await this.fx.rate(currency, base, r.date);
-        fxCache.set(r.date, fx);
-      }
-      const ent = adMap.get(r.adId);
-      data.push({
-        company_id: acc.company_id,
-        account_id: acc.id,
-        platform: acc.platform,
-        date: new Date(`${r.date}T00:00:00.000Z`),
-        campaign_id: (r.campaignId || ent?.campaignId || 'unknown').slice(0, 64),
-        adset_id: (r.adsetId ?? ent?.parentExternalId ?? null)?.slice(0, 64) ?? null,
-        ad_id: r.adId.slice(0, 64),
-        currency,
-        spend: r.spend,
-        spend_base: Math.round(r.spend * fx * 100) / 100,
-        impressions: Math.round(r.impressions),
-        reach: Math.round(r.reach),
-        clicks: Math.round(r.clicks),
-        link_clicks: Math.round(r.linkClicks),
-        video_3s: Math.round(r.video3s),
-        thruplay: Math.round(r.thruplay),
-        add_to_cart: r.addToCart,
-        checkouts: r.checkouts,
-        purchases: r.purchases,
-        purchase_value: r.purchaseValue,
-        purchase_value_base: Math.round(r.purchaseValue * fx * 100) / 100,
-        messaging_started: r.messagingStarted,
-      });
-    }
 
-    const winStart = new Date(`${since}T00:00:00.000Z`);
-    const winEnd = new Date(`${until}T00:00:00.000Z`);
-    await this.prisma.$transaction(async (tx) => {
-      await tx.adInsightDaily.deleteMany({ where: { account_id: acc.id, date: { gte: winStart, lte: winEnd } } });
-      for (const part of chunk(data, 500)) await tx.adInsightDaily.createMany({ data: part, skipDuplicates: true });
-    }, { timeout: 120_000 });
+    // Pull + save in 7-day chunks, NEWEST first: a 90-day ad-level request in
+    // one call timed out on Meta. Each chunk replaces only its own days, so a
+    // failure later in a backfill keeps everything already saved.
+    let total = 0;
+    for (let chunkEnd = until; chunkEnd > since; chunkEnd = addDays(chunkEnd, -CHUNK_DAYS)) {
+      const chunkStart = addDays(chunkEnd, -(CHUNK_DAYS - 1)) < since ? since : addDays(chunkEnd, -(CHUNK_DAYS - 1));
+      const rows = await adapter.fetchInsights(token, acc.external_id, chunkStart, chunkEnd);
+      const data: Prisma.AdInsightDailyCreateManyInput[] = [];
+      for (const r of rows) {
+        let fx = fxCache.get(r.date);
+        if (fx === undefined) {
+          fx = await this.fx.rate(currency, base, r.date);
+          fxCache.set(r.date, fx);
+        }
+        const ent = adMap.get(r.adId);
+        data.push({
+          company_id: acc.company_id,
+          account_id: acc.id,
+          platform: acc.platform,
+          date: new Date(`${r.date}T00:00:00.000Z`),
+          campaign_id: (r.campaignId || ent?.campaignId || 'unknown').slice(0, 64),
+          adset_id: (r.adsetId ?? ent?.parentExternalId ?? null)?.slice(0, 64) ?? null,
+          ad_id: r.adId.slice(0, 64),
+          currency,
+          spend: r.spend,
+          spend_base: Math.round(r.spend * fx * 100) / 100,
+          impressions: Math.round(r.impressions),
+          reach: Math.round(r.reach),
+          clicks: Math.round(r.clicks),
+          link_clicks: Math.round(r.linkClicks),
+          video_3s: Math.round(r.video3s),
+          thruplay: Math.round(r.thruplay),
+          add_to_cart: r.addToCart,
+          checkouts: r.checkouts,
+          purchases: r.purchases,
+          purchase_value: r.purchaseValue,
+          purchase_value_base: Math.round(r.purchaseValue * fx * 100) / 100,
+          messaging_started: r.messagingStarted,
+        });
+      }
+      const winStart = new Date(`${chunkStart}T00:00:00.000Z`);
+      const winEnd = new Date(`${chunkEnd}T00:00:00.000Z`);
+      await this.prisma.$transaction(async (tx) => {
+        await tx.adInsightDaily.deleteMany({ where: { account_id: acc.id, date: { gte: winStart, lte: winEnd } } });
+        for (const part of chunk(data, 500)) await tx.adInsightDaily.createMany({ data: part, skipDuplicates: true });
+      }, { timeout: 120_000 });
+      total += rows.length;
+      // Clear a stale error as soon as fresh data lands (the UI shows progress).
+      await this.prisma.adAccount
+        .update({ where: { id: acc.id }, data: { last_success_at: new Date(), last_error: null } })
+        .catch(() => undefined);
+    }
+    const rows = { length: total };
 
     await this.prisma.adAccount.update({
       where: { id: acc.id },
