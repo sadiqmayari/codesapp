@@ -72,9 +72,11 @@ export class LoadsheetService implements OnModuleInit {
       COURIER_LOADSHEET_QUEUE,
       (p) => this.processLoadsheetJob(p as LoadsheetJobPayload),
       2,
-      120,
+      // 300s: a slow courier generate (PostEx up to 110s/chunk) + the
+      // recovery check (15s wait + track lookups) must fit inside the lease.
+      300,
     );
-    this.logger.log('Registered courier-loadsheet worker (concurrency=2, lease=120s)');
+    this.logger.log('Registered courier-loadsheet worker (concurrency=2, lease=300s)');
   }
 
   async listBatches(
@@ -934,6 +936,12 @@ export class LoadsheetService implements OnModuleInit {
       await this.tagDispatched(batch);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // The courier may have CREATED the sheet even though we lost the answer
+      // (PostEx: a 200-parcel request timed out after PostEx sheeted all 200, and
+      // every retry then failed because the parcels were already on a sheet).
+      // Ask the courier which parcels are on a sheet; if any are, keep them on
+      // this batch as `ready` with our own manifest instead of failing.
+      if (await this.recoverFromCourier(batch, message, err)) return;
       await this.prisma.loadsheetBatch.update({
         where: { id: batch.id },
         data: { status: 'failed', error: message },
@@ -945,6 +953,92 @@ export class LoadsheetService implements OnModuleInit {
         data: { loadsheet_batch_id: null },
       });
       throw err;
+    }
+  }
+
+  /**
+   * After a failed one-shot generate: ask the courier (adapter.listOnLoadsheet)
+   * which of the batch's parcels it already has on a load sheet. If any are,
+   * the sheet exists courier-side — keep THOSE parcels on this batch, mark it
+   * `ready` with our own manifest PDF (the courier never gave us theirs; the
+   * original is on the courier portal) and a note in `error`; release the rest
+   * so they can be regenerated. Returns true when the batch was recovered.
+   * Best-effort: any failure here → false → the normal failed path runs.
+   */
+  private async recoverFromCourier(
+    batch: Omit<BatchWithShipments, 'shipments'> & {
+      shipments: Array<
+        BatchWithShipments['shipments'][number] & { id: number; shopify_store_id?: number | null }
+      >;
+    },
+    message: string,
+    err: unknown,
+  ): Promise<boolean> {
+    try {
+      const adapter = this.registry.getAdapter(batch.courier_type);
+      if (typeof adapter.listOnLoadsheet !== 'function') return false;
+      const withTn = batch.shipments.filter((s) => !!s.courier_tracking_number);
+      if (!withTn.length) return false;
+      const { creds } = await this.registry.requireCredentials(
+        batch.company_id,
+        batch.courier_type,
+      );
+      // A timeout/abort means the courier may still be finishing the sheet —
+      // give it a moment before asking.
+      const aborted =
+        (err instanceof Error && err.name === 'AbortError') || /aborted|timeout/i.test(message);
+      if (aborted) await new Promise((r) => setTimeout(r, 15_000));
+
+      const onSheet = new Set(
+        await adapter.listOnLoadsheet(
+          creds,
+          withTn.map((s) => s.courier_tracking_number as string),
+        ),
+      );
+      if (!onSheet.size) return false;
+
+      const kept = batch.shipments.filter(
+        (s) => s.courier_tracking_number && onSheet.has(s.courier_tracking_number),
+      );
+      const released = batch.shipments.filter((s) => !kept.includes(s));
+      if (released.length) {
+        await this.prisma.shipment.updateMany({
+          where: { id: { in: released.map((s) => s.id) }, loadsheet_batch_id: batch.id },
+          data: { loadsheet_batch_id: null },
+        });
+      }
+      const keptBatch = { ...batch, shipments: kept };
+      const pdf = await this.buildManifestPdfFor(keptBatch);
+      const pdfMediaUrl = pdf ? this.savePdf(pdf, batch.company_id) : undefined;
+      const courierName = COURIER_DISPLAY_NAME[batch.courier_type];
+      const note =
+        `Recovered: ${courierName} created this load sheet but its PDF never came back ` +
+        `(${message.slice(0, 160)}). This PDF is the CodesApp manifest — download the original ` +
+        `from the ${courierName} portal if the rider needs it.` +
+        (released.length
+          ? ` ${released.length} parcel(s) were not on the sheet and were released to regenerate.`
+          : '');
+      await this.prisma.loadsheetBatch.update({
+        where: { id: batch.id },
+        data: {
+          status: 'ready',
+          courier_loadsheet_id: `${batch.courier_type}-recovered-${Date.now()}`,
+          pdf_media_url: pdfMediaUrl,
+          shipment_count: kept.length,
+          error: note,
+          completed_at: new Date(),
+        },
+      });
+      await this.tagDispatched(keptBatch);
+      this.logger.warn(
+        `Loadsheet ${batch.id} (${batch.courier_type}) recovered: ${kept.length} on courier sheet, ${released.length} released. Original error: ${message}`,
+      );
+      return true;
+    } catch (e) {
+      this.logger.warn(
+        `Loadsheet ${batch.id} recovery check failed: ${e instanceof Error ? e.message : e}`,
+      );
+      return false;
     }
   }
 

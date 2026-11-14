@@ -1644,6 +1644,14 @@ function ManifestsPanel({
             <span className="break-words">{b.error}</span>
           </p>
         )}
+        {/* A READY batch with a note = recovered: the courier created the sheet
+            but never returned its PDF, so this is the CodesApp manifest. */}
+        {b.status === 'ready' && b.error && (
+          <p className="mt-2 flex items-start gap-1.5 text-[12px] text-amber-700">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="break-words">{b.error}</span>
+          </p>
+        )}
       </div>
     );
   };

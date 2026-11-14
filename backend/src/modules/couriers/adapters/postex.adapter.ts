@@ -32,6 +32,10 @@ const BASE_URL = 'https://api.postex.pk/services/integration/api/order';
  */
 const LOADSHEET_CHUNK = 250;
 
+/** Per-chunk budget for generate-load-sheet (PostEx renders large sheets slowly).
+ *  Kept under the courier-loadsheet job lease (300s) with room for recovery. */
+const POSTEX_LOADSHEET_TIMEOUT_MS = 110_000;
+
 /** PostEx status vocabulary, exactly as observed in the tenant's n8n
  *  "Sois | PostEx Tracking" webhook Switch node. Anything unlisted throws
  *  (the n8n Switch's fallback silently mapped everything else to FAILURE —
@@ -47,6 +51,9 @@ const STATUS_MAP: Record<string, ShipmentStatus> = {
   // Shopify model).
   'picked by postex': 'in_transit',
   booked: 'ready_for_pickup',
+  // Created at PostEx but not yet on a load sheet — same lane for us (was
+  // unmapped → ~200 "needs-attention" warnings a day).
+  unbooked: 'ready_for_pickup',
   attempted: 'attempted',
   'delivery under review': 'attempted',
   // Only a COMPLETED hand-back is a true return. "Returned at Merchant
@@ -156,17 +163,24 @@ export class PostexAdapter implements CourierAdapter {
     creds: PostexCredentials,
     trackingNumbers: string[],
   ): Promise<{ pdfBuffer?: Buffer; loadsheetId: string }> {
-    const res = await httpFetch(`${BASE_URL}/v2/generate-load-sheet`, {
-      method: 'POST',
-      headers: { token: creds.token, 'Content-Type': 'application/json', Accept: 'application/pdf' },
-      body: JSON.stringify({ trackingNumbers }),
-    });
-    // Read the body ONCE as bytes; a real PDF starts with the %PDF- magic. A 200
-    // with a PDF content-type but a non-PDF body (error/HTML/JSON) must NOT be
-    // saved as a manifest — fall through to the JSON/error branch below.
+    // PostEx renders a big sheet slowly. The default 30s courier timeout aborted
+    // a 200-parcel request AFTER PostEx had already created the sheet (Sois,
+    // 2026-11-14) — so give this call a much longer budget (job lease is 300s).
+    const res = await httpFetch(
+      `${BASE_URL}/v2/generate-load-sheet`,
+      {
+        method: 'POST',
+        headers: { token: creds.token, 'Content-Type': 'application/json', Accept: 'application/pdf' },
+        body: JSON.stringify({ trackingNumbers }),
+      },
+      POSTEX_LOADSHEET_TIMEOUT_MS,
+    );
+    // Read the body ONCE as bytes. A real PDF is identified by its %PDF- magic,
+    // NOT the content-type header (PostEx's labelling isn't reliable); a non-PDF
+    // body (error/HTML/JSON) must NOT be saved as a manifest.
     const buf = Buffer.from(await res.arrayBuffer());
     const ctype = res.headers.get('content-type') || '';
-    if (res.ok && /pdf|octet-stream/i.test(ctype) && isPdf(buf)) {
+    if (res.ok && isPdf(buf)) {
       return { pdfBuffer: buf, loadsheetId: `postex-${Date.now()}` };
     }
     // Not a PDF → an error/JSON envelope. Some PostEx tenants still answer JSON
@@ -180,7 +194,54 @@ export class PostexAdapter implements CourierAdapter {
     }
     const loadsheetId = raw?.dist?.loadSheetId;
     if (res.ok && loadsheetId) return { loadsheetId: String(loadsheetId) };
-    throw new Error(`PostEx loadsheet generation failed: ${JSON.stringify(raw)}`);
+    // Surface what PostEx actually sent — the old `{}` (non-JSON body) hid the
+    // HTTP status and reason entirely.
+    const reason =
+      raw?.statusMessage ||
+      raw?.message ||
+      raw?.error ||
+      buf.toString('utf8').replace(/\s+/g, ' ').trim().slice(0, 200) ||
+      '(empty body)';
+    throw new Error(
+      `PostEx loadsheet generation failed: HTTP ${res.status}${ctype ? ` (${ctype.split(';')[0]})` : ''} — ${reason}`,
+    );
+  }
+
+  /**
+   * Which of these tracking numbers PostEx already has ON a load sheet.
+   * PostEx's public API has no "download a load sheet by id" endpoint, so this
+   * is how a lost response is recovered: a parcel is on a sheet once its
+   * transactionStatus leaves "Unbooked" (created, not yet sheeted) — "Booked"
+   * or anything later. Read-only track-order calls, small concurrency; a parcel
+   * whose lookup fails is treated as NOT on a sheet (safe: it gets released and
+   * can be regenerated). Never throws.
+   */
+  async listOnLoadsheet(
+    creds: PostexCredentials,
+    trackingNumbers: string[],
+  ): Promise<string[]> {
+    const onSheet: string[] = [];
+    let i = 0;
+    const worker = async () => {
+      while (i < trackingNumbers.length) {
+        const tn = trackingNumbers[i++];
+        try {
+          const res = await httpFetch(
+            `${BASE_URL}/v1/track-order/${encodeURIComponent(tn)}`,
+            { headers: { token: creds.token } },
+            15_000,
+          );
+          if (!res.ok) continue;
+          const raw: any = await res.json().catch(() => null);
+          const st = String(raw?.dist?.transactionStatus ?? '').trim().toLowerCase();
+          if (st && st !== 'unbooked') onSheet.push(tn);
+        } catch {
+          /* lookup failed → treat as not on a sheet */
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: 5 }, worker));
+    return onSheet;
   }
 
   /** Airway-bill PDF for up to 10 tracking numbers per call (PostEx cap). The

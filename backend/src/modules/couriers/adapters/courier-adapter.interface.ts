@@ -177,6 +177,14 @@ export interface CourierAdapter {
   ): Promise<{ pdfBuffer?: Buffer; trackingNumbers: string[]; raw: unknown }>;
 
   /**
+   * Recovery for a one-shot courier with NO download-by-id API (PostEx): which
+   * of these tracking numbers the courier already has on a loadsheet. Used when
+   * `generateLoadsheet` failed/timed out after the courier may have created the
+   * sheet anyway. Must never throw (return [] on doubt).
+   */
+  listOnLoadsheet?(creds: unknown, trackingNumbers: string[]): Promise<string[]>;
+
+  /**
    * TWO-PHASE loadsheet (create then, after a delay, download). Implemented by
    * couriers whose loadsheet PDF isn't ready immediately for a LARGE batch
    * (Leopards, Trax) — the portal allots the number fast but needs minutes to
