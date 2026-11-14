@@ -1324,7 +1324,8 @@ export class ShopifyOrderSyncService implements OnModuleInit {
         JOURNEY_QUEUE,
         { kind: 'journey', companyId, orderGid, storeId, attempt } as JourneyJob,
         {
-          delayMs: attempt === 0 ? 3 * 60_000 : 12 * 60_000,
+          // Shopify builds the journey hours after the order: 3m, 30m, 2h, 6h, 24h.
+          delayMs: [3, 30, 120, 360, 1440][Math.min(attempt, 4)] * 60_000,
           dedupKey: `journey:${companyId}:${orderGid}`,
           maxAttempts: 2,
         },
@@ -1388,7 +1389,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     }
     const cj = resp?.data?.order?.customerJourneySummary;
     if (!cj) return;
-    if (cj.ready === false && attempt < 1) {
+    if (cj.ready === false && attempt < 4) {
       await this.enqueueJourney(companyId, orderGid, storeId, attempt + 1);
       return;
     }
@@ -1472,7 +1473,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           AND NOT EXISTS (SELECT 1 FROM order_touchpoints t WHERE t.company_id = o.company_id
                 AND t.order_gid COLLATE utf8mb4_general_ci = o.shopify_order_gid COLLATE utf8mb4_general_ci)
         ORDER BY o.shopify_created_at DESC
-        LIMIT 5000`,
+        LIMIT 40000`,
       companyId,
       since,
     );

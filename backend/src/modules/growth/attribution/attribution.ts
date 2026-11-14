@@ -56,6 +56,19 @@ export interface RawTouch {
   adRef?: string | null; // CTWA ad id
 }
 
+/**
+ * A touch whose UTM campaign is a KNOWN campaign of a connected ad account is
+ * paid traffic on that platform, whatever utm_source says (tenants' templates
+ * use placement macros like "{{placement}}" that sometimes don't resolve).
+ */
+export function promoteKnownCampaign(c: Classified, knownPlatform: string | null): Classified {
+  if (!knownPlatform) return c;
+  const map: Record<string, Channel> = { meta: 'meta_ads', google: 'google_ads', tiktok: 'tiktok_ads', snap: 'snap_ads' };
+  const ch = map[knownPlatform];
+  if (!ch || c.channel === 'whatsapp_ctwa') return c;
+  return { ...c, channel: ch, platform: knownPlatform as Classified['platform'] };
+}
+
 export interface Classified {
   channel: Channel;
   platform: 'meta' | 'google' | 'tiktok' | 'snap' | null;

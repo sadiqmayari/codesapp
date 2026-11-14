@@ -4,8 +4,9 @@ import { JobQueueService } from '../../../common/services/job-queue.service';
 import { phoneVariants } from '../../../common/utils/contact-phone';
 import { GrowthVersionService } from './growth-version.service';
 import { CapiService } from './capi.service';
+import { ShopifyOrderSyncService } from '../../integrations/shopify/shopify-order-sync.service';
 import { GrowthMirrorService } from '../store/growth-mirror.service';
-import { classify, credit, DEFAULT_WINDOW, MODELS, RawTouch, Touch, WINDOWS } from '../attribution/attribution';
+import { classify, credit, promoteKnownCampaign, DEFAULT_WINDOW, MODELS, RawTouch, Touch, WINDOWS } from '../attribution/attribution';
 import { chunk, customerKey, localYmd, n, offsetMinutes, zoneOffset } from '../growth.util';
 import { runsBackground } from '../../../common/utils/process-role';
 
@@ -43,7 +44,7 @@ interface BaseRow {
   phone: string | null;
   email: string | null;
   manual_confirmed_at: Date | null;
-  courier_invoice_amount: unknown;
+  order_name: string | null;
   landing_site: string | null;
   utm_source: string | null;
   utm_medium: string | null;
@@ -71,6 +72,7 @@ interface Ctx {
   campaignByName: Map<string, string>; // `${platform}|${lower name}` → id
   campaignIds: Set<string>;
   adByName: Map<string, string>;
+  campaignPlatformByName: Map<string, string>;
 }
 
 /**
@@ -92,6 +94,7 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
     private readonly version: GrowthVersionService,
     private readonly capi: CapiService,
     private readonly mirror: GrowthMirrorService,
+    private readonly orderSync: ShopifyOrderSyncService,
   ) {}
 
   onModuleInit() {
@@ -115,6 +118,9 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
     if (full) this.lastFullDay = today;
     for (const c of companies) {
       await this.enqueue(c.company_id, full ? 'full' : 'incremental');
+      // Nightly: re-fetch Shopify journeys for recent orders that still have no
+      // touchpoints (Shopify builds journeys hours after the order).
+      if (full) await this.orderSync.backfillAttribution(c.company_id, 3).catch(() => undefined);
     }
   }
 
@@ -207,11 +213,17 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
         companyId,
       ),
       this.prisma.$queryRawUnsafe<Array<{ c: string; a: unknown }>>(
-        `SELECT s.courier_type c, AVG(o.courier_invoice_amount) a
-           FROM shipments s
-           JOIN shopify_orders o ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
-          WHERE s.company_id = ? AND o.courier_invoice_amount > 0 AND s.booked_at >= NOW() - INTERVAL 180 DAY
-          GROUP BY s.courier_type`,
+        // Courier fee = shippingCharge + fuel + GST + SST from settlement statement
+        // lines (courier_invoice_amount is the COD COLLECTED, not the fee).
+        `SELECT ci.courier_type c, AVG(COALESCE(jt.sc,0) + COALESCE(jt.fs,0) + COALESCE(jt.gst,0) + COALESCE(jt.sst,0)) a
+           FROM courier_invoices ci
+           JOIN JSON_TABLE(ci.\x60lines\x60, '$[*]' COLUMNS(
+                 orderName VARCHAR(64) PATH '$.orderName',
+                 sc DECIMAL(12,2) PATH '$.shippingCharge', fs DECIMAL(12,2) PATH '$.fuelSurcharge',
+                 gst DECIMAL(12,2) PATH '$.gst', sst DECIMAL(12,2) PATH '$.sst')) jt
+          WHERE ci.company_id = ? AND ci.is_rollup = 0 AND ci.created_at >= NOW() - INTERVAL 180 DAY
+            AND (COALESCE(jt.sc,0) + COALESCE(jt.fs,0) + COALESCE(jt.gst,0) + COALESCE(jt.sst,0)) > 0
+          GROUP BY ci.courier_type`,
         companyId,
       ),
       this.prisma.$queryRawUnsafe<Array<{ f: unknown; g: unknown }>>(
@@ -246,10 +258,15 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
     const campaignByName = new Map<string, string>();
     const campaignIds = new Set<string>();
     const adByName = new Map<string, string>();
+    const campaignPlatformByName = new Map<string, string>();
     for (const e of entities) {
+      if (e.level === 'campaign' && e.name) campaignPlatformByName.set(e.name.trim().toLowerCase(), e.platform);
       if (e.level === 'ad') {
         adById.set(e.external_id, { platform: e.platform, campaignId: e.campaign_id, adsetId: e.parent_external_id });
-        if (e.name) adByName.set(`${e.platform}|${e.name.trim().toLowerCase()}`, e.external_id);
+        if (e.name) {
+          adByName.set(`${e.platform}|${e.name.trim().toLowerCase()}`, e.external_id);
+          if (e.campaign_id) adByName.set(`${e.platform}|${e.campaign_id}|${e.name.trim().toLowerCase()}`, e.external_id);
+        }
       } else if (e.level === 'campaign') {
         campaignIds.add(e.external_id);
         if (e.name) campaignByName.set(`${e.platform}|${e.name.trim().toLowerCase()}`, e.external_id);
@@ -268,6 +285,7 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
       campaignByName,
       campaignIds,
       adByName,
+      campaignPlatformByName,
     };
   }
 
@@ -293,7 +311,7 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
       `SELECT o.shopify_order_gid gid, o.shopify_store_id store_id, o.shopify_created_at created, o.created_at created_row,
               o.cancelled_at, o.subtotal_price, o.total_discounts, o.total_price, o.total_shipping, o.total_tax,
               o.financial_status, o.payment_gateway, o.fulfillment_status, o.delivered_at, o.city, o.phone, o.email,
-              o.manual_confirmed_at, o.courier_invoice_amount, o.landing_site,
+              o.manual_confirmed_at, o.order_name, o.landing_site,
               o.utm_source, o.utm_medium, o.utm_campaign, o.utm_content,
               s.status ship_status, s.received_at, s.courier_type,
               som.status conf_status, som.conversation_id,
@@ -309,6 +327,26 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
     if (!base.length) return;
     const present = base.map((b) => b.gid);
     const ph2 = present.map(() => '?').join(',');
+
+    // ── Real courier fees from settlement statements (one per order) ──
+    const names = [...new Set(base.map((b) => b.order_name).filter((x): x is string => !!x))];
+    const shipFee = new Map<string, number>();
+    for (const part of chunk(names, 500)) {
+      const rows = await this.prisma.$queryRawUnsafe<Array<{ n: string; f: unknown }>>(
+        `SELECT jt.orderName n, MAX(COALESCE(jt.sc,0) + COALESCE(jt.fs,0) + COALESCE(jt.gst,0) + COALESCE(jt.sst,0)) f
+           FROM courier_invoices ci
+           JOIN JSON_TABLE(ci.\x60lines\x60, '$[*]' COLUMNS(
+                 orderName VARCHAR(64) PATH '$.orderName',
+                 sc DECIMAL(12,2) PATH '$.shippingCharge', fs DECIMAL(12,2) PATH '$.fuelSurcharge',
+                 gst DECIMAL(12,2) PATH '$.gst', sst DECIMAL(12,2) PATH '$.sst')) jt
+          WHERE ci.company_id = ? AND ci.is_rollup = 0
+            AND jt.orderName COLLATE utf8mb4_general_ci IN (${part.map(() => '?').join(',')})
+          GROUP BY jt.orderName`,
+        companyId,
+        ...part,
+      );
+      for (const r of rows) shipFee.set(r.n, n(r.f));
+    }
 
     // ── COGS (bundles fall back to their components' cost) ──
     const lines = await this.prisma.$queryRawUnsafe<
@@ -466,7 +504,7 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
                   ? pCity * 0.97
                   : pCity * ctx.confirmRate;
       const shipped = life === 'in_transit' || life === 'delivered' || life === 'rto';
-      const invoiced = n(r.courier_invoice_amount);
+      const invoiced = r.order_name ? shipFee.get(r.order_name) ?? 0 : 0;
       const shipEst = !invoiced && shipped ? ctx.shipAvg.get(r.courier_type ?? '') || ctx.shipGlobal : 0;
       const fees =
         n(r.ps_gross) > 0
@@ -653,7 +691,10 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
     }
 
     return raw.map((t) => {
-      const c = classify(t);
+      // A UTM naming a campaign of a connected ad account = paid on that platform.
+      const campName = (t.utmCampaign ?? '').trim().toLowerCase();
+      const known = t.source === 'ctwa' || !campName ? null : ctx.campaignPlatformByName.get(campName) ?? null;
+      const c = promoteKnownCampaign(classify(t), known);
       let campaignId: string | null = null;
       let adsetId: string | null = null;
       let adId: string | null = null;
@@ -664,17 +705,25 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
         adsetId = ad?.adsetId ?? null;
       } else if (c.platform) {
         const content = (t.utmContent ?? '').trim();
-        const ad = ctx.adById.get(content) ?? ctx.adById.get(ctx.adByName.get(`${c.platform}|${content.toLowerCase()}`) ?? '');
-        if (ad) {
-          adId = (ctx.adById.has(content) ? content : ctx.adByName.get(`${c.platform}|${content.toLowerCase()}`)) ?? null;
-          campaignId = ad.campaignId;
-          adsetId = ad.adsetId;
-        }
+        const contentKey = content.toLowerCase();
         const camp = (t.utmCampaign ?? '').trim();
-        if (!campaignId && camp) {
+        // 1) campaign by id or exact name
+        if (camp) {
           campaignId = ctx.campaignIds.has(camp)
             ? camp
             : ctx.campaignByName.get(`${c.platform}|${camp.toLowerCase()}`) ?? `name:${camp.slice(0, 59)}`;
+        }
+        // 2) ad by id, else by name INSIDE that campaign, else by name anywhere
+        const adKey =
+          (ctx.adById.has(content) ? content : null) ??
+          (campaignId && !campaignId.startsWith('name:') ? ctx.adByName.get(`${c.platform}|${campaignId}|${contentKey}`) : undefined) ??
+          ctx.adByName.get(`${c.platform}|${contentKey}`) ??
+          null;
+        const ad = adKey ? ctx.adById.get(adKey) : undefined;
+        if (ad && adKey) {
+          adId = adKey;
+          adsetId = ad.adsetId;
+          campaignId = ad.campaignId ?? campaignId;
         }
       }
       return { ...c, occurredAt: t.occurredAt, campaignId, adsetId, adId };
