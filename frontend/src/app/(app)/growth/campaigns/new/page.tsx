@@ -140,12 +140,16 @@ export default function NewCampaignPage() {
       .assets(accountId)
       .then((a) => {
         setAssets(a);
-        setD((x) => ({
+        setD((x) => {
+          const pageId = x.pageId && a.pages.some((p) => p.id === x.pageId) ? x.pageId : a.pages[0]?.id || '';
+          return {
           ...x,
-          pageId: x.pageId || a.pages[0]?.id || '',
+          pageId,
+          instagramId: x.instagramId && a.instagram.some((i) => i.id === x.instagramId) ? x.instagramId : a.pages.find((p) => p.id === pageId)?.instagramId ?? null,
           pixelId: x.pixelId || a.pixels[0]?.id || null,
           whatsappNumber: x.whatsappNumber || a.whatsappNumbers[0]?.number || null,
-        }));
+          };
+        });
       })
       .catch((e) => setAssetsErr(e instanceof ApiError ? e.userMessage : 'Could not load the ad account’s pages and pixels.'));
   }, [accountId]);
@@ -536,15 +540,29 @@ export default function NewCampaignPage() {
               <Card title="Identity">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field label="Facebook Page">
-                    <select className={inputCls} value={d.pageId} onChange={(e) => set('pageId', e.target.value)}>
+                    <select className={inputCls} value={d.pageId}
+                      onChange={(e) => {
+                        const pageId = e.target.value;
+                        // Follow the Page's linked Instagram account.
+                        setD((x) => ({ ...x, pageId, instagramId: assets?.pages.find((p) => p.id === pageId)?.instagramId ?? null }));
+                      }}>
                       {!assets?.pages.length && <option value="">No Page assigned to this token</option>}
-                      {assets?.pages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      {assets?.pages.map((p) => {
+                        const ig = assets.instagram.find((i) => i.id === p.instagramId);
+                        return <option key={p.id} value={p.id}>{p.name}{ig ? ` · @${ig.username}` : ''}</option>;
+                      })}
                     </select>
                   </Field>
-                  <Field label="Instagram account">
+                  <Field label="Instagram account"
+                    hint={!assets ? undefined : !assets.instagram.length
+                      ? 'No Instagram account is linked to these Pages. Link one in Meta Business Settings → Instagram accounts.'
+                      : !d.instagramId ? 'Not set: the ad can still run on Instagram, shown as your Facebook Page.' : undefined}>
                     <select className={inputCls} value={d.instagramId ?? ''} onChange={(e) => set('instagramId', e.target.value || null)}>
-                      <option value="">Use the Facebook Page</option>
-                      {assets?.instagram.map((p) => <option key={p.id} value={p.id}>@{p.username}</option>)}
+                      <option value="">Not set (show as the Facebook Page)</option>
+                      {assets?.instagram.map((i) => {
+                        const page = assets.pages.find((p) => p.id === i.pageId);
+                        return <option key={i.id} value={i.id}>@{i.username}{page ? ` · linked to ${page.name}` : ''}</option>;
+                      })}
                     </select>
                   </Field>
                 </div>

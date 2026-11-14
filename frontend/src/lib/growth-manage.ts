@@ -107,8 +107,8 @@ export interface Benchmarks {
 
 export interface CreateAssets {
   account: { id: number; name: string | null; currency: string | null; platform: string };
-  pages: Array<{ id: string; name: string }>;
-  instagram: Array<{ id: string; username: string }>;
+  pages: Array<{ id: string; name: string; instagramId: string | null }>;
+  instagram: Array<{ id: string; username: string; pageId: string | null }>;
   pixels: Array<{ id: string; name: string }>;
   whatsappNumbers: Array<{ id: number; number: string | null; label: string | null; primary: boolean }>;
   benchmarks: Benchmarks;

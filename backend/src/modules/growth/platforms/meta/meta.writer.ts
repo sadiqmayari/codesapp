@@ -132,15 +132,33 @@ export class MetaWriter implements AdPlatformWriter {
       this.logger.warn(`assets: ${(e as Error).message}`);
       return fb;
     });
-    const [pages, ig, pixels] = await Promise.all([
-      safe(this.call<{ data?: Array<{ id: string; name: string }> }>('GET', `/${acct}/promote_pages?fields=id,name&limit=100`, token), {}),
-      safe(this.call<{ data?: Array<{ id: string; username: string }> }>('GET', `/${acct}/instagram_accounts?fields=id,username&limit=100`, token), {}),
-      safe(this.call<{ data?: Array<{ id: string; name: string }> }>('GET', `/${acct}/adspixels?fields=id,name&limit=100`, token), {}),
+    type IgRow = { id: string; username: string };
+    type PageRow = { id: string; name: string; instagram_business_account?: IgRow };
+    type List<T> = { data?: T[] };
+    // Business Instagram accounts hang off the PAGE (instagram_business_account);
+    // the ad account edges only list IG accounts attached to the ad account itself.
+    const [pages, ig, connected, pixels] = await Promise.all([
+      safe(this.call<List<PageRow>>('GET', `/${acct}/promote_pages?fields=id,name,instagram_business_account{id,username}&limit=100`, token), {} as List<PageRow>),
+      safe(this.call<List<IgRow>>('GET', `/${acct}/instagram_accounts?fields=id,username&limit=100`, token), {} as List<IgRow>),
+      safe(this.call<List<IgRow>>('GET', `/${acct}/connected_instagram_accounts?fields=id,username&limit=100`, token), {} as List<IgRow>),
+      safe(this.call<List<{ id: string; name: string }>>('GET', `/${acct}/adspixels?fields=id,name&limit=100`, token), {} as List<{ id: string; name: string }>),
     ]);
+    const igById = new Map<string, { id: string; username: string; pageId: string | null }>();
+    for (const p of pages.data ?? []) {
+      const a = p.instagram_business_account;
+      if (a?.id) igById.set(a.id, { id: a.id, username: a.username ?? a.id, pageId: p.id });
+    }
+    for (const a of [...(ig.data ?? []), ...(connected.data ?? [])]) {
+      if (a?.id && !igById.has(a.id)) igById.set(a.id, { id: a.id, username: a.username ?? a.id, pageId: null });
+    }
+    // Pages with a linked Instagram account first — those are the ones ads usually run from.
+    const pageList = (pages.data ?? [])
+      .map((p) => ({ id: p.id, name: p.name, instagramId: p.instagram_business_account?.id ?? null }))
+      .sort((a, b) => Number(!!b.instagramId) - Number(!!a.instagramId));
     return {
-      pages: (pages as { data?: Array<{ id: string; name: string }> }).data ?? [],
-      instagram: (ig as { data?: Array<{ id: string; username: string }> }).data ?? [],
-      pixels: (pixels as { data?: Array<{ id: string; name: string }> }).data ?? [],
+      pages: pageList,
+      instagram: [...igById.values()],
+      pixels: pixels.data ?? [],
     };
   }
 

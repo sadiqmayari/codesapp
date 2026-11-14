@@ -39,8 +39,10 @@ export interface EntityPatch {
 }
 
 export interface AdAssets {
-  pages: Array<{ id: string; name: string }>;
-  instagram: Array<{ id: string; username: string }>;
+  /** `instagramId` = the Instagram business account linked to this Page (if any). */
+  pages: Array<{ id: string; name: string; instagramId: string | null }>;
+  /** `pageId` = the Page it is linked to, when known. */
+  instagram: Array<{ id: string; username: string; pageId: string | null }>;
   pixels: Array<{ id: string; name: string }>;
 }
 
