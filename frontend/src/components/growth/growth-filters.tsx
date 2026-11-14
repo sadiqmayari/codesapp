@@ -5,7 +5,7 @@ import { CalendarRange, GitCompareArrows, MousePointerClick, RefreshCw, Sparkles
 import { useSocket } from '@/context/socket-context';
 import { zonedYMDString, cn } from '@/lib/utils';
 import { useNumberMode, type NumberMode } from '@/lib/format-number';
-import { MODEL_LABEL, type CompareMode, type GrowthQuery, type Model } from '@/lib/growth';
+import { growthApi, MODEL_LABEL, type CompareMode, type GrowthQuery, type Model } from '@/lib/growth';
 import { apiFetch } from '@/lib/api';
 
 export type Preset = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'last_month' | 'last90' | 'qtd' | 'ytd' | 'custom';
@@ -178,10 +178,22 @@ export function GrowthProvider({ children }: { children: React.ReactNode }) {
     [filters],
   );
 
+  // A period that includes today needs Meta's live spend: ask the backend to
+  // pull today+yesterday now (rate-limited server-side to once per 5 min).
+  // `growth.updated` refetches the page when the rows land.
+  const includesToday = filters.to >= zonedYMDString();
+  const pullToday = useCallback(() => {
+    void growthApi.syncToday().catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    if (hydrated && includesToday) pullToday();
+  }, [hydrated, includesToday, pullToday]);
+
   const refresh = useCallback(() => {
+    if (includesToday) pullToday();
     setVersion((v) => v + 1);
     setLastUpdate(new Date());
-  }, []);
+  }, [includesToday, pullToday]);
 
   const value = useMemo<Ctx>(
     () => ({ filters, query, set, version, refresh, mode, setMode, askOpen, setAskOpen, lastUpdate }),

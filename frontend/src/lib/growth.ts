@@ -302,6 +302,7 @@ export const growthApi = {
     apiFetch('/growth/accounts/' + id, { method: 'PATCH', body }),
   disconnect: (id: number) => apiFetch('/growth/accounts/' + id, { method: 'DELETE' }),
   syncAccount: (id: number) => apiFetch('/growth/accounts/' + id + '/sync', { method: 'POST' }),
+  syncToday: () => apiFetch<{ started: number; accounts: number }>('/growth/sync/today', { method: 'POST' }),
   syncAll: () => apiFetch<{ started: true; accounts: number }>('/growth/sync', { method: 'POST' }),
   rebuild: () => apiFetch('/growth/rebuild', { method: 'POST' }),
   backfillAttribution: () => apiFetch<{ enqueued: number }>('/growth/backfill/attribution', { method: 'POST' }),

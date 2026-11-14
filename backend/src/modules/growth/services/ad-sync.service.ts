@@ -23,7 +23,10 @@ const TODAY_REFRESH_MS = 60 * 60_000;
 interface AdsJob {
   accountId: number;
   sinceDays?: number;
+  /** On-demand today pull: skip the (slow) ad-hierarchy refresh. */
+  quick?: boolean;
 }
+const ON_DEMAND_COOLDOWN_MS = 5 * 60_000;
 
 /** Extract a Shopify product handle from an ad destination URL (/products/<handle>). */
 export function parseProductHandle(url: string | null | undefined): string | null {
@@ -144,6 +147,32 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
     return { started: true as const };
   }
 
+  /**
+   * Pull today + yesterday NOW for every active account of a tenant (Growth
+   * page opened / refreshed on a period that includes today). Skips accounts
+   * pulled in the last 5 min so page loads can't burn Meta's quota. The
+   * `growth.updated` socket event refreshes the page when the data lands.
+   */
+  async requestToday(companyId: number) {
+    const accounts = await this.prisma.adAccount.findMany({
+      where: { company_id: companyId, status: 'active' },
+      select: { id: true, last_success_at: true },
+    });
+    const now = Date.now();
+    let started = 0;
+    for (const a of accounts) {
+      const last = Math.max(this.lastQuick.get(a.id) ?? 0, a.last_success_at?.getTime() ?? 0);
+      if (now - last < ON_DEMAND_COOLDOWN_MS) continue;
+      this.lastQuick.set(a.id, now);
+      await this.jobs.enqueue(ADS_QUEUE, { accountId: a.id, sinceDays: 2, quick: true } satisfies AdsJob, {
+        dedupKey: `growth:ads:${a.id}`,
+        maxAttempts: 1,
+      });
+      started++;
+    }
+    return { started, accounts: accounts.length };
+  }
+
   async requestForCompany(companyId: number) {
     const accounts = await this.prisma.adAccount.findMany({
       where: { company_id: companyId, status: 'active' },
@@ -156,7 +185,7 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
   private async handle(job: AdsJob) {
     const days = Math.min(Math.max(job.sinceDays ?? DEFAULT_WINDOW_DAYS, 1), MAX_WINDOW_DAYS);
     try {
-      await this.pull(job.accountId, days);
+      await this.pull(job.accountId, days, { skipEntities: job.quick });
     } catch (e) {
       const msg =
         e instanceof AdPlatformAuthError || e instanceof AdPlatformRateLimitError
@@ -180,7 +209,7 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async pull(accountId: number, days: number): Promise<number> {
+  async pull(accountId: number, days: number, opts: { skipEntities?: boolean } = {}): Promise<number> {
     const acc = await this.prisma.adAccount.findUnique({ where: { id: accountId } });
     if (!acc || acc.status !== 'active') return 0;
     const adapter = this.registry.get(acc.platform);
@@ -209,7 +238,7 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
     });
     const entitiesFresh = !!lastEntity && Date.now() - lastEntity.updated_at.getTime() < ENTITY_REFRESH_MS;
     try {
-      if (!entitiesFresh) {
+      if (!entitiesFresh && !opts.skipEntities) {
         entities = await adapter.listEntities(token, acc.external_id);
         await this.saveEntities(acc.company_id, acc.id, acc.platform, entities);
       }

@@ -102,6 +102,11 @@ export class GrowthController {
     return this.growth.sync.request(id);
   }
 
+  @Post('sync/today')
+  syncToday(@CurrentUser() u: U) {
+    return this.growth.sync.requestToday(u.companyId);
+  }
+
   @Post('sync')
   syncAll(@CurrentUser() u: U) {
     return this.growth.sync.requestForCompany(u.companyId);
