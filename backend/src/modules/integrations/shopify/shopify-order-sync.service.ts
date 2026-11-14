@@ -870,6 +870,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
               displayFinancialStatus?: string | null;
               paymentGatewayNames?: string[] | null;
               currentTotalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+              totalPriceSet?: { shopMoney?: { amount?: string } };
               totalOutstandingSet?: { shopMoney?: { amount?: string } };
             }
           | null
@@ -891,6 +892,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
                 id closed closedAt cancelledAt
                 displayFulfillmentStatus displayFinancialStatus paymentGatewayNames
                 currentTotalPriceSet { shopMoney { amount currencyCode } }
+                totalPriceSet { shopMoney { amount } }
                 totalOutstandingSet { shopMoney { amount } }
               }
             }
@@ -948,7 +950,10 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           if (gateway) data.payment_gateway = gateway;
           const outstanding = this.num(n.totalOutstandingSet?.shopMoney?.amount);
           if (outstanding != null) data.total_outstanding = outstanding;
-          const total = this.num(n.currentTotalPriceSet?.shopMoney?.amount);
+          // Cancelled → original total (current is 0 once VOIDED).
+          const total = this.num(
+            (n.cancelledAt ? n.totalPriceSet : n.currentTotalPriceSet)?.shopMoney?.amount,
+          );
           if (total != null) data.total_price = total;
           const currency = n.currentTotalPriceSet?.shopMoney?.currencyCode;
           if (currency) data.currency = currency;
@@ -1003,6 +1008,8 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           createdAt cancelledAt closedAt
           displayFinancialStatus displayFulfillmentStatus paymentGatewayNames
           currentTotalPriceSet { shopMoney { amount currencyCode } }
+          totalPriceSet { shopMoney { amount } }
+          subtotalPriceSet { shopMoney { amount } }
           totalOutstandingSet { shopMoney { amount } }
           currentSubtotalPriceSet { shopMoney { amount } }
           currentTotalDiscountsSet { shopMoney { amount } }
@@ -1035,6 +1042,8 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       displayFulfillmentStatus?: string | null;
       paymentGatewayNames?: string[] | null;
       currentTotalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+      totalPriceSet?: { shopMoney?: { amount?: string } };
+      subtotalPriceSet?: { shopMoney?: { amount?: string } };
       totalOutstandingSet?: { shopMoney?: { amount?: string } };
       currentSubtotalPriceSet?: { shopMoney?: { amount?: string } };
       currentTotalDiscountsSet?: { shopMoney?: { amount?: string } };
@@ -1138,9 +1147,15 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             address1: n.shippingAddress?.address1 ?? null,
             address2: n.shippingAddress?.address2 ?? null,
             countryCode: n.shippingAddress?.countryCodeV2 ?? null,
-            totalPrice: this.num(n.currentTotalPriceSet?.shopMoney?.amount),
+            // A cancelled (VOIDED) order's CURRENT total is 0 — keep the ORIGINAL
+            // amount so returns / cancellations still show their real value.
+            totalPrice: this.num(
+              (n.cancelledAt ? n.totalPriceSet : n.currentTotalPriceSet)?.shopMoney?.amount,
+            ),
             totalOutstanding: this.num(n.totalOutstandingSet?.shopMoney?.amount),
-            subtotalPrice: this.num(n.currentSubtotalPriceSet?.shopMoney?.amount),
+            subtotalPrice: this.num(
+              (n.cancelledAt ? n.subtotalPriceSet : n.currentSubtotalPriceSet)?.shopMoney?.amount,
+            ),
             totalDiscounts: this.num(n.currentTotalDiscountsSet?.shopMoney?.amount),
             totalTax: this.num(n.currentTotalTaxSet?.shopMoney?.amount),
             totalShipping: this.num(n.totalShippingPriceSet?.shopMoney?.amount),

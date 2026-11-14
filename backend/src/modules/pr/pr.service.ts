@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { isReturned } from '../../common/utils/shipment-outcome';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FeatureService } from '../../common/services/feature.service';
 import { CommerceResolverService } from '../integrations/commerce/commerce-provider.resolver';
@@ -218,6 +219,7 @@ export class PrService {
               id: true,
               shopify_order_gid: true,
               status: true,
+              received_at: true,
               courier_type: true,
               courier_tracking_number: true,
             },
@@ -256,6 +258,8 @@ export class PrService {
         fulfillmentStatus: o?.fulfillment_status ?? null,
         shipmentId: ship?.id ?? null,
         shipmentStatus: ship?.status ?? null,
+        // Physically received / courier-returned (status may read 'cancelled').
+        returned: isReturned(ship),
         courierType: ship?.courier_type ?? null,
         trackingNumber: ship?.courier_tracking_number ?? null,
         trackingUrl,

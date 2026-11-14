@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { rtoAtSql, rtoSql } from '../../common/utils/shipment-outcome';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../common/services/cache.service';
 import { DateRangeDto } from './dtos/date-range.dto';
@@ -611,7 +612,7 @@ export class AnalyticsService {
         `SELECT
            COUNT(*)                                                    orders,
            SUM(o.cancelled_at IS NULL)                                 orders_active,
-           SUM(o.cancelled_at IS NULL AND (s.status IS NULL OR s.status <> 'failed')) orders_net,
+           SUM(o.cancelled_at IS NULL AND NOT ${rtoSql('s')}) orders_net,
            COALESCE(SUM(o.total_price),0)                              sales,
            COALESCE(SUM(CASE WHEN o.cancelled_at IS NULL THEN o.total_price END),0) sales_active,
            MAX(o.currency)                                             currency
@@ -650,7 +651,7 @@ export class AnalyticsService {
          FROM shipments s
          LEFT JOIN shopify_orders o
            ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
-         WHERE s.company_id = ? AND s.status = 'failed' AND s.failed_at >= ? AND s.failed_at <= ? ${storeOrd}`,
+         WHERE s.company_id = ? AND ${rtoSql('s')} AND ${rtoAtSql('s')} >= ? AND ${rtoAtSql('s')} <= ? ${storeOrd}`,
         ...[companyId, from, to, ...(storeId ? [storeId] : [])],
       ),
     ]);
@@ -683,8 +684,8 @@ export class AnalyticsService {
     >(
       `SELECT s.courier_type                                        courier,
          SUM(s.status = 'delivered')                                delivered,
-         SUM(s.status = 'failed')                                   failed,
-         SUM(s.status NOT IN ('delivered','failed','returned','cancelled')) in_transit,
+         SUM(${rtoSql('s')})                                        failed,
+         SUM(NOT ${rtoSql('s')} AND s.status NOT IN ('delivered','cancelled')) in_transit,
          COALESCE(SUM(CASE WHEN s.status='delivered' THEN o.total_price END),0) delivered_amount,
          COALESCE(SUM(CASE WHEN s.status='delivered' AND s.courier_settled_at IS NULL THEN o.total_outstanding END),0) cod_outstanding
        FROM shipments s
@@ -1393,7 +1394,7 @@ export class AnalyticsService {
         // isn't double-counted by the join.
         `SELECT poh.created_by_user_id uid,
                 COUNT(DISTINCT CASE WHEN s.status = 'delivered' THEN poh.order_gid END) delivered,
-                COUNT(DISTINCT CASE WHEN s.status = 'failed'    THEN poh.order_gid END) failed
+                COUNT(DISTINCT CASE WHEN ${rtoSql('s')} THEN poh.order_gid END) failed
            FROM pending_order_hashes poh
            JOIN shipments s ON s.company_id = poh.company_id
              AND s.shopify_order_gid = poh.order_gid

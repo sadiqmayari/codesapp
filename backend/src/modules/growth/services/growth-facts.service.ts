@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { PrismaService } from '../../../prisma/prisma.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { phoneVariants } from '../../../common/utils/contact-phone';
+import { isReturned } from '../../../common/utils/shipment-outcome';
 import { GrowthVersionService } from './growth-version.service';
 import { CapiService } from './capi.service';
 import { ShopifyOrderSyncService } from '../../integrations/shopify/shopify-order-sync.service';
@@ -290,9 +291,11 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private lifecycle(r: BaseRow, payment: string): Lifecycle {
-    if (r.cancelled_at) return 'cancelled';
+    // Return FIRST: receiving a return cancels + archives the Shopify order, so
+    // checking cancelled_at first mislabelled ~93% of returns as 'cancelled'.
     const st = r.ship_status;
-    if (r.received_at || st === 'returned' || st === 'failed') return 'rto';
+    if (isReturned({ status: st, received_at: r.received_at })) return 'rto';
+    if (r.cancelled_at) return 'cancelled';
     if (st === 'delivered' || (!st && r.delivered_at)) return 'delivered';
     if ((st && IN_FLIGHT.has(st)) || r.fulfillment_status === 'fulfilled' || r.fulfillment_status === 'partial') {
       return 'in_transit';

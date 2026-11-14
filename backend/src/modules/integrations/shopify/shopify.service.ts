@@ -14,6 +14,7 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import * as https from 'https';
 import { Prisma } from '@prisma/client';
+import { isReturned } from '../../../common/utils/shipment-outcome';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { EncryptionService } from '../../../common/services/encryption.service';
 import { CacheService } from '../../../common/services/cache.service';
@@ -3619,17 +3620,20 @@ export class ShopifyService implements OnModuleInit {
     const ships = pageGids.length
       ? await this.prisma.shipment.findMany({
           where: { company_id: companyId, shopify_order_gid: { in: pageGids } },
-          select: { shopify_order_gid: true, status: true },
+          select: { shopify_order_gid: true, status: true, received_at: true },
         })
       : [];
     const shipStatusByGid = new Map(ships.map((s) => [s.shopify_order_gid, s.status]));
+    const shipByGid = new Map(ships.map((s) => [s.shopify_order_gid, s]));
 
     const outRows: OrderReportRow[] = rows.map((r) => {
       const d = detail.get(r.orderGid);
       const shipStatus = shipStatusByGid.get(r.orderGid) ?? '';
+      // Received returns read status 'cancelled' after the Shopify cancel mirrors
+      // back — isReturned() also counts received_at (shared RTO definition).
       const returned =
         !!r.cancelledAt &&
-        ['returned', 'failed', 'attempted', 'address_issue'].includes(shipStatus);
+        (isReturned(shipByGid.get(r.orderGid)) || ['attempted', 'address_issue'].includes(shipStatus));
       const numericId = r.orderGid.split('/').pop();
       const stored = r.storedTotal == null ? null : dec(r.storedTotal);
       return {
@@ -5180,6 +5184,7 @@ export class ShopifyService implements OnModuleInit {
       fulfillmentStatus: string | null;
       shipmentId: number | null;
       shipmentStatus: string | null;
+      returned: boolean;
       courierType: string | null;
       trackingNumber: string | null;
       trackingUrl: string | null;
@@ -5284,6 +5289,7 @@ export class ShopifyService implements OnModuleInit {
             id: true,
             shopify_order_gid: true,
             status: true,
+            received_at: true,
             courier_type: true,
             courier_tracking_number: true,
           },
@@ -5330,6 +5336,8 @@ export class ShopifyService implements OnModuleInit {
         fulfillmentStatus: r.fulfillment_status,
         shipmentId: ship?.id ?? null,
         shipmentStatus: ship?.status ?? null,
+        // Physically received / courier-returned (status may read 'cancelled').
+        returned: isReturned(ship),
         courierType: ship?.courier_type ?? null,
         trackingNumber: ship?.courier_tracking_number ?? null,
         trackingUrl,

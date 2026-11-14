@@ -7,6 +7,8 @@ export interface ContactOrder {
   fulfillmentStatus: string | null;
   shipmentId: number | null;
   shipmentStatus: string | null;
+  /** Server-side RTO flag: received back or courier-returned (parcel status may read 'cancelled'). */
+  returned?: boolean;
   courierType: string | null;
   trackingNumber: string | null;
   trackingUrl: string | null;
@@ -52,6 +54,7 @@ export function humanizeStatus(s?: string | null): string {
  *  return-receive flow cancels + archives the Shopify order, so without this a
  *  physically-returned order would read "Cancelled". */
 export function orderIsReturn(o: ContactOrder): boolean {
+  if (o.returned) return true;
   return o.cancelled && /return|fail|attempt/.test((o.shipmentStatus || '').toLowerCase());
 }
 
@@ -139,7 +142,8 @@ export function summarizeContactOrders(
       valued += 1;
     }
     if (orderIsDelivered(o)) delivered += 1;
-    if (!o.cancelled && /return|fail/.test(statusText(o))) rateFailed += 1;
+    // Returns count against the delivered rate even though the order is cancelled.
+    if (o.returned || (!o.cancelled && /return|fail/.test(statusText(o)))) rateFailed += 1;
     if (orderIsIssue(o)) issues += 1;
     else if (orderIsActive(o)) active += 1;
   }
