@@ -194,7 +194,9 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           job.attempt ?? 0,
         );
       },
-      2,
+      // ~11 GraphQL cost points each vs Shopify's 100/s restore: 6 parallel is
+      // well inside budget and drains a 90-day backfill in ~2h instead of ~6h.
+      6,
       60,
     );
     this.logger.log('Registered shopify-order import + reconcile + journey workers');
@@ -1482,7 +1484,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
         .enqueue(
           JOURNEY_QUEUE,
           { kind: 'journey', companyId, orderGid: o.gid, storeId: o.store, attempt: 1 } as JourneyJob,
-          { dedupKey: `journey:${companyId}:${o.gid}`, maxAttempts: 1 },
+          { dedupKey: `journey:${companyId}:${o.gid}`, maxAttempts: 1, priority: 8 }, // live orders first
         )
         .catch(() => undefined);
     }
