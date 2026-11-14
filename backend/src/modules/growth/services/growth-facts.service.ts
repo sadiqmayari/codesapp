@@ -53,6 +53,7 @@ interface BaseRow {
   utm_content: string | null;
   ship_status: string | null;
   received_at: Date | null;
+  booked_at: Date | null;
   courier_type: string | null;
   conf_status: string | null;
   conversation_id: number | null;
@@ -66,6 +67,8 @@ interface Ctx {
   cityRate: Map<string, number>;
   globalRate: number;
   confirmRate: number;
+  /** P(delivered | still unresolved N days after booking), settled history. [days, rate] ascending. */
+  ageRate: Array<[number, number]>;
   shipAvg: Map<string, number>;
   shipGlobal: number;
   feeRatio: number;
@@ -197,6 +200,17 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
     return [...new Set([...a, ...b, ...c].map((r) => r.gid))];
   }
 
+  /** City rate scaled by how long the parcel has been out (late parcels are mostly returns). */
+  private ageAdjusted(pCity: number, bookedAt: Date | null, now: Date, ctx: Ctx): number {
+    if (!bookedAt || !ctx.ageRate.length) return pCity;
+    const days = (now.getTime() - new Date(bookedAt).getTime()) / 86_400_000;
+    const base = ctx.ageRate[0][1];
+    let rate = base;
+    for (const [b, v] of ctx.ageRate) if (days >= b) rate = v;
+    if (base <= 0) return pCity;
+    return Math.min(0.99, Math.max(0.05, pCity * (rate / base)));
+  }
+
   /** The delivery model (settled city rates + pre-shipping keep rate) — for calibration / coaching. */
   async deliveryModel(companyId: number) {
     const c = await this.context(companyId);
@@ -207,6 +221,21 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
   private async context(companyId: number): Promise<Ctx> {
     const company = await this.prisma.company.findUnique({ where: { id: companyId }, select: { timezone: true } });
     const offset = zoneOffset(company?.timezone ?? null);
+    const ageRowsP = this.prisma.$queryRawUnsafe<Array<{ b: unknown; d: unknown; r: unknown }>>(
+      // A parcel still out after N days is much more likely to be coming back:
+      // settled history says ~85% delivered at day 0 but ~32% at day 8.
+      `SELECT k.b,
+              SUM(s.status = 'delivered' AND s.delivered_at >= s.booked_at + INTERVAL k.b DAY) d,
+              SUM(((s.status IN ('returned','failed') OR s.received_at IS NOT NULL)
+                     AND COALESCE(s.received_at, s.failed_at, s.updated_at) >= s.booked_at + INTERVAL k.b DAY)
+                  OR (s.status = 'cancelled' AND s.received_at IS NULL
+                     AND COALESCE(s.cancelled_at, s.updated_at) >= s.booked_at + INTERVAL k.b DAY)) r
+         FROM shipments s
+         JOIN (SELECT 0 b UNION ALL SELECT 3 UNION ALL SELECT 5 UNION ALL SELECT 8 UNION ALL SELECT 12) k
+        WHERE s.company_id = ? AND s.booked_at >= NOW() - INTERVAL 180 DAY AND s.booked_at < NOW() - INTERVAL ${SETTLE_DAYS} DAY
+        GROUP BY k.b ORDER BY k.b`,
+      companyId,
+    ).catch(() => [] as Array<{ b: unknown; d: unknown; r: unknown }>);
     const [cityRows, confRow, shipRows, feeRow, entities] = await Promise.all([
       this.prisma.$queryRawUnsafe<Array<{ c: string | null; d: unknown; r: unknown; x: unknown }>>(
         // SETTLED parcels only (booked 21–180 days ago). Deliveries resolve in
@@ -295,11 +324,18 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
         if (e.name) campaignByName.set(`${e.platform}|${e.name.trim().toLowerCase()}`, e.external_id);
       }
     }
+    const ageRate: Array<[number, number]> = [];
+    for (const r of await ageRowsP) {
+      const d = n(r.d);
+      const rr = n(r.r);
+      if (d + rr >= 30) ageRate.push([n(r.b), d / (d + rr)]);
+    }
     return {
       offMin: offsetMinutes(offset),
       offset,
       cityRate,
       globalRate,
+      ageRate,
       confirmRate: total > 50 ? kept / total : 0.88,
       shipAvg,
       shipGlobal: shipVals.length ? shipVals.reduce((a, b) => a + b, 0) / shipVals.length : 0,
@@ -338,7 +374,7 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
               o.financial_status, o.payment_gateway, o.fulfillment_status, o.delivered_at, o.city, o.phone, o.email,
               o.manual_confirmed_at, o.order_name, o.landing_site,
               o.utm_source, o.utm_medium, o.utm_campaign, o.utm_content,
-              s.status ship_status, s.received_at, s.courier_type,
+              s.status ship_status, s.received_at, s.booked_at, s.courier_type,
               som.status conf_status, som.conversation_id,
               ps.fees ps_fees, ps.gross ps_gross
          FROM shopify_orders o
@@ -524,7 +560,7 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
             : payment === 'prepaid'
               ? Math.max(pCity, 0.97)
               : life === 'in_transit'
-                ? pCity
+                ? this.ageAdjusted(pCity, r.booked_at, now, ctx)
                 : life === 'confirmed'
                   ? pCity * 0.97
                   : pCity * ctx.confirmRate;
