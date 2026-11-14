@@ -1,3 +1,4 @@
+import { salesSelectSql } from '../../common/utils/sales';
 import {
   BadRequestException,
   Injectable,
@@ -520,15 +521,10 @@ export class SuperAdminService {
       // Sales cohort by order date, grouped per tenant.
       this.prisma.$queryRawUnsafe<Record<string, any>[]>(
         `SELECT o.company_id cid,
-            COUNT(*)                                               orders,
+            ${salesSelectSql('o')},
             SUM(o.cancelled_at IS NULL)                            orders_active,
-            COALESCE(SUM(o.total_price),0)                         gross,
-            COALESCE(SUM(CASE WHEN o.cancelled_at IS NOT NULL THEN o.total_price END),0) cancelled_value,
-            COALESCE(SUM(CASE WHEN o.cancelled_at IS NULL AND s.status='returned' THEN o.total_price END),0) returned_value,
             MAX(o.currency)                                        currency
          FROM shopify_orders o
-         LEFT JOIN shipments s
-           ON s.company_id = o.company_id AND s.shopify_order_gid = o.shopify_order_gid
          WHERE o.company_id IN (${inList})
            AND o.shopify_created_at >= ? AND o.shopify_created_at <= ?
          GROUP BY o.company_id`,
@@ -584,8 +580,11 @@ export class SuperAdminService {
         const cid = n(r.cid);
         const f = fulfBy.get(cid);
         const gross = money(r.gross);
-        const cancelled = money(r.cancelled_value);
-        const returned = money(r.returned_value);
+        // Single sales definition (common/utils/sales.ts): Gross before discounts,
+        // returns detected via rtoSql (received or returned/failed), not status alone.
+        const discounts = money(r.discounts);
+        const cancelled = money(r.cancelled);
+        const returned = money(r.returned);
         const shipped = n(f?.shipped);
         const delivered = n(f?.delivered);
         return {
@@ -593,9 +592,10 @@ export class SuperAdminService {
           name: nameOf.get(cid) ?? `Company ${cid}`,
           currency: (r.currency as string | null) ?? null,
           gross,
+          discounts,
           cancelled,
           returned,
-          net: Math.round((gross - cancelled - returned) * 100) / 100,
+          net: money(r.net),
           orders: n(r.orders),
           ordersActive: n(r.orders_active),
           shipped,
@@ -615,13 +615,14 @@ export class SuperAdminService {
     // Platform money grouped by currency; counts summed currency-agnostic.
     const byCurrency: Record<
       string,
-      { gross: number; net: number; cancelled: number; returned: number; orders: number; ordersActive: number }
+      { gross: number; net: number; discounts: number; cancelled: number; returned: number; orders: number; ordersActive: number }
     > = {};
     for (const t of perTenant) {
       const cur = t.currency ?? 'PKR';
       const b = (byCurrency[cur] ??= {
         gross: 0,
         net: 0,
+        discounts: 0,
         cancelled: 0,
         returned: 0,
         orders: 0,
@@ -629,6 +630,7 @@ export class SuperAdminService {
       });
       b.gross += t.gross;
       b.net += t.net;
+      b.discounts += t.discounts;
       b.cancelled += t.cancelled;
       b.returned += t.returned;
       b.orders += t.orders;
@@ -637,6 +639,7 @@ export class SuperAdminService {
     for (const b of Object.values(byCurrency)) {
       b.gross = Math.round(b.gross * 100) / 100;
       b.net = Math.round(b.net * 100) / 100;
+      b.discounts = Math.round(b.discounts * 100) / 100;
       b.cancelled = Math.round(b.cancelled * 100) / 100;
       b.returned = Math.round(b.returned * 100) / 100;
     }
@@ -712,15 +715,10 @@ export class SuperAdminService {
     const [storeRows, stores, courierRows] = await Promise.all([
       this.prisma.$queryRawUnsafe<Record<string, any>[]>(
         `SELECT o.shopify_store_id sid,
-            COUNT(*)                                               orders,
+            ${salesSelectSql('o')},
             SUM(o.cancelled_at IS NULL)                            orders_active,
-            COALESCE(SUM(o.total_price),0)                         gross,
-            COALESCE(SUM(CASE WHEN o.cancelled_at IS NOT NULL THEN o.total_price END),0) cancelled_value,
-            COALESCE(SUM(CASE WHEN o.cancelled_at IS NULL AND s.status='returned' THEN o.total_price END),0) returned_value,
             MAX(o.currency)                                        currency
          FROM shopify_orders o
-         LEFT JOIN shipments s
-           ON s.company_id = o.company_id AND s.shopify_order_gid = o.shopify_order_gid
          WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at <= ?
          GROUP BY o.shopify_store_id`,
         companyId,
@@ -758,17 +756,21 @@ export class SuperAdminService {
         const sid = r.sid == null ? null : n(r.sid);
         const meta = sid != null ? storeMeta.get(sid) : undefined;
         const gross = money(r.gross);
-        const cancelled = money(r.cancelled_value);
-        const returned = money(r.returned_value);
+        // Single sales definition (common/utils/sales.ts): Gross before discounts,
+        // returns detected via rtoSql (received or returned/failed), not status alone.
+        const discounts = money(r.discounts);
+        const cancelled = money(r.cancelled);
+        const returned = money(r.returned);
         return {
           storeId: sid,
           label: meta?.label || meta?.shop_domain || (sid == null ? 'Unassigned' : `Store ${sid}`),
           provider: meta?.provider ?? null,
           currency: (r.currency as string | null) ?? null,
           gross,
+          discounts,
           cancelled,
           returned,
-          net: Math.round((gross - cancelled - returned) * 100) / 100,
+          net: money(r.net),
           orders: n(r.orders),
           ordersActive: n(r.orders_active),
         };

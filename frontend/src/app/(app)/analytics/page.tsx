@@ -396,7 +396,7 @@ export default function AnalyticsPage() {
                     <th className="py-2 px-2 text-right">Sent</th>
                     <th className="py-2 px-2 text-right">Convos</th>
                     <th className="py-2 px-2 text-right">Orders</th>
-                    <th className="py-2 px-2 text-right">Order value</th>
+                    <th className="py-2 px-2 text-right" title="Net sales of the orders the agent created">Net sales</th>
                     <th className="py-2 pl-2 text-right" title="Median time to reply, in-hours">
                       Response (median)
                     </th>

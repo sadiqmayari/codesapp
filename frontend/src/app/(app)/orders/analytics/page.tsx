@@ -1,5 +1,6 @@
 'use client';
 
+import { GROSS_HELP, NET_HELP, SalesBreakdownRows, type SalesBreakdown } from '@/components/ui/sales-breakdown';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, TrendingUp, TrendingDown } from 'lucide-react';
@@ -49,6 +50,8 @@ interface TrendRow {
   bucket: string;
   orders: number;
   sales: number;
+  gross?: number;
+  net?: number;
   delivered: number;
 }
 interface StoreSplitRow {
@@ -57,6 +60,8 @@ interface StoreSplitRow {
   isPrimary: boolean;
   orders: number;
   sales: number;
+  gross?: number;
+  net?: number;
   shipped: number;
   delivered: number;
   deliveryRate: number | null;
@@ -65,7 +70,10 @@ interface StoreSplitRow {
 interface OrdersAnalytics {
   range: { granularity: 'hour' | 'day'; spanDays: number };
   currency: string | null;
+  salesBreakdown?: SalesBreakdown;
   kpis: {
+    gross?: Kpi;
+    net?: Kpi;
     sales: Kpi;
     salesActive: Kpi;
     deliveredAmount: Kpi;
@@ -293,29 +301,32 @@ export default function OrdersAnalyticsPage() {
             </div>
           )}
 
-          {/* Money KPIs */}
+          {/* Money KPIs — Gross + Net (single definition), breakdown below */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
             <KpiCard
-              label="Total sales"
-              kpi={data.kpis.sales}
+              label="Gross sales"
+              help={GROSS_HELP}
+              kpi={data.kpis.gross ?? data.kpis.sales}
               fmt={money}
               compareLabel={compareLabel}
             />
             <KpiCard
-              label="Sales (excl. cancelled)"
-              kpi={data.kpis.salesActive}
+              label="Net sales"
+              help={NET_HELP}
+              kpi={data.kpis.net ?? data.kpis.salesActive}
               fmt={money}
               compareLabel={compareLabel}
+              tone="green"
             />
             <KpiCard
-              label="Delivered amount"
+              label="Delivered value"
               kpi={data.kpis.deliveredAmount}
               fmt={money}
               compareLabel={compareLabel}
               tone="green"
             />
             <KpiCard
-              label="Failed-delivery amount"
+              label="Returned value"
               kpi={data.kpis.failedAmount}
               fmt={money}
               compareLabel={compareLabel}
@@ -323,6 +334,13 @@ export default function OrdersAnalyticsPage() {
               invertDelta
             />
           </div>
+
+          {data.salesBreakdown && (
+            <details className="mb-4 rounded-xl border border-gray-200 bg-white p-4" open>
+              <summary className="cursor-pointer text-sm font-semibold text-gray-700">How Gross becomes Net</summary>
+              <SalesBreakdownRows b={data.salesBreakdown} fmt={money} className="mt-3 max-w-xl" />
+            </details>
+          )}
 
           {/* Count KPIs */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
@@ -394,7 +412,7 @@ export default function OrdersAnalyticsPage() {
           </div>
 
           {/* Trend */}
-          <Card title="Sales & orders trend">
+          <Card title="Gross, net sales & orders">
             {data.trend.length === 0 ? (
               <p className="text-sm text-gray-400 py-6 text-center">
                 No orders in this period.
@@ -423,13 +441,20 @@ export default function OrdersAnalyticsPage() {
                   />
                   <Tooltip
                     formatter={(v: number, name: string) =>
-                      name === 'sales' ? money(v) : v.toLocaleString()
+                      name === 'orders' ? v.toLocaleString() : money(v)
                     }
                   />
                   <Bar
                     yAxisId="left"
-                    dataKey="sales"
-                    name="sales"
+                    dataKey={(r: TrendRow) => r.gross ?? r.sales}
+                    name="Gross sales"
+                    fill="#94a3b8"
+                    radius={[4, 4, 0, 0]}
+                  />
+                  <Bar
+                    yAxisId="left"
+                    dataKey={(r: TrendRow) => r.net ?? r.sales}
+                    name="Net sales"
                     fill="#16a34a"
                     radius={[4, 4, 0, 0]}
                   />
@@ -455,7 +480,7 @@ export default function OrdersAnalyticsPage() {
                     <tr className="text-left text-gray-500 border-b border-gray-200">
                       <th className="py-2 pr-2">Store</th>
                       <th className="py-2 px-2 text-right">Orders</th>
-                      <th className="py-2 px-2 text-right">Sales</th>
+                      <th className="py-2 px-2 text-right">Net sales</th>
                       <th className="py-2 px-2 text-right">Delivered</th>
                       <th className="py-2 px-2 text-right">Delivery rate</th>
                       <th className="py-2 pl-2 text-right">COD due</th>
@@ -465,7 +490,7 @@ export default function OrdersAnalyticsPage() {
                     {(() => {
                       const maxSales = Math.max(
                         1,
-                        ...data.storeSplit.map((s) => s.sales),
+                        ...data.storeSplit.map((s) => s.net ?? s.sales),
                       );
                       return data.storeSplit.map((s) => (
                         <tr
@@ -479,12 +504,12 @@ export default function OrdersAnalyticsPage() {
                             {s.orders.toLocaleString()}
                           </td>
                           <td className="py-2 px-2 text-right text-gray-800 tabular-nums">
-                            <div>{money(s.sales)}</div>
+                            <div title={s.gross != null ? `Gross ${money(s.gross)}` : undefined}>{money(s.net ?? s.sales)}</div>
                             <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
                               <div
                                 className="h-full rounded-full"
                                 style={{
-                                  width: `${Math.round((s.sales / maxSales) * 100)}%`,
+                                  width: `${Math.round(((s.net ?? s.sales) / maxSales) * 100)}%`,
                                   background: storeColor(s.storeId).solid,
                                 }}
                               />
@@ -569,7 +594,7 @@ export default function OrdersAnalyticsPage() {
                       <tr className="text-left text-gray-500 border-b border-gray-200">
                         <th className="py-2 pr-2">Agent</th>
                         <th className="py-2 px-2 text-right">Orders</th>
-                        <th className="py-2 pl-2 text-right">Order value</th>
+                        <th className="py-2 pl-2 text-right" title="Net sales of the orders the agent created (after discounts, minus cancelled and returned)">Net sales</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -597,8 +622,7 @@ export default function OrdersAnalyticsPage() {
                     </tbody>
                   </table>
                   <p className="text-xs text-gray-400 mt-3">
-                    Order value is captured for orders created after this feature
-                    shipped; older orders count but show no value.
+                    Net sales = after discounts, minus cancelled and returned orders, from the live order record.
                   </p>
                 </div>
               )}
@@ -617,7 +641,9 @@ function KpiCard({
   compareLabel,
   tone,
   invertDelta,
+  help,
 }: {
+  help?: string;
   label: string;
   kpi: Kpi;
   fmt: (v: number) => string;
@@ -632,7 +658,7 @@ function KpiCard({
         ? 'text-red-600'
         : 'text-gray-900';
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-5">
+    <div className="bg-white border border-gray-200 rounded-xl p-5" title={help}>
       <p className="text-sm text-gray-500">{label}</p>
       <p className={cn('text-2xl font-bold mt-2', valueColor)}>
         {fmt(kpi.value)}

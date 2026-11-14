@@ -211,6 +211,44 @@ export interface Forecast {
   spend: ForecastMetric;
   gross: ForecastMetric;
   simulator: Array<{ campaignId: string; name: string; status: string | null; a: number; b: number; dailySpend: number; dailyExpected: number }>;
+  /** Model check: settled weeks, day-0 prediction vs actual net. */
+  calibration?: { weeks: Array<{ week: string; predicted: number; actual: number; errorPct: number | null }>; errorPct: number | null; settleDays: number } | null;
+}
+
+export interface SalesTarget {
+  month: string;
+  storeId: number | null;
+  netSalesTarget: number | null;
+  ordersTarget: number | null;
+  adBudget: number | null;
+  updatedAt: string | null;
+}
+
+export interface TargetPacing {
+  target: number;
+  soFar: number;
+  daysLeft: number;
+  needPerDay: number;
+  recentPerDay: number;
+  projected: { p10: number; p50: number; p90: number };
+  gap: number;
+  chance: number;
+  status: 'on_track' | 'at_risk' | 'off_track';
+}
+
+export interface TargetStatus {
+  target: SalesTarget;
+  current: boolean;
+  actual: { net: number; expected: number; gross: number } | null;
+  pacing: TargetPacing | null;
+}
+
+export interface TargetCoach extends TargetStatus {
+  currency?: string | null;
+  levers: Array<{ id: string; title: string; detail: string; impact: number | null; link?: string }>;
+  closes?: number;
+  plan: { source: 'ai' | 'rules'; text: string } | null;
+  generatedAt?: string;
 }
 
 export interface Opportunity {
@@ -319,6 +357,13 @@ export const growthApi = {
   backfillAttribution: () => apiFetch<{ enqueued: number }>('/growth/backfill/attribution', { method: 'POST' }),
   backfillFinancials: () => apiFetch('/growth/backfill/financials', { method: 'POST' }),
   syncCogs: () => apiFetch('/growth/cogs/sync', { method: 'POST' }),
+  target: (month: string, storeId?: number | null) =>
+    apiFetch<TargetStatus>('/growth/targets', { params: { month, ...(storeId ? { storeId } : {}) } }),
+  setTarget: (body: { month: string; storeId?: number | null; netSalesTarget: number | null }) =>
+    apiFetch<TargetStatus>('/growth/targets', { method: 'PUT', body }),
+  coach: (month: string, storeId?: number | null) =>
+    apiFetch<TargetCoach>('/growth/targets/coach', { params: { month, ...(storeId ? { storeId } : {}) } }),
+  financialsCoverage: () => apiFetch<{ total: number; missing: number; pct: number }>('/growth/backfill/financials'),
 };
 
 export const SYNC_INTERVALS: Array<[number | null, string]> = [

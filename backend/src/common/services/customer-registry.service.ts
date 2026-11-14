@@ -1,3 +1,4 @@
+import { keptOrderSql, netOrderSql } from '../utils/sales';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -193,10 +194,13 @@ export class CustomerRegistryService implements OnModuleInit {
           cur: string | null;
         }>
       >(
-        `SELECT COUNT(*) cnt, COALESCE(SUM(total_price), 0) ltv,
-                MAX(shopify_created_at) last_at, MAX(currency) cur
-           FROM shopify_orders
-          WHERE company_id = ? AND phone = ? AND cancelled_at IS NULL`,
+        // LTV = lifetime NET sales (after discounts, minus cancelled/returned);
+        // cnt = orders that count toward net, so AOV = net ÷ kept orders.
+        `SELECT SUM(CASE WHEN ${keptOrderSql('o')} THEN 1 ELSE 0 END) cnt,
+                COALESCE(SUM(${netOrderSql('o')}), 0) ltv,
+                MAX(o.shopify_created_at) last_at, MAX(o.currency) cur
+           FROM shopify_orders o
+          WHERE o.company_id = ? AND o.phone = ?`,
         companyId,
         rawPhone,
       );

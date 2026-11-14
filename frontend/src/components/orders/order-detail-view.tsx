@@ -55,7 +55,7 @@ import { CopyButton, timeAgo } from './drawer/shared';
 import { OrderProgress } from './drawer/progress';
 import { NextStepCallout, courierName, deriveNextStep, type NextActionId } from './drawer/next-step';
 import { CustomerCard } from './drawer/customer-card';
-import { ItemsCard, type DrawerItem } from './drawer/items-card';
+import { ItemsCard, type DrawerItem, type OrderMoney } from './drawer/items-card';
 import {
   ShipperAdviceForm,
   ShippingCard,
@@ -471,23 +471,43 @@ export function OrderDetailContent({
           lineTotal: l.price && l.quantity ? Number(l.price) * l.quantity : null,
           image: null,
         }));
-  // Discount breakdown (live only). Subtotal = pre-discount; fall back to the
-  // sum of original unit × qty when Shopify didn't return subtotalPriceSet.
+  // Money lines (reconcile exactly). Shopify's subtotal is AFTER discounts and
+  // before shipping/tax; live values win, the mirror is the fallback.
   const liveD = live?.ok ? live : null;
   const itemsSubtotal = items.reduce(
     (s, it) => s + (it.originalUnitPrice ?? it.unitPrice ?? 0) * (it.quantity ?? 0),
     0,
   );
-  const subtotal = liveD?.subtotalPrice ?? (itemsSubtotal > 0 ? itemsSubtotal : null);
-  const discountTotal =
-    liveD?.totalDiscounts != null && liveD.totalDiscounts > 0.009
-      ? liveD.totalDiscounts
-      : subtotal != null && o.totalPrice != null && subtotal - o.totalPrice > 0.009
-        ? subtotal - o.totalPrice
-        : null;
-  const discountCodes = (liveD?.discountApplications ?? [])
-    .map((da) => da.label)
-    .filter((l): l is string => !!l);
+  const itemsAfter = liveD?.subtotalPrice ?? o.subtotalPrice ?? null;
+  const discountTotal = liveD?.totalDiscounts ?? o.totalDiscounts ?? 0;
+  const tax = liveD?.totalTax ?? o.totalTax ?? null;
+  const shipping =
+    liveD?.totalShipping ??
+    o.totalShipping ??
+    (itemsAfter != null && o.totalPrice != null
+      ? Math.max(0, Math.round((o.totalPrice - itemsAfter - (tax ?? 0)) * 100) / 100)
+      : null);
+  const apps = (liveD?.discountApplications ?? []).filter((da) => da.label);
+  const orderMoney: OrderMoney = {
+    itemsGross: itemsAfter != null ? itemsAfter + discountTotal : itemsSubtotal > 0 ? itemsSubtotal : null,
+    discountTotal,
+    discounts: apps.map((da) => ({
+      label: da.label as string,
+      detail: da.percentage != null ? `${da.percentage}%` : null,
+      amount: apps.length === 1 ? discountTotal : da.amount,
+    })),
+    itemsAfter,
+    shipping,
+    tax,
+    received: Math.max(0, (o.totalPrice ?? 0) - outstanding - (liveD?.totalRefunded ?? 0)),
+    refunded: liveD?.totalRefunded ?? 0,
+    state:
+      d.shipment && (d.shipment.receivedAt || /^(returned|failed)$/.test(d.shipment.status ?? ''))
+        ? 'returned'
+        : o.cancelledAt
+          ? 'cancelled'
+          : 'kept',
+  };
 
   /* ── actions ── */
   const openChat =
@@ -898,9 +918,7 @@ export function OrderDetailContent({
             <ItemsCard
               items={items}
               money={money}
-              subtotal={subtotal}
-              discountTotal={discountTotal}
-              discountCodes={discountCodes}
+              m={orderMoney}
               total={o.totalPrice}
               outstanding={outstanding}
               paid={paid}

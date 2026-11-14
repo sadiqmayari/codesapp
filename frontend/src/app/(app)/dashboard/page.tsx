@@ -18,6 +18,7 @@ import { useToast } from '@/components/toast';
 import { cn, zonedPresetRange } from '@/lib/utils';
 import AttendanceTodayTile from '@/components/attendance-today-tile';
 import { TodayStrip } from '@/components/dashboard/today-strip';
+import { TodaySales } from '@/components/dashboard/today-sales';
 import { Skeleton, SkeletonCards } from '@/components/ui/skeleton';
 
 interface Overview {
@@ -180,6 +181,8 @@ export default function DashboardPage() {
       </div>
 
       <TodayStrip />
+
+      <TodaySales />
 
       <AttendanceTodayTile />
 
@@ -348,7 +351,7 @@ function AgentOrdersCard({ data }: { data: AgentOrders | null }) {
               <tr className="text-left text-gray-500 border-b border-gray-200">
                 <th className="py-2 pr-2">Agent</th>
                 <th className="py-2 px-2 text-right">Orders</th>
-                <th className="py-2 pl-2 text-right">Order value</th>
+                <th className="py-2 pl-2 text-right" title="Net sales of the orders the agent created (after discounts, minus cancelled and returned)">Net sales</th>
               </tr>
             </thead>
             <tbody>
@@ -371,8 +374,7 @@ function AgentOrdersCard({ data }: { data: AgentOrders | null }) {
             </tbody>
           </table>
           <p className="text-xs text-gray-400 mt-3">
-            Order value is captured for orders created after this feature
-            shipped; older orders count but show no value.
+            Net sales = after discounts, minus cancelled and returned orders, from the live order record.
           </p>
         </div>
       )}

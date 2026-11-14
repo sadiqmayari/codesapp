@@ -334,7 +334,7 @@ export function ContactInfoPanel(props: ContactInfoPanelProps) {
             [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-12 rounded-lg" />)
           ) : (
             <>
-              <Stat label="Lifetime" value={summary ? moneyCompact(summary.ltv, summary.currency) : '—'} />
+              <Stat label="Lifetime net" value={summary ? moneyCompact(summary.ltv, summary.currency) : '—'} />
               <Stat label="Orders" value={summary ? String(summary.count) : '0'} />
               <Stat label="Avg order" value={summary && summary.aov ? moneyCompact(summary.aov, summary.currency) : '—'} />
               <Stat

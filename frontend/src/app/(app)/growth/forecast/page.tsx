@@ -10,6 +10,7 @@ import { useGrowth } from '@/components/growth/growth-filters';
 import { EChart, useChartTheme } from '@/components/growth/echart';
 import { pacingOption } from '@/components/growth/chart-options';
 import { ErrorNote, Panel } from '@/components/growth/ui';
+import { TargetCoachCard } from '@/components/growth/target-coach';
 
 type Metric = 'net' | 'expected' | 'gross' | 'spend';
 const LABEL: Record<Metric, string> = { net: 'Net sales', expected: 'Expected net', gross: 'Gross sales', spend: 'Ad spend' };
@@ -19,7 +20,7 @@ export default function GrowthForecastPage() {
   const theme = useChartTheme();
   const [data, setData] = useState<Forecast | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [metric, setMetric] = useState<Metric>('net');
+  const [metric, setMetric] = useState<Metric>('expected');
   const [budgets, setBudgets] = useState<Record<string, number>>({});
 
   useEffect(() => {
@@ -65,8 +66,10 @@ export default function GrowthForecastPage() {
   const pace = m.lastMonthToDate > 0 ? (m.mtd / m.lastMonthToDate) * 100 : null;
   const cur = data.currency;
 
+  const cal = data.calibration;
   return (
     <div className="space-y-4">
+      <TargetCoachCard month={data.month} />
       <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
         {([
           ['Month to date', money(m.mtd, cur, mode), fullMoney(m.mtd, cur), `${data.monthStart} → ${data.today}`],
@@ -98,6 +101,40 @@ export default function GrowthForecastPage() {
       >
         <EChart option={option} height={340} ariaLabel="Month pacing forecast" />
       </Panel>
+
+      {cal && cal.weeks.length > 0 && (
+        <Panel title="Model check" hint={`What the model would have predicted when each order was placed vs the net that actually stayed, for weeks old enough to have settled (${cal.settleDays}+ days). Trust the projection as much as this error.`}
+          action={cal.errorPct != null ? (
+            <span className={cn('rounded-full px-2 py-0.5 text-xs font-bold', Math.abs(cal.errorPct) <= 3 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : Math.abs(cal.errorPct) <= 6 ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300' : 'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300')}>
+              {cal.errorPct > 0 ? '+' : ''}{cal.errorPct}% overall
+            </span>
+          ) : undefined}>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[480px] text-sm tabular-nums">
+              <thead>
+                <tr className="border-b border-line text-xs uppercase tracking-wide text-muted">
+                  <th className="py-2 text-left font-bold">Order week</th>
+                  <th className="py-2 text-right font-bold">Predicted net</th>
+                  <th className="py-2 text-right font-bold">Actual net</th>
+                  <th className="py-2 text-right font-bold">Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cal.weeks.map((w) => (
+                  <tr key={w.week} className="border-b border-line last:border-0">
+                    <td className="py-1.5 text-ink">{w.week}</td>
+                    <td className="py-1.5 text-right" title={fullMoney(w.predicted, cur)}>{money(w.predicted, cur, mode)}</td>
+                    <td className="py-1.5 text-right" title={fullMoney(w.actual, cur)}>{money(w.actual, cur, mode)}</td>
+                    <td className={cn('py-1.5 text-right font-semibold', w.errorPct != null && Math.abs(w.errorPct) > 6 ? 'text-red-600' : 'text-muted')}>
+                      {w.errorPct == null ? '—' : `${w.errorPct > 0 ? '+' : ''}${w.errorPct}%`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
 
       <Panel title="Budget simulator" hint="Each campaign’s spend → expected-revenue curve, fitted on its last 60 days (last click, 7-day). Drag a budget to see the monthly effect.">
         {!sim || !sim.rows.length ? (

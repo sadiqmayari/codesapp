@@ -2712,3 +2712,20 @@ model AdDraft {
   @@unique([company_id, user_id])
   @@map("ad_drafts")
 }
+
+/// Monthly NET sales target per tenant (store_id 0 = all stores). Growth → Forecast.
+model SalesTarget {
+  id               Int      @id @default(autoincrement())
+  company_id       Int
+  month            String   @db.VarChar(7)
+  store_id         Int      @default(0)
+  net_sales_target Decimal  @db.Decimal(14, 2)
+  orders_target    Int?
+  ad_budget        Decimal? @db.Decimal(14, 2)
+  updated_by       Int?
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  @@unique([company_id, month, store_id])
+  @@map("sales_targets")
+}

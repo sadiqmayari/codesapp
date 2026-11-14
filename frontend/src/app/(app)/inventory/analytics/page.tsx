@@ -362,7 +362,7 @@ export default function InventoryAnalyticsPage() {
         <div className={cn('space-y-5', loading && 'opacity-60 pointer-events-none')}>
           {/* KPI grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <KpiCard label="Net revenue" kpi={s.revenueNet} fmt={compact} compareLabel={compareLabel} tone="green" />
+            <KpiCard label="Net sales" kpi={s.revenueNet} fmt={compact} compareLabel={compareLabel} tone="green" />
             <KpiCard label="Units sold" kpi={s.unitsSold} fmt={intFmt} compareLabel={compareLabel} />
             <KpiCard label="Gross profit" kpi={s.grossProfit} fmt={compact} compareLabel={compareLabel} tone="green"
               sub={`${pct(s.grossMargin.value)} margin`} />
@@ -391,7 +391,7 @@ export default function InventoryAnalyticsPage() {
                   <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 10, fill: '#94a3b8' }} tickLine={false} axisLine={false} />
                   <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Bar yAxisId="l" dataKey="revenue" name="Net revenue" fill="#0d9488" radius={[2, 2, 0, 0]} maxBarSize={18} />
+                  <Bar yAxisId="l" dataKey="revenue" name="Net sales" fill="#0d9488" radius={[2, 2, 0, 0]} maxBarSize={18} />
                   <Line yAxisId="r" type="monotone" dataKey="units" name="Units" stroke="#7c3aed" strokeWidth={2} dot={false} />
                 </ComposedChart>
               </ResponsiveContainer>
@@ -418,7 +418,7 @@ export default function InventoryAnalyticsPage() {
               <ResponsiveContainer width="100%" height={300}>
                 <ScatterChart margin={{ top: 10, right: 16, left: 0, bottom: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#eef1f5" />
-                  <XAxis type="number" dataKey="x" name="Net revenue" tick={{ fontSize: 10, fill: '#94a3b8' }}
+                  <XAxis type="number" dataKey="x" name="Net sales" tick={{ fontSize: 10, fill: '#94a3b8' }}
                     tickLine={false} axisLine={false} tickFormatter={(v) => compact(v).replace('Rs ', '')} />
                   <YAxis type="number" dataKey="y" name="Margin %" unit="%" tick={{ fontSize: 10, fill: '#94a3b8' }}
                     tickLine={false} axisLine={false} />
@@ -461,7 +461,7 @@ export default function InventoryAnalyticsPage() {
                   <YAxis yAxisId="r" orientation="right" domain={[0, 100]} unit="%" tick={{ fontSize: 10, fill: '#94a3b8' }} tickLine={false} axisLine={false} />
                   <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }}
                     formatter={(v: number, nm) => (nm === 'Cumulative %' ? `${v}%` : money(v))} />
-                  <Bar yAxisId="l" dataKey="revenue" name="Net revenue" fill="#16a34a" radius={[2, 2, 0, 0]} maxBarSize={22} />
+                  <Bar yAxisId="l" dataKey="revenue" name="Net sales" fill="#16a34a" radius={[2, 2, 0, 0]} maxBarSize={22} />
                   <Line yAxisId="r" type="monotone" dataKey="cumPct" name="Cumulative %" stroke="#d97706" strokeWidth={2} dot={false} />
                 </ComposedChart>
               </ResponsiveContainer>
@@ -477,7 +477,7 @@ export default function InventoryAnalyticsPage() {
                 <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} tickLine={false} axisLine={false} />
                 <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }}
                   formatter={(v: number) => money(v)} />
-                <Bar dataKey="revenue" name="Net revenue" fill="#0d9488" radius={[3, 3, 0, 0]} maxBarSize={44} />
+                <Bar dataKey="revenue" name="Net sales" fill="#0d9488" radius={[3, 3, 0, 0]} maxBarSize={44} />
               </BarChart>
             </ResponsiveContainer>
           </Card>
@@ -527,7 +527,7 @@ export default function InventoryAnalyticsPage() {
                   <tr className="bg-gray-50 text-gray-500 text-left text-xs uppercase tracking-wide">
                     <th className="px-3 py-2.5">Product</th>
                     <Th label="Units" k="unitsSold" {...{ sortKey, sortDir, toggleSort }} />
-                    <Th label="Net rev" k="revenueNet" {...{ sortKey, sortDir, toggleSort }} />
+                    <Th label="Net sales" k="revenueNet" {...{ sortKey, sortDir, toggleSort }} />
                     <Th label="Profit" k="grossProfit" {...{ sortKey, sortDir, toggleSort }} />
                     <Th label="Margin" k="margin" {...{ sortKey, sortDir, toggleSort }} />
                     <Th label="On hand" k="onHand" {...{ sortKey, sortDir, toggleSort }} />

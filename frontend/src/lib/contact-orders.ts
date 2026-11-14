@@ -29,7 +29,8 @@ export interface ContactOrder {
 export interface ContactOrders {
   count: number;
   /** Lifetime totals over ALL the contact's orders (list is capped at 30). */
-  lifetime?: { count: number; value: number; firstOrderAt: string | null };
+  /** value = lifetime NET sales; gross = before discounts/cancellations/returns. */
+  lifetime?: { count: number; value: number; gross?: number; keptCount?: number; firstOrderAt: string | null };
   orders: ContactOrder[];
 }
 
@@ -151,7 +152,8 @@ export function summarizeContactOrders(
   // Prefer the server's lifetime aggregates (true totals beyond the 30 listed).
   const lifeCount = orders.lifetime?.count ?? orders.count;
   const lifeValue = orders.lifetime?.value ?? ltv;
-  const lifeKept = orders.lifetime ? lifeCount : valued;
+  // AOV = Net ÷ orders that count toward Net (was ÷ ALL orders incl. cancelled).
+  const lifeKept = orders.lifetime?.keptCount ?? valued;
   return {
     count: lifeCount,
     ltv: lifeValue,

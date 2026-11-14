@@ -22,7 +22,7 @@ export class GrowthVersionService {
     return this.cache.get<number>(`growth:ver:${companyId}`) ?? 1;
   }
 
-  bump(companyId: number, kind: 'order' | 'spend' | 'status' | 'rebuild'): void {
+  bump(companyId: number, kind: 'order' | 'spend' | 'status' | 'rebuild' | 'target'): void {
     this.cache.set(`growth:ver:${companyId}`, this.get(companyId) + 1, 7 * 86_400);
     try {
       if (this.gateway === undefined) {

@@ -86,6 +86,9 @@ interface DayAgg {
   delivered: number;
   rto: number;
   cancelled: number;
+  /** After-discount value of cancelled / returned orders (the Gross → Net breakdown). */
+  cancelledNet: number;
+  rtoNet: number;
   spend: number;
   platformValue: number;
 }
@@ -93,7 +96,7 @@ interface DayAgg {
 function emptyDay(date: string): DayAgg {
   return { date, placed: 0, orders: 0, gross: 0, grossNC: 0, rtoGross: 0, keptGross: 0, net: 0, realized: 0, pending: 0, expected: 0, cogs: 0, cogsExp: 0,
     ship: 0, shipEst: 0, fees: 0, newc: 0, discounts: 0, units: 0, unitsNoCost: 0, breakdown: 0, delivered: 0, rto: 0, cancelled: 0,
-    spend: 0, platformValue: 0 };
+    cancelledNet: 0, rtoNet: 0, spend: 0, platformValue: 0 };
 }
 
 function sumDays(days: DayAgg[]): DayAgg {
@@ -109,8 +112,13 @@ export function kpisOf(t: DayAgg) {
   const expectedProfit = t.expected - t.cogsExp - t.spend - t.ship - t.fees;
   const contribution = t.net - t.cogs - t.ship - t.fees;
   return {
+    // Two headline numbers (common/utils/sales.ts): Gross = before discounts,
+    // Net = Gross − discounts − cancelled − returned. The rest is breakdown.
     gross: t.gross,
     net: t.net,
+    discounts: t.discounts,
+    cancelledValue: t.cancelledNet,
+    returnedValue: t.rtoNet,
     realized: t.realized,
     pending: t.pending,
     expected: t.expected,
@@ -230,6 +238,7 @@ export class GrowthQueryService {
       e.breakdown += n(r.bd);
       if (life === 'cancelled') {
         e.cancelled += c;
+        e.cancelledNet += n(r.net);
         continue;
       }
       e.orders += c;
@@ -238,6 +247,7 @@ export class GrowthQueryService {
       if (life === 'rto') {
         e.rto += c;
         e.rtoGross += n(r.gross);
+        e.rtoNet += n(r.net);
         continue;
       }
       e.keptGross += n(r.gross);
@@ -331,9 +341,9 @@ export class GrowthQueryService {
     const k = kpisOf(t);
     return [
       { label: 'Gross sales', value: t.gross, kind: 'total' },
-      { label: 'Cancelled', value: -(t.gross - t.grossNC), kind: 'delta' },
-      { label: 'Returned (RTO)', value: -t.rtoGross, kind: 'delta' },
-      { label: 'Discounts', value: -(t.keptGross - t.net), kind: 'delta' },
+      { label: 'Discounts', value: -t.discounts, kind: 'delta' },
+      { label: 'Cancelled', value: -t.cancelledNet, kind: 'delta' },
+      { label: 'Returned (RTO)', value: -t.rtoNet, kind: 'delta' },
       { label: 'Net sales', value: t.net, kind: 'total' },
       { label: 'COGS', value: -t.cogs, kind: 'delta' },
       { label: 'Gross profit', value: k.grossProfit, kind: 'total' },

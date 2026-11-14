@@ -516,7 +516,7 @@ export default function ContactDetailPage() {
         <div className="min-w-0 space-y-4">
           {/* Stats */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <Stat label="Lifetime value" value={ordersLoading ? null : summary ? moneyCompact(summary.ltv, summary.currency) : '—'} />
+            <Stat label="Net sales (lifetime)" value={ordersLoading ? null : summary ? moneyCompact(summary.ltv, summary.currency) : '—'} />
             <Stat label="Orders" value={ordersLoading ? null : String(summary?.count ?? 0)} sub={summary?.aov ? `AOV ${moneyCompact(summary.aov, summary.currency)}` : undefined} />
             <Stat
               label="Delivered"

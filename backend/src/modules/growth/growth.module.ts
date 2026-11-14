@@ -26,6 +26,7 @@ import { GrowthMirrorService } from './store/growth-mirror.service';
 import { MetaWriter } from './platforms/meta/meta.writer';
 import { AdManageService } from './services/ad-manage.service';
 import { AdCreateService } from './services/ad-create.service';
+import { GrowthTargetService } from './services/growth-target.service';
 
 /**
  * Growth (formerly "Ad Report"): the parent module for multi-platform ads,
@@ -58,6 +59,7 @@ import { AdCreateService } from './services/ad-create.service';
     MetaWriter,
     AdManageService,
     AdCreateService,
+    GrowthTargetService,
   ],
 })
 export class GrowthModule {}

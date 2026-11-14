@@ -1237,3 +1237,10 @@ Full audit of the contacts module (backend 11 files + frontend pages/components)
 - Stage → review (before/after, Meta-rule validation, spend + expected-net impact, learning warnings) → publish as one logged batch → undo (Activity tab / per-object history). Suggested actions from opportunities stage in one click.
 - Create builder: campaign → ad set → ad, all PAUSED, Website or WhatsApp, CBO/ABO, auto UTMs, high-RTO city exclusion, live preview, estimates + learning meter, autosaved draft.
 - Needs `ads_management` on the Meta token (Connections shows the checklist). Live zero-spend test on a duplicated paused campaign pending that permission.
+
+## 2026-11-14 — Gross & Net sales app-wide · honest projection · monthly target + coach · drawer money card
+- One sales definition (`common/utils/sales.ts`): Gross (before discounts) and Net (− discounts − cancelled − returned) on Dashboard (new Today's sales), Orders KPI strip + analytics, Growth, agent/leaderboard/abandoned value, contact lifetime, super-admin, product analytics; breakdown under each.
+- Fixed: orderKpis multi-parcel double count + net-orders NULL bug; super-admin returns missed received_at; contact AOV divisor; GraphQL importer zero discounts on cancelled orders + catalogue (not order-time) line price; order drawer subtotal/discount/shipping lines that didn't add up.
+- Resumable financial backfill (19,448 Sois orders, Sep 2025 → Oct 2026).
+- Expected net: settled-parcel delivery rates, no double-counted returns, booking-cancel loss; Forecast "Model check" (predicted vs actual, settled weeks) + "still settling" note.
+- Monthly net sales target with pacing (expected net, chance of hitting) + Growth coach (levers + AI plan).

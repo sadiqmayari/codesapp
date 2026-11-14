@@ -198,6 +198,11 @@ export interface OrderDetail {
     countryCode: string | null;
     totalPrice: number | null;
     totalOutstanding: number | null;
+    /** Shopify subtotal = after discounts, before shipping/tax. */
+    subtotalPrice?: number | null;
+    totalDiscounts?: number | null;
+    totalShipping?: number | null;
+    totalTax?: number | null;
     currency: string | null;
     financialStatus: string | null;
     paymentGateway: string | null;
@@ -241,6 +246,7 @@ export interface OrderDetail {
     shipperAdviceRequiredAt?: string | null;
     shipperAdviceRequiredRaw?: string | null;
     attemptedAt?: string | null;
+    receivedAt?: string | null;
   } | null;
   confirmation: { status: string; sentAt: string | null; updatedAt: string | null } | null;
   conversationId: number | null;
@@ -256,7 +262,10 @@ export interface OrderLiveDetail {
   fulfillmentStatus?: string | null;
   currency?: string | null;
   totalPrice?: number | null;
+  /** AFTER discounts, before shipping/tax (Shopify semantics). */
   subtotalPrice?: number | null;
+  totalShipping?: number | null;
+  totalTax?: number | null;
   /** Order-level discount total + the codes/titles applied. */
   totalDiscounts?: number | null;
   discountApplications?: Array<{

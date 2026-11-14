@@ -16,10 +16,16 @@ export interface MetricDef {
 }
 
 export const METRICS: MetricDef[] = [
-  { id: 'gross', label: 'Gross sales', unit: 'money', higherIsBetter: true, formula: 'Σ (subtotal + discounts), all placed orders',
-    description: 'Pre-discount value of every order placed in the period, including ones later cancelled or returned.' },
-  { id: 'net', label: 'Net sales', unit: 'money', higherIsBetter: true, formula: 'Σ subtotal, excluding cancelled and RTO',
-    description: 'Post-discount value of orders that were not cancelled and did not come back. Includes parcels still on the way.' },
+  { id: 'gross', label: 'Gross sales', unit: 'money', higherIsBetter: true, formula: 'Σ item value before discounts, every order placed',
+    description: 'Every order placed in the period at item value before discounts, including ones later cancelled or returned. No shipping or tax.' },
+  { id: 'net', label: 'Net sales', unit: 'money', higherIsBetter: true, formula: 'gross − discounts − cancelled − returned',
+    description: 'Gross minus discounts, minus orders cancelled before shipping, minus parcels that came back. Includes parcels still on the way.' },
+  { id: 'discounts', label: 'Discounts', unit: 'money', higherIsBetter: false, formula: 'Σ order discounts',
+    description: 'Discount codes, automatic and line discounts given on orders placed in the period.' },
+  { id: 'cancelledValue', label: 'Cancelled', unit: 'money', higherIsBetter: false, formula: 'Σ after-discount value of orders cancelled before shipping',
+    description: 'Orders cancelled without being returned, at their after-discount value.' },
+  { id: 'returnedValue', label: 'Returned (RTO)', unit: 'money', higherIsBetter: false, formula: 'Σ after-discount value of returned parcels',
+    description: 'Orders whose parcel came back, at their after-discount value.' },
   { id: 'realized', label: 'Realized', unit: 'money', higherIsBetter: true, formula: 'Σ subtotal of delivered orders',
     description: 'Revenue from parcels already delivered — money you will actually collect.' },
   { id: 'pending', label: 'Pending', unit: 'money', higherIsBetter: true, formula: 'Σ subtotal of unconfirmed, awaiting-booking and in-transit orders',

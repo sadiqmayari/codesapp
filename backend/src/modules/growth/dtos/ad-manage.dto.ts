@@ -69,3 +69,33 @@ export class SaveDraftDto {
   @IsObject()
   payload?: Record<string, unknown> | null;
 }
+
+export class TargetQueryDto {
+  @IsString()
+  @MaxLength(7)
+  month!: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  storeId?: number;
+}
+
+export class SetTargetDto extends TargetQueryDto {
+  /** null / 0 clears the target. */
+  @IsOptional()
+  @Type(() => Number)
+  @Min(0)
+  netSalesTarget!: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  ordersTarget?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @Min(0)
+  adBudget?: number | null;
+}

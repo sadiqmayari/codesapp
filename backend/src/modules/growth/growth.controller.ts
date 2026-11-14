@@ -18,7 +18,10 @@ import {
   ManageLogDto,
   ManageUndoDto,
   SaveDraftDto,
+  SetTargetDto,
+  TargetQueryDto,
 } from './dtos/ad-manage.dto';
+import { GrowthTargetService } from './services/growth-target.service';
 import { AskGrowthDto, ConnectAdAccountDto, GrowthRangeDto, GrowthStoreDto, UpdateAdAccountDto } from './dtos/growth.dto';
 
 type U = { companyId: number; userId: number };
@@ -36,7 +39,24 @@ export class GrowthController {
     private readonly growth: GrowthService,
     private readonly manage: AdManageService,
     private readonly creator: AdCreateService,
+    private readonly targets: GrowthTargetService,
   ) {}
+
+  // ── Monthly net sales target + coach ───────────────────────────────────────
+  @Get('targets')
+  target(@CurrentUser() u: U, @Query() q: TargetQueryDto) {
+    return this.targets.status(u.companyId, q.month, q.storeId);
+  }
+
+  @Put('targets')
+  setTarget(@CurrentUser() u: U, @Body() dto: SetTargetDto) {
+    return this.targets.set(u.companyId, u.userId, dto);
+  }
+
+  @Get('targets/coach')
+  coach(@CurrentUser() u: U, @Query() q: TargetQueryDto) {
+    return this.targets.coach(u.companyId, q.month, q.storeId);
+  }
 
   @Get('catalog')
   catalog() {

@@ -295,7 +295,7 @@ export default function LeaderboardPage() {
                     <th className="py-2.5 px-3">Agent</th>
                     <th className="py-2.5 px-3 text-right">Points</th>
                     <th className="py-2.5 px-3 text-right">Orders</th>
-                    <th className="py-2.5 px-3 text-right">Revenue</th>
+                    <th className="py-2.5 px-3 text-right" title="Net sales of the orders the agent created">Net sales</th>
                     <th className="py-2.5 px-3 text-right">Chats</th>
                     <th className="py-2.5 px-3 text-right">Conv.</th>
                     <th className="py-2.5 px-3 text-right">Carts</th>

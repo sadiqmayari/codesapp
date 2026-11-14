@@ -83,7 +83,11 @@ interface Ctx {
  * Incremental every 10 min (by source updated_at), nightly full refresh,
  * plus on-demand after order webhooks.
  */
+/** Days after booking before a parcel's outcome is treated as settled. */
+export const SETTLE_DAYS = 21;
+
 @Injectable()
+
 export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(GrowthFactsService.name);
   private timer?: ReturnType<typeof setInterval>;
@@ -193,24 +197,42 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
     return [...new Set([...a, ...b, ...c].map((r) => r.gid))];
   }
 
+  /** The delivery model (settled city rates + pre-shipping keep rate) — for calibration / coaching. */
+  async deliveryModel(companyId: number) {
+    const c = await this.context(companyId);
+    return { cityRate: c.cityRate, globalRate: c.globalRate, confirmRate: c.confirmRate };
+  }
+
   /** Company-wide rates used to price every order in this run. */
   private async context(companyId: number): Promise<Ctx> {
     const company = await this.prisma.company.findUnique({ where: { id: companyId }, select: { timezone: true } });
     const offset = zoneOffset(company?.timezone ?? null);
     const [cityRows, confRow, shipRows, feeRow, entities] = await Promise.all([
-      this.prisma.$queryRawUnsafe<Array<{ c: string | null; d: unknown; r: unknown }>>(
+      this.prisma.$queryRawUnsafe<Array<{ c: string | null; d: unknown; r: unknown; x: unknown }>>(
+        // SETTLED parcels only (booked 21–180 days ago). Deliveries resolve in
+        // ~4 days but returns take ~14, so recent parcels look better than they
+        // are (survivorship bias → expected net was ~4-6 pts too optimistic).
+        // A booking cancelled without a receipt (order dropped after booking)
+        // counts as a loss too.
         `SELECT LOWER(TRIM(o.city)) c,
                 SUM(s.status = 'delivered') d,
-                SUM(s.status IN ('returned','failed') OR s.received_at IS NOT NULL) r
+                SUM(s.status IN ('returned','failed') OR s.received_at IS NOT NULL) r,
+                SUM(s.status = 'cancelled' AND s.received_at IS NULL) x
            FROM shipments s
            JOIN shopify_orders o ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
-          WHERE s.company_id = ? AND s.booked_at >= NOW() - INTERVAL 180 DAY
+          WHERE s.company_id = ? AND s.booked_at >= NOW() - INTERVAL 180 DAY AND s.booked_at < NOW() - INTERVAL ${SETTLE_DAYS} DAY
           GROUP BY c`,
         companyId,
       ),
       this.prisma.$queryRawUnsafe<Array<{ kept: unknown; total: unknown }>>(
-        `SELECT SUM(cancelled_at IS NULL) kept, COUNT(*) total FROM shopify_orders
-          WHERE company_id = ? AND shopify_created_at BETWEEN NOW() - INTERVAL 120 DAY AND NOW() - INTERVAL 14 DAY`,
+        // "Kept" = not cancelled BEFORE booking. Anything that reached a courier
+        // (delivered, returned, or booking cancelled later) is priced by the city
+        // delivery rate instead — receiving a return also sets cancelled_at, so
+        // counting it here too double-penalised unconfirmed orders.
+        `SELECT SUM(o.cancelled_at IS NULL OR EXISTS (SELECT 1 FROM shipments sb WHERE sb.company_id = o.company_id
+                  AND sb.shopify_order_gid = o.shopify_order_gid AND sb.booked_at IS NOT NULL)) kept,
+                COUNT(*) total FROM shopify_orders o
+          WHERE o.company_id = ? AND o.shopify_created_at BETWEEN NOW() - INTERVAL 120 DAY AND NOW() - INTERVAL ${SETTLE_DAYS} DAY`,
         companyId,
       ),
       this.prisma.$queryRawUnsafe<Array<{ c: string; a: unknown }>>(
@@ -241,14 +263,14 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
     let R = 0;
     for (const r of cityRows) {
       D += n(r.d);
-      R += n(r.r);
+      R += n(r.r) + n(r.x);
     }
     const globalRate = D + R > 0 ? D / (D + R) : 0.8;
     const cityRate = new Map<string, number>();
     for (const r of cityRows) {
       if (!r.c) continue;
       const d = n(r.d);
-      const rr = n(r.r);
+      const rr = n(r.r) + n(r.x);
       cityRate.set(r.c, (d + SMOOTHING * globalRate) / (d + rr + SMOOTHING));
     }
     const kept = n(confRow[0]?.kept);

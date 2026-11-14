@@ -6,6 +6,7 @@ import { TrendingDown, TrendingUp, Loader2 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useSocket } from '@/context/socket-context';
 import { AnimatedNumber } from '@/components/ui/animated-number';
+import { GROSS_HELP, NET_HELP, SalesBreakdownButton, type SalesBreakdown } from '@/components/ui/sales-breakdown';
 import {
   cn,
   zonedTodayRange,
@@ -17,7 +18,10 @@ type Kpi = { value: number; prev: number | null; deltaPct: number | null };
 
 interface OrdersAnalytics {
   currency: string | null;
+  salesBreakdown?: SalesBreakdown;
   kpis: {
+    gross?: Kpi;
+    net?: Kpi;
     sales: Kpi;
     salesActive: Kpi;
     deliveredAmount: Kpi;
@@ -69,16 +73,21 @@ function Tile({
   value,
   delta,
   accent,
+  title,
+  extra,
 }: {
   label: string;
   value: ReactNode;
   delta?: number | null;
   accent?: 'green' | 'red' | 'amber';
+  title?: string;
+  extra?: ReactNode;
 }) {
   return (
-    <div className="min-w-[150px] shrink-0 border-r border-gray-100 px-4 py-2.5 last:border-r-0">
-      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+    <div className="min-w-[150px] shrink-0 border-r border-gray-100 px-4 py-2.5 last:border-r-0" title={title}>
+      <p className="flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-gray-500">
         {label}
+        {extra}
       </p>
       <div className="mt-0.5 flex items-baseline gap-1.5">
         <span
@@ -209,9 +218,18 @@ export function OrdersKpiStrip() {
             delta={data.kpis.orders.deltaPct}
           />
           <Tile
-            label="Sales"
-            value={<AnimatedNumber value={data.kpis.sales.value} format={(v) => money(v, c)} />}
-            delta={data.kpis.sales.deltaPct}
+            label="Gross sales"
+            title={GROSS_HELP}
+            value={<AnimatedNumber value={(data.kpis.gross ?? data.kpis.sales).value} format={(v) => money(v, c)} />}
+            delta={(data.kpis.gross ?? data.kpis.sales).deltaPct}
+          />
+          <Tile
+            label="Net sales"
+            title={NET_HELP}
+            accent="green"
+            extra={<SalesBreakdownButton b={data.salesBreakdown} fmt={(v) => money(v, c)} />}
+            value={<AnimatedNumber value={(data.kpis.net ?? data.kpis.salesActive).value} format={(v) => money(v, c)} />}
+            delta={(data.kpis.net ?? data.kpis.salesActive).deltaPct}
           />
           <Tile label="Shipped" value={<AnimatedNumber value={data.delivery.shipped} />} />
           <Tile
@@ -221,7 +239,7 @@ export function OrdersKpiStrip() {
             accent="green"
           />
           <Tile
-            label="Delivered amount"
+            label="Delivered value"
             value={
               <AnimatedNumber value={data.kpis.deliveredAmount.value} format={(v) => money(v, c)} />
             }

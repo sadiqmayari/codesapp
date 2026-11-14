@@ -1,3 +1,4 @@
+import { afterDiscountSql, grossSql, netOrderSql, salesFromRow, salesSelectSql } from '../../common/utils/sales';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { rtoAtSql, rtoSql } from '../../common/utils/shipment-outcome';
@@ -522,6 +523,8 @@ export class AnalyticsService {
                   isPrimary: s.is_primary,
                   orders: k.orders,
                   sales: k.sales,
+                  gross: k.gross,
+                  net: k.net,
                   shipped: k.shipped,
                   delivered: k.delivered,
                   deliveryRate:
@@ -557,7 +560,12 @@ export class AnalyticsService {
           spanDays: Math.round(spanMs / 86_400_000),
         },
         currency: kCur.currency,
+        // How Gross becomes Net (discounts / cancelled / returned) + shipping & tax beside it.
+        salesBreakdown: kCur.salesBreakdown,
+        salesBreakdownPrev: kPrev?.salesBreakdown ?? null,
         kpis: {
+          gross: kpi('gross'),
+          net: kpi('net'),
           sales: kpi('sales'),
           salesActive: kpi('salesActive'),
           deliveredAmount: kpi('deliveredAmount'),
@@ -608,17 +616,11 @@ export class AnalyticsService {
       : '';
     const [salesRows, shippedRows, deliveredRows, failedRows] = await Promise.all([
       // Sales + order cohort — by ORDER creation date.
+      // ONE row per order (no shipments join → multi-parcel orders never double-count).
+      // Gross / Net + breakdown come from common/utils/sales.ts — the single definition.
       this.prisma.$queryRawUnsafe<Record<string, bigint | number | string | null>[]>(
-        `SELECT
-           COUNT(*)                                                    orders,
-           SUM(o.cancelled_at IS NULL)                                 orders_active,
-           SUM(o.cancelled_at IS NULL AND NOT ${rtoSql('s')}) orders_net,
-           COALESCE(SUM(o.total_price),0)                              sales,
-           COALESCE(SUM(CASE WHEN o.cancelled_at IS NULL THEN o.total_price END),0) sales_active,
-           MAX(o.currency)                                             currency
+        `SELECT ${salesSelectSql('o')}, MAX(o.currency) currency
          FROM shopify_orders o
-         LEFT JOIN shipments s
-           ON s.company_id = o.company_id AND s.shopify_order_gid = o.shopify_order_gid
          WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at <= ? ${storeOrd}`,
         ...[companyId, from, to, ...(storeId ? [storeId] : [])],
       ),
@@ -634,7 +636,7 @@ export class AnalyticsService {
       this.prisma.$queryRawUnsafe<Record<string, bigint | number | null>[]>(
         `SELECT
            COUNT(*)                                                                       delivered,
-           COALESCE(SUM(o.total_price),0)                                                 delivered_amount,
+           COALESCE(SUM(${afterDiscountSql('o')}),0)                                       delivered_amount,
            COALESCE(SUM(CASE WHEN s.courier_settled_at IS NULL     THEN o.total_outstanding END),0) cod_outstanding,
            COALESCE(SUM(CASE WHEN s.courier_settled_at IS NOT NULL THEN o.total_outstanding END),0) cod_collected
          FROM shipments s
@@ -647,7 +649,7 @@ export class AnalyticsService {
       this.prisma.$queryRawUnsafe<Record<string, bigint | number | null>[]>(
         `SELECT
            COUNT(*)                                                    failed,
-           COALESCE(SUM(o.total_price),0)                              failed_amount
+           COALESCE(SUM(${afterDiscountSql('o')}),0)                   failed_amount
          FROM shipments s
          LEFT JOIN shopify_orders o
            ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
@@ -659,15 +661,21 @@ export class AnalyticsService {
     const shRow = shippedRows[0];
     const dRow = deliveredRows[0];
     const fRow = failedRows[0];
+    const sales = salesFromRow(sRow);
     return {
-      orders: n(sRow?.orders),
-      ordersActive: n(sRow?.orders_active),
-      ordersNet: n(sRow?.orders_net),
+      orders: sales.orders,
+      ordersActive: sales.orders - sales.cancelledOrders,
+      ordersNet: sales.keptOrders,
+      // Two headline numbers + the breakdown that explains the gap.
+      gross: sales.gross,
+      net: sales.net,
+      salesBreakdown: sales,
       delivered: n(dRow?.delivered),
       failed: n(fRow?.failed),
       shipped: n(shRow?.shipped),
-      sales: Math.round(n(sRow?.sales) * 100) / 100,
-      salesActive: Math.round(n(sRow?.sales_active) * 100) / 100,
+      // Legacy keys (older clients): sales = Gross, salesActive = Net.
+      sales: sales.gross,
+      salesActive: sales.net,
       deliveredAmount: Math.round(n(dRow?.delivered_amount) * 100) / 100,
       failedAmount: Math.round(n(fRow?.failed_amount) * 100) / 100,
       codOutstanding: Math.round(n(dRow?.cod_outstanding) * 100) / 100,
@@ -686,7 +694,7 @@ export class AnalyticsService {
          SUM(s.status = 'delivered')                                delivered,
          SUM(${rtoSql('s')})                                        failed,
          SUM(NOT ${rtoSql('s')} AND s.status NOT IN ('delivered','cancelled')) in_transit,
-         COALESCE(SUM(CASE WHEN s.status='delivered' THEN o.total_price END),0) delivered_amount,
+         COALESCE(SUM(CASE WHEN s.status='delivered' THEN ${afterDiscountSql('o')} END),0) delivered_amount,
          COALESCE(SUM(CASE WHEN s.status='delivered' AND s.courier_settled_at IS NULL THEN o.total_outstanding END),0) cod_outstanding
        FROM shipments s
        LEFT JOIN shopify_orders o
@@ -727,13 +735,10 @@ export class AnalyticsService {
     const rows = await this.prisma.$queryRawUnsafe<
       Record<string, bigint | number | string | null>[]
     >(
-      `SELECT ${bucket} bucket,
-         COUNT(*)                            orders,
-         COALESCE(SUM(o.total_price),0)      sales,
-         SUM(s.status = 'delivered')         delivered
+      `SELECT ${bucket} bucket, ${salesSelectSql('o')},
+         SUM(EXISTS (SELECT 1 FROM shipments ds WHERE ds.company_id = o.company_id
+               AND ds.shopify_order_gid = o.shopify_order_gid AND ds.status = 'delivered')) delivered
        FROM shopify_orders o
-       LEFT JOIN shipments s
-         ON s.company_id = o.company_id AND s.shopify_order_gid = o.shopify_order_gid
        WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at <= ? ${storeOrd}
        GROUP BY ${bucket}
        ORDER BY bucket`,
@@ -742,7 +747,10 @@ export class AnalyticsService {
     return rows.map((r) => ({
       bucket: String(r.bucket ?? ''),
       orders: n(r.orders),
-      sales: Math.round(n(r.sales) * 100) / 100,
+      gross: Math.round(n(r.gross) * 100) / 100,
+      net: Math.round(n(r.net) * 100) / 100,
+      // Legacy key = Gross.
+      sales: Math.round(n(r.gross) * 100) / 100,
       delivered: n(r.delivered),
     }));
   }
@@ -1311,12 +1319,17 @@ export class AnalyticsService {
         currency: string | null;
       }[]
     >(
+      // Value = NET sales of the agent's orders from the live order mirror (after
+      // discounts, minus cancelled/returned); falls back to the creation-time
+      // total only for orders not mirrored yet.
       `SELECT u.id userId, u.name name,
               COUNT(*) orders,
-              COALESCE(SUM(poh.order_total), 0) amount,
+              COALESCE(SUM(CASE WHEN mo.id IS NULL THEN poh.order_total ELSE ${netOrderSql('mo')} END), 0) amount,
+              COALESCE(SUM(CASE WHEN mo.id IS NULL THEN poh.order_total ELSE ${grossSql('mo')} END), 0) gross,
               MAX(poh.order_currency) currency
        FROM pending_order_hashes poh
        JOIN users u ON u.id = poh.created_by_user_id
+       LEFT JOIN shopify_orders mo ON mo.company_id = poh.company_id AND mo.shopify_order_gid COLLATE utf8mb4_general_ci = poh.order_gid COLLATE utf8mb4_general_ci
        WHERE poh.company_id = ?
          AND poh.status = 'created'
          AND poh.cancelled_at IS NULL
@@ -1333,7 +1346,9 @@ export class AnalyticsService {
       userId: n(r.userId),
       name: r.name,
       orders: n(r.orders),
+      // amount = Net sales; gross = before discounts/cancellations/returns.
       amount: Math.round(n(r.amount) * 100) / 100,
+      gross: Math.round(n((r as { gross?: unknown }).gross) * 100) / 100,
       currency: r.currency,
     }));
   }
@@ -1376,13 +1391,15 @@ export class AnalyticsService {
       this.prisma.$queryRawUnsafe<
         { uid: number; created: bigint; value: number | null; currency: string | null }[]
       >(
-        `SELECT created_by_user_id uid, COUNT(*) created,
-                COALESCE(SUM(order_total), 0) value, MAX(order_currency) currency
-           FROM pending_order_hashes
-          WHERE company_id = ? AND status = 'created' AND cancelled_at IS NULL
-            AND created_by_user_id IS NOT NULL
-            AND created_at >= ? AND created_at <= ?
-          GROUP BY created_by_user_id`,
+        `SELECT poh.created_by_user_id uid, COUNT(*) created,
+                COALESCE(SUM(CASE WHEN mo.id IS NULL THEN poh.order_total ELSE ${netOrderSql('mo')} END), 0) value,
+                MAX(poh.order_currency) currency
+           FROM pending_order_hashes poh
+           LEFT JOIN shopify_orders mo ON mo.company_id = poh.company_id AND mo.shopify_order_gid COLLATE utf8mb4_general_ci = poh.order_gid COLLATE utf8mb4_general_ci
+          WHERE poh.company_id = ? AND poh.status = 'created' AND poh.cancelled_at IS NULL
+            AND poh.created_by_user_id IS NOT NULL
+            AND poh.created_at >= ? AND poh.created_at <= ?
+          GROUP BY poh.created_by_user_id`,
         companyId,
         from,
         to,
@@ -1815,7 +1832,7 @@ export class AnalyticsService {
             ? `AND NOT EXISTS (SELECT 1 FROM shipments s
                  WHERE s.company_id = o.company_id
                    AND s.shopify_order_gid = o.shopify_order_gid
-                   AND s.received_at IS NOT NULL)`
+                   AND ${rtoSql('s')})`
             : '';
           const rows = await this.prisma.$queryRawUnsafe<SaleRow[]>(
             `SELECT li.variantId AS variant_gid,
@@ -1885,7 +1902,7 @@ export class AnalyticsService {
              AND NOT EXISTS (SELECT 1 FROM shipments s
                WHERE s.company_id = o.company_id
                  AND s.shopify_order_gid = o.shopify_order_gid
-                 AND s.received_at IS NOT NULL)
+                 AND ${rtoSql('s')})
              ${storeClauseO}
            GROUP BY d ORDER BY d`,
           ...trendParams,

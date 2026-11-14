@@ -31,6 +31,7 @@ interface Tenant {
   name: string;
   currency: string | null;
   gross: number;
+  discounts?: number;
   cancelled: number;
   returned: number;
   net: number;
@@ -47,6 +48,7 @@ interface Tenant {
 }
 interface CurrencyAgg {
   gross: number;
+  discounts?: number;
   net: number;
   cancelled: number;
   returned: number;
@@ -77,6 +79,7 @@ interface TenantDrill {
     provider: string | null;
     currency: string | null;
     gross: number;
+    discounts?: number;
     cancelled: number;
     returned: number;
     net: number;
@@ -214,12 +217,12 @@ export default function SuperAdminCommercePage() {
         <>
           {/* KPI tiles */}
           <section className="sa-kpis">
-            <Tile label="Net sales" icon={DollarSign} tone="green"
-              value={primary ? money(primary[0], primary[1].net) : 'PKR 0'}
-              foot={currencies.length > 1 ? `+${currencies.length - 1} more currency` : (primary ? `${primary[1].orders.toLocaleString()} orders` : '')} />
             <Tile label="Gross sales" icon={DollarSign} tone="slate"
               value={primary ? money(primary[0], primary[1].gross) : 'PKR 0'}
-              foot={primary ? `${primary[1].ordersActive.toLocaleString()} live orders` : ''} />
+              foot={primary ? `Discounts ${money(primary[0], primary[1].discounts ?? 0)} · before discounts` : ''} />
+            <Tile label="Net sales" icon={DollarSign} tone="green"
+              value={primary ? money(primary[0], primary[1].net) : 'PKR 0'}
+              foot={currencies.length > 1 ? `+${currencies.length - 1} more currency` : (primary ? `${primary[1].orders.toLocaleString()} orders · ${primary[1].ordersActive.toLocaleString()} live` : '')} />
             <Tile label="Cancelled" icon={TrendingDown} tone="amber"
               value={primary ? money(primary[0], primary[1].cancelled) : 'PKR 0'} />
             <Tile label="Returned (RTO)" icon={Undo2} tone="red"

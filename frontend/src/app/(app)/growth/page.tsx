@@ -12,10 +12,15 @@ import { EChart, useChartTheme } from '@/components/growth/echart';
 import { channelDonut, lifecycleSankey, trendOption, waterfallOption } from '@/components/growth/chart-options';
 import { BriefCard, OpportunityList, useCatalog } from '@/components/growth/insights';
 import { COMPARE_LABEL, ErrorNote, KpiCard, Panel, useGrowthData } from '@/components/growth/ui';
+import { SalesBreakdownRows } from '@/components/ui/sales-breakdown';
+import { TargetCoachCard } from '@/components/growth/target-coach';
+import { zonedMonthString } from '@/lib/utils';
+import { money } from '@/lib/format-number';
 
 type Focus = 'net' | 'realized' | 'expected' | 'gross' | 'spend';
 
 const TILES: Array<{ id: string; focus: Focus; spark: keyof Overview['series'][number]; color: string }> = [
+  { id: 'gross', focus: 'gross', spark: 'gross', color: '#64748b' },
   { id: 'net', focus: 'net', spark: 'net', color: '#16a34a' },
   { id: 'realized', focus: 'realized', spark: 'realized', color: '#15803d' },
   { id: 'expected', focus: 'expected', spark: 'expected', color: '#7c3aed' },
@@ -90,6 +95,19 @@ export default function GrowthOverviewPage() {
         </div>
       )}
 
+      {(() => {
+        const lc = data.lifecycle;
+        const inflight = lc.unconfirmed.orders + lc.confirmed.orders + lc.in_transit.orders;
+        const share = lc.placed.orders ? inflight / lc.placed.orders : 0;
+        if (share < 0.1) return null;
+        return (
+          <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-200">
+            <b>This period is still settling:</b> {inflight.toLocaleString()} orders ({Math.round(share * 100)}%) are on the way, and returns arrive about 2 weeks after shipping.
+            Net sales will drop as they come back. Compare periods on <b>Expected net</b>; the % change on Net sales is not like-for-like yet.
+          </div>
+        );
+      })()}
+
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
         {TILES.map((t) => (
           <KpiCard
@@ -107,6 +125,29 @@ export default function GrowthOverviewPage() {
           />
         ))}
       </div>
+
+      <TargetCoachCard month={zonedMonthString()} compact />
+
+      <details className="rounded-xl border border-line bg-surface px-4 py-3 shadow-sm">
+        <summary className="cursor-pointer text-sm font-bold text-ink">How Gross becomes Net</summary>
+        <SalesBreakdownRows
+          className="mt-3 max-w-xl"
+          fmt={(v) => money(v, data.currency, mode)}
+          b={{
+            orders: data.lifecycle.placed.orders,
+            keptOrders: data.lifecycle.placed.orders - data.lifecycle.cancelled.orders - data.lifecycle.rto.orders,
+            cancelledOrders: data.lifecycle.cancelled.orders,
+            returnedOrders: data.lifecycle.rto.orders,
+            gross: data.kpis.gross?.value ?? 0,
+            discounts: data.kpis.discounts?.value ?? 0,
+            cancelled: data.kpis.cancelledValue?.value ?? 0,
+            returned: data.kpis.returnedValue?.value ?? 0,
+            net: data.kpis.net?.value ?? 0,
+            shipping: 0,
+            tax: 0,
+          }}
+        />
+      </details>
 
       <Panel
         title="Revenue, spend and ROAS"

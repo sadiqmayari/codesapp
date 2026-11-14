@@ -1,3 +1,4 @@
+import { netOrderSql, salesFromRow, salesSelectSql } from '../../../common/utils/sales';
 import { phoneVariants } from '../../../common/utils/contact-phone';
 import {
   BadRequestException,
@@ -3293,10 +3294,11 @@ export class ShopifyService implements OnModuleInit {
       const [recRow] = await this.prisma.$queryRawUnsafe<
         Array<{ recovered: bigint; recovered_revenue: unknown }>
       >(
-        `SELECT COUNT(*) recovered, COALESCE(SUM(order_total), 0) recovered_revenue
-           FROM pending_order_hashes
-          WHERE company_id = ? AND status = 'created' AND source = 'abandoned_cart'
-            AND cancelled_at IS NULL AND created_at >= (NOW() - INTERVAL 30 DAY)`,
+        // Recovered revenue = NET sales of those orders (minus cancelled/returned).
+        `SELECT COUNT(*) recovered, COALESCE(SUM(COALESCE((SELECT ${netOrderSql('mo')} FROM shopify_orders mo WHERE mo.company_id = poh.company_id AND mo.shopify_order_gid COLLATE utf8mb4_general_ci = poh.order_gid COLLATE utf8mb4_general_ci LIMIT 1), poh.order_total)), 0) recovered_revenue
+           FROM pending_order_hashes poh
+          WHERE poh.company_id = ? AND poh.status = 'created' AND poh.source = 'abandoned_cart'
+            AND poh.cancelled_at IS NULL AND poh.created_at >= (NOW() - INTERVAL 30 DAY)`,
         companyId,
       );
       if (cartRow) {
@@ -3590,8 +3592,9 @@ export class ShopifyService implements OnModuleInit {
         ? this.prisma.$queryRawUnsafe<
             Array<{ name: string; orders: bigint; value: unknown; currency: string | null }>
           >(
+            // value = NET sales of these orders (mirror; creation total as fallback).
             `SELECT u.name name, COUNT(*) orders,
-                    COALESCE(SUM(poh.order_total), 0) value,
+                    COALESCE(SUM(COALESCE((SELECT ${netOrderSql('mo')} FROM shopify_orders mo WHERE mo.company_id = poh.company_id AND mo.shopify_order_gid COLLATE utf8mb4_general_ci = poh.order_gid COLLATE utf8mb4_general_ci LIMIT 1), poh.order_total)), 0) value,
                     MAX(poh.order_currency) currency
              ${summaryWhere}
              GROUP BY u.id, u.name
@@ -3601,7 +3604,7 @@ export class ShopifyService implements OnModuleInit {
         : this.prisma.$queryRawUnsafe<
             Array<{ value: unknown; currency: string | null }>
           >(
-            `SELECT COALESCE(SUM(poh.order_total), 0) value, MAX(poh.order_currency) currency ${summaryWhere}`,
+            `SELECT COALESCE(SUM(COALESCE((SELECT ${netOrderSql('mo')} FROM shopify_orders mo WHERE mo.company_id = poh.company_id AND mo.shopify_order_gid COLLATE utf8mb4_general_ci = poh.order_gid COLLATE utf8mb4_general_ci LIMIT 1), poh.order_total)), 0) value, MAX(poh.order_currency) currency ${summaryWhere}`,
             ...baseParams,
           ),
     ]);
@@ -5176,7 +5179,7 @@ export class ShopifyService implements OnModuleInit {
     count: number;
     /** Inbox-v2: lifetime aggregates over ALL matching orders (the list is
      *  capped at 30, which used to cap the drawer's stats too). */
-    lifetime?: { count: number; value: number; firstOrderAt: Date | null };
+    lifetime?: { count: number; value: number; gross?: number; keptCount?: number; breakdown?: unknown; firstOrderAt: Date | null };
     orders: Array<{
       orderGid: string;
       orderName: string | null;
@@ -5249,17 +5252,23 @@ export class ShopifyService implements OnModuleInit {
           : []),
       ],
     };
-    const [lifeAll, lifeKept] = await Promise.all([
+    // Lifetime Gross / Net (single sales definition, common/utils/sales.ts).
+    const gidSql = linkedGids.length ? ` OR o.shopify_order_gid IN (${linkedGids.map(() => '?').join(',')})` : '';
+    const [lifeAll, lifeRows] = await Promise.all([
       this.prisma.shopifyOrder.aggregate({
         where: orderWhere,
         _count: { _all: true },
         _min: { shopify_created_at: true },
       }),
-      this.prisma.shopifyOrder.aggregate({
-        where: { ...orderWhere, cancelled_at: null },
-        _sum: { total_price: true },
-      }),
+      this.prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
+        `SELECT ${salesSelectSql('o')} FROM shopify_orders o
+          WHERE o.company_id = ? AND (o.phone LIKE ?${gidSql})`,
+        companyId,
+        `%${last}%`,
+        ...linkedGids,
+      ),
     ]);
+    const life = salesFromRow(lifeRows[0]);
     const rows = await this.prisma.shopifyOrder.findMany({
       where: orderWhere,
       orderBy: { shopify_created_at: 'desc' },
@@ -5359,7 +5368,11 @@ export class ShopifyService implements OnModuleInit {
       count: orders.length,
       lifetime: {
         count: lifeAll._count._all,
-        value: Number(lifeKept._sum.total_price ?? 0),
+        // value = lifetime NET sales; gross = before discounts/cancels/returns.
+        value: life.net,
+        gross: life.gross,
+        keptCount: life.keptOrders,
+        breakdown: life,
         firstOrderAt: lifeAll._min.shopify_created_at ?? null,
       },
       orders,
@@ -11345,6 +11358,7 @@ export class ShopifyService implements OnModuleInit {
           shipper_advice_required_at: true,
           shipper_advice_required_raw: true,
           attempted_at: true,
+          received_at: true,
         },
       }),
       this.prisma.shopifyOrderMessage.findFirst({
@@ -11479,6 +11493,12 @@ export class ShopifyService implements OnModuleInit {
         countryCode: o.country_code,
         totalPrice: o.total_price == null ? null : Number(o.total_price),
         totalOutstanding: o.total_outstanding == null ? null : Number(o.total_outstanding),
+        // Money breakdown from the mirror (drawer falls back to these when the
+        // live Shopify fetch fails). subtotal = AFTER discounts, before shipping/tax.
+        subtotalPrice: o.subtotal_price == null ? null : Number(o.subtotal_price),
+        totalDiscounts: o.total_discounts == null ? null : Number(o.total_discounts),
+        totalShipping: o.total_shipping == null ? null : Number(o.total_shipping),
+        totalTax: o.total_tax == null ? null : Number(o.total_tax),
         currency: o.currency,
         financialStatus: o.financial_status,
         paymentGateway: o.payment_gateway,
@@ -11521,6 +11541,7 @@ export class ShopifyService implements OnModuleInit {
             shipperAdviceRequiredAt: shipment.shipper_advice_required_at,
             shipperAdviceRequiredRaw: shipment.shipper_advice_required_raw,
             attemptedAt: shipment.attempted_at,
+            receivedAt: shipment.received_at ?? null,
           }
         : null,
       confirmation: confirmation
@@ -11562,6 +11583,8 @@ export class ShopifyService implements OnModuleInit {
         totalPriceSet { shopMoney { amount currencyCode } }
         subtotalPriceSet { shopMoney { amount } }
         totalDiscountsSet { shopMoney { amount } }
+        totalShippingPriceSet { shopMoney { amount } }
+        totalTaxSet { shopMoney { amount } }
         totalRefundedSet { shopMoney { amount } }
         netPaymentSet { shopMoney { amount } }
         totalOutstandingSet { shopMoney { amount } }
@@ -11616,6 +11639,8 @@ export class ShopifyService implements OnModuleInit {
             displayFulfillmentStatus?: string | null;
             totalPriceSet?: Money;
             subtotalPriceSet?: Money;
+            totalShippingPriceSet?: Money;
+            totalTaxSet?: Money;
             totalDiscountsSet?: Money;
             totalRefundedSet?: Money;
             netPaymentSet?: Money;
@@ -11688,7 +11713,10 @@ export class ShopifyService implements OnModuleInit {
         fulfillmentStatus: ord.displayFulfillmentStatus ?? null,
         currency: ord.totalPriceSet?.shopMoney?.currencyCode ?? null,
         totalPrice: amt(ord.totalPriceSet),
+        // NOTE: Shopify's subtotal is AFTER discounts (before shipping/tax).
         subtotalPrice: amt(ord.subtotalPriceSet),
+        totalShipping: amt(ord.totalShippingPriceSet),
+        totalTax: amt(ord.totalTaxSet),
         // Order-level discount total + the codes/titles applied, for the ITEMS
         // discount breakdown. (These *Set totals can go stale after a Shopify
         // order-edit, same caveat as line totals — informational display only.)

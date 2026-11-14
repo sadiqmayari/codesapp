@@ -8,6 +8,8 @@ import { AdAccountsService } from './ad-accounts.service';
 import { ymdCell } from '../store/growth-store';
 import { addDays, dayList, localYmd, n, offsetMinutes, zoneOffset } from '../growth.util';
 import { fitResponse, forecastSeries } from '../attribution/forecast-math';
+import { GrowthFactsService, SETTLE_DAYS } from './growth-facts.service';
+import { isoWeek } from '../growth.util';
 
 @Injectable()
 export class GrowthForecastService {
@@ -18,6 +20,7 @@ export class GrowthForecastService {
     private readonly mirror: GrowthMirrorService,
     private readonly version: GrowthVersionService,
     private readonly accounts: AdAccountsService,
+    private readonly facts: GrowthFactsService,
   ) {}
 
   async forecast(companyId: number, storeId?: number) {
@@ -72,9 +75,42 @@ export class GrowthForecastService {
       spend: metric('spend'),
       gross: metric('gross'),
       simulator: await this.responseCurves(companyId, today),
+      // Model check: what the delivery model would have predicted on the day
+      // each settled order was placed vs what actually stayed (net).
+      calibration: await this.calibration(companyId, today, storeId).catch(() => null),
     };
     this.cache.set(key, out, 600);
     return out;
+  }
+
+  /** Last 8 settled weeks: day-0 prediction (after-discount × keep × city delivery rate) vs actual net. */
+  private async calibration(companyId: number, today: string, storeId?: number) {
+    const model = await this.facts.deliveryModel(companyId);
+    const to = addDays(today, -(SETTLE_DAYS + 3));
+    const from = addDays(to, -55);
+    const rows = await this.mirror.query(companyId,
+      `SELECT order_date d, city, SUM(net) placed,
+              SUM(CASE WHEN lifecycle NOT IN ('cancelled','rto') THEN net ELSE 0 END) kept
+         FROM {facts}
+        WHERE company_id = :co AND order_date >= :from AND order_date <= :to${storeId ? ' AND store_id = :store' : ''}
+        GROUP BY order_date, city`,
+      { co: ['Int32', companyId], from: ['Date', from], to: ['Date', to], ...(storeId ? { store: ['Int32', storeId] as ['Int32', number] } : {}) });
+    const weeks = new Map<string, { predicted: number; actual: number }>();
+    for (const r of rows) {
+      const w = isoWeek(ymdCell(r.d));
+      const city = r.city ? String(r.city) : null;
+      const p = (city && model.cityRate.get(city)) || model.globalRate;
+      const e = weeks.get(w) ?? { predicted: 0, actual: 0 };
+      e.predicted += n(r.placed) * model.confirmRate * p;
+      e.actual += n(r.kept);
+      weeks.set(w, e);
+    }
+    const list = [...weeks.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([week, v]) => ({ week, predicted: Math.round(v.predicted), actual: Math.round(v.actual), errorPct: v.actual > 0 ? Math.round(((v.predicted - v.actual) / v.actual) * 1000) / 10 : null }));
+    const P = list.reduce((a, w) => a + w.predicted, 0);
+    const A = list.reduce((a, w) => a + w.actual, 0);
+    return { weeks: list, errorPct: A > 0 ? Math.round(((P - A) / A) * 1000) / 10 : null, settleDays: SETTLE_DAYS };
   }
 
   /** Per-campaign spend → expected-revenue curves for the budget simulator. */
