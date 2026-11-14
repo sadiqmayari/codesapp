@@ -9,6 +9,7 @@ import {
   AdPlatformAuthError,
   AdPlatformRateLimitError,
 } from '../ad-platform.types';
+import { fromMinor } from '../ad-writer.types';
 
 const REQUEST_TIMEOUT_MS = 90_000;
 // Meta's ad-level insights endpoint is slow on big windows; a timeout or a
@@ -92,13 +93,17 @@ export class MetaAdapter implements AdPlatformAdapter {
     };
   }
 
-  async listEntities(token: string, externalId: string): Promise<AdEntityRow[]> {
+  async listEntities(token: string, externalId: string, currency: string | null = null): Promise<AdEntityRow[]> {
     const acct = this.act(externalId);
     const out: AdEntityRow[] = [];
+    const money = (v?: string) => fromMinor(v, currency);
 
-    type Camp = { id: string; name?: string; effective_status?: string; objective?: string; daily_budget?: string };
+    type Camp = {
+      id: string; name?: string; status?: string; effective_status?: string; objective?: string;
+      daily_budget?: string; lifetime_budget?: string; bid_strategy?: string; start_time?: string; stop_time?: string;
+    };
     for (const c of await this.pages<Camp>(
-      `/${acct}/campaigns?fields=id,name,effective_status,objective,daily_budget&limit=500`,
+      `/${acct}/campaigns?fields=id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy,start_time,stop_time&limit=500`,
       token,
     )) {
       out.push({
@@ -108,18 +113,29 @@ export class MetaAdapter implements AdPlatformAdapter {
         campaignId: c.id,
         name: c.name ?? null,
         status: c.effective_status ?? null,
+        configuredStatus: c.status ?? null,
         objective: c.objective ?? null,
-        dailyBudget: c.daily_budget ? num(c.daily_budget) / 100 : null,
+        dailyBudget: money(c.daily_budget),
+        lifetimeBudget: money(c.lifetime_budget),
+        bidStrategy: c.bid_strategy ?? null,
+        startTime: c.start_time ?? null,
+        endTime: c.stop_time ?? null,
         creativeThumbUrl: null,
         destinationUrl: null,
       });
     }
 
-    type AdSet = { id: string; name?: string; campaign_id?: string; effective_status?: string; daily_budget?: string };
-    for (const a of await this.pages<AdSet>(
-      `/${acct}/adsets?fields=id,name,campaign_id,effective_status,daily_budget&limit=500`,
-      token,
-    )) {
+    type AdSet = {
+      id: string; name?: string; campaign_id?: string; status?: string; effective_status?: string;
+      daily_budget?: string; lifetime_budget?: string; bid_strategy?: string; bid_amount?: string;
+      bid_constraints?: { roas_average_floor?: number }; optimization_goal?: string;
+      promoted_object?: { custom_event_type?: string }; destination_type?: string;
+      attribution_spec?: Array<{ event_type?: string; window_days?: number }>; start_time?: string; end_time?: string;
+    };
+    const setFields =
+      'id,name,campaign_id,status,effective_status,daily_budget,lifetime_budget,bid_strategy,bid_amount,' +
+      'bid_constraints,optimization_goal,promoted_object,destination_type,attribution_spec,start_time,end_time';
+    for (const a of await this.pages<AdSet>(`/${acct}/adsets?fields=${setFields}&limit=500`, token)) {
       out.push({
         level: 'adset',
         externalId: a.id,
@@ -127,8 +143,19 @@ export class MetaAdapter implements AdPlatformAdapter {
         campaignId: a.campaign_id ?? null,
         name: a.name ?? null,
         status: a.effective_status ?? null,
+        configuredStatus: a.status ?? null,
         objective: null,
-        dailyBudget: a.daily_budget ? num(a.daily_budget) / 100 : null,
+        dailyBudget: money(a.daily_budget),
+        lifetimeBudget: money(a.lifetime_budget),
+        bidStrategy: a.bid_strategy ?? null,
+        bidAmount: money(a.bid_amount),
+        roasFloor: a.bid_constraints?.roas_average_floor != null ? a.bid_constraints.roas_average_floor / 10000 : null,
+        optimizationGoal: a.optimization_goal ?? null,
+        conversionEvent: a.promoted_object?.custom_event_type ?? null,
+        destinationType: a.destination_type ?? null,
+        attributionSpec: a.attribution_spec ?? null,
+        startTime: a.start_time ?? null,
+        endTime: a.end_time ?? null,
         creativeThumbUrl: null,
         destinationUrl: null,
       });
@@ -139,6 +166,7 @@ export class MetaAdapter implements AdPlatformAdapter {
       name?: string;
       adset_id?: string;
       campaign_id?: string;
+      status?: string;
       effective_status?: string;
       creative?: {
         thumbnail_url?: string;
@@ -151,7 +179,7 @@ export class MetaAdapter implements AdPlatformAdapter {
       };
     };
     const adFields =
-      'id,name,adset_id,campaign_id,effective_status,' +
+      'id,name,adset_id,campaign_id,status,effective_status,' +
       'creative{thumbnail_url,image_url,object_story_spec{link_data{link,picture},video_data{image_url,call_to_action{value{link}}}},asset_feed_spec{link_urls{website_url}}}';
     for (const ad of await this.pages<Ad>(
       `/${acct}/ads?fields=${encodeURIComponent(adFields)}&thumbnail_width=320&thumbnail_height=320&limit=200`,
@@ -166,6 +194,7 @@ export class MetaAdapter implements AdPlatformAdapter {
         campaignId: ad.campaign_id ?? null,
         name: ad.name ?? null,
         status: ad.effective_status ?? null,
+        configuredStatus: ad.status ?? null,
         objective: null,
         dailyBudget: null,
         creativeThumbUrl:

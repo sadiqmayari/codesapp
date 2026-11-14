@@ -239,7 +239,7 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
     const entitiesFresh = !!lastEntity && Date.now() - lastEntity.updated_at.getTime() < ENTITY_REFRESH_MS;
     try {
       if (!entitiesFresh && !opts.skipEntities) {
-        entities = await adapter.listEntities(token, acc.external_id);
+        entities = await adapter.listEntities(token, acc.external_id, currency);
         await this.saveEntities(acc.company_id, acc.id, acc.platform, entities);
       }
     } catch (e) {
@@ -347,10 +347,45 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
     return rows.length;
   }
 
+  /**
+   * Re-read just the campaign / ad set / ad hierarchy (no insights) — used right
+   * after CodesApp changes something on the platform so the table shows the new
+   * settings and new copies immediately. Best-effort.
+   */
+  async refreshEntities(accountId: number): Promise<void> {
+    const acc = await this.prisma.adAccount.findUnique({ where: { id: accountId } });
+    if (!acc || acc.status !== 'active') return;
+    const adapter = this.registry.get(acc.platform);
+    const token = await this.accounts.resolveToken(acc);
+    if (!token) return;
+    try {
+      const rows = await adapter.listEntities(token, acc.external_id, acc.currency);
+      await this.saveEntities(acc.company_id, acc.id, acc.platform, rows);
+      this.version.bump(acc.company_id, 'spend');
+    } catch (e) {
+      this.logger.warn(`refreshEntities (account ${accountId}): ${(e as Error).message}`);
+    }
+  }
+
   private async saveEntities(companyId: number, accountId: number, platform: string, rows: AdEntityRow[]) {
+    // Budget owner: a campaign with its own budget is CBO, so its ad sets do not own one.
+    const cbo = new Set(
+      rows.filter((e) => e.level === 'campaign' && (e.dailyBudget != null || e.lifetimeBudget != null)).map((e) => e.externalId),
+    );
+    const when = (v?: string | null) => {
+      if (!v) return null;
+      const d = new Date(v);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
     for (const part of chunk(rows, 200)) {
       await this.prisma.$transaction(
         part.map((e) => {
+          const owner =
+            e.level === 'campaign'
+              ? cbo.has(e.externalId) ? 'campaign' : 'adset'
+              : e.level === 'adset'
+                ? cbo.has(e.campaignId ?? '') ? 'campaign' : 'adset'
+                : null;
           const data = {
             parent_external_id: e.parentExternalId?.slice(0, 64) ?? null,
             campaign_id: e.campaignId?.slice(0, 64) ?? null,
@@ -361,6 +396,19 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
             creative_thumb_url: e.creativeThumbUrl,
             destination_url: e.destinationUrl,
             advertised_handle: parseProductHandle(e.destinationUrl),
+            configured_status: e.configuredStatus?.slice(0, 16) ?? null,
+            budget_owner: owner,
+            budget_type: e.lifetimeBudget != null ? 'lifetime' : e.dailyBudget != null ? 'daily' : null,
+            lifetime_budget: e.lifetimeBudget ?? null,
+            bid_strategy: e.bidStrategy?.slice(0, 40) ?? null,
+            bid_amount: e.bidAmount ?? null,
+            roas_floor: e.roasFloor ?? null,
+            optimization_goal: e.optimizationGoal?.slice(0, 40) ?? null,
+            conversion_event: e.conversionEvent?.slice(0, 40) ?? null,
+            destination_type: e.destinationType?.slice(0, 32) ?? null,
+            attribution_spec: (e.attributionSpec ?? undefined) as Prisma.InputJsonValue | undefined,
+            start_time: when(e.startTime),
+            end_time: when(e.endTime),
             updated_at: new Date(),
           };
           return this.prisma.adEntity.upsert({
@@ -372,4 +420,5 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
       );
     }
   }
+
 }

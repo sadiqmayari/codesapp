@@ -2508,6 +2508,21 @@ model AdEntity {
   creative_thumb_url String?  @db.Text
   destination_url    String?  @db.Text
   advertised_handle  String?  @db.VarChar(255)
+  // Ad management (Nov-2026): settings mirrored from Meta so CodesApp can edit
+  // them. budget_owner = which level holds the budget ('campaign' = CBO, 'adset' = ABO).
+  configured_status  String?   @db.VarChar(16)
+  budget_owner       String?   @db.VarChar(8)
+  budget_type        String?   @db.VarChar(8)
+  lifetime_budget    Decimal?  @db.Decimal(14, 2)
+  bid_strategy       String?   @db.VarChar(40)
+  bid_amount         Decimal?  @db.Decimal(14, 2)
+  roas_floor         Decimal?  @db.Decimal(8, 4)
+  optimization_goal  String?   @db.VarChar(40)
+  conversion_event   String?   @db.VarChar(40)
+  destination_type   String?   @db.VarChar(32)
+  attribution_spec   Json?
+  start_time         DateTime?
+  end_time           DateTime?
   updated_at         DateTime @default(now())
 
   @@unique([account_id, level, external_id])
@@ -2656,4 +2671,44 @@ model GrowthAttribution {
   @@index([company_id, model, win, order_date])
   @@index([company_id, order_gid])
   @@map("growth_attribution")
+}
+
+// Every change CodesApp makes on an ad platform (one publish = one batch_id).
+// Undo re-applies `before`; created / duplicated objects are paused, never deleted.
+model AdChangeLog {
+  id          Int       @id @default(autoincrement())
+  company_id  Int
+  account_id  Int
+  user_id     Int?
+  user_name   String?   @db.VarChar(255)
+  platform    String    @db.VarChar(16)
+  level       String    @db.VarChar(8)
+  entity_id   String    @db.VarChar(64)
+  entity_name String?   @db.VarChar(512)
+  action      String    @db.VarChar(24)
+  before      Json?
+  after       Json?
+  batch_id    String    @db.VarChar(40)
+  result      String    @default("pending") @db.VarChar(12)
+  error       String?   @db.VarChar(1000)
+  undo_of_id  Int?
+  undone_at   DateTime?
+  created_at  DateTime  @default(now())
+
+  @@index([company_id, created_at])
+  @@index([company_id, entity_id])
+  @@index([batch_id])
+  @@map("ad_change_log")
+}
+
+// Create-wizard autosave (one draft per user).
+model AdDraft {
+  id         Int      @id @default(autoincrement())
+  company_id Int
+  user_id    Int
+  payload    Json
+  updated_at DateTime @updatedAt
+
+  @@unique([company_id, user_id])
+  @@map("ad_drafts")
 }

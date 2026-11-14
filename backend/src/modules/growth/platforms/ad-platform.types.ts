@@ -32,6 +32,20 @@ export interface AdEntityRow {
   dailyBudget: number | null;
   creativeThumbUrl: string | null;
   destinationUrl: string | null;
+  /** Configured (toggleable) status: ACTIVE | PAUSED. `status` is the effective one. */
+  configuredStatus?: string | null;
+  lifetimeBudget?: number | null;
+  bidStrategy?: string | null;
+  /** COST_CAP / bid-cap amount in major units. */
+  bidAmount?: number | null;
+  /** MIN_ROAS floor as a plain ratio (Meta stores x10000). */
+  roasFloor?: number | null;
+  optimizationGoal?: string | null;
+  conversionEvent?: string | null;
+  destinationType?: string | null;
+  attributionSpec?: unknown;
+  startTime?: string | null;
+  endTime?: string | null;
 }
 
 /** One row per ad per day, in the ACCOUNT's currency + timezone. */
@@ -79,7 +93,7 @@ export interface AdPlatformAdapter {
   /** False while the platform's developer app / API access isn't approved yet. */
   readonly available: boolean;
   getAccountInfo(token: string, externalId: string): Promise<AdAccountInfo>;
-  listEntities(token: string, externalId: string): Promise<AdEntityRow[]>;
+  listEntities(token: string, externalId: string, currency?: string | null): Promise<AdEntityRow[]>;
   fetchInsights(
     token: string,
     externalId: string,

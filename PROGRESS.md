@@ -1232,3 +1232,8 @@ Full audit of the contacts module (backend 11 files + frontend pages/components)
 - [ ] Google / TikTok / Snap: obtain developer approvals, set env, add OAuth connect buttons.
 - [ ] WhatsApp delivery of the daily brief (needs an approved utility template).
 
+## 2026-11-15 — Growth: manage + create Meta ads from CodesApp
+- Pause/resume, inline budgets (campaign or ad-set level, daily/lifetime, ±% scale), bid strategy (highest volume / cost goal / ROAS goal / bid cap), performance goal (number vs value of conversions, conversations, LPV), conversion event, attribution setting, end date, rename, duplicate (paused).
+- Stage → review (before/after, Meta-rule validation, spend + expected-net impact, learning warnings) → publish as one logged batch → undo (Activity tab / per-object history). Suggested actions from opportunities stage in one click.
+- Create builder: campaign → ad set → ad, all PAUSED, Website or WhatsApp, CBO/ABO, auto UTMs, high-RTO city exclusion, live preview, estimates + learning meter, autosaved draft.
+- Needs `ads_management` on the Meta token (Connections shows the checklist). Live zero-spend test on a duplicated paused campaign pending that permission.

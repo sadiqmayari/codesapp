@@ -15,6 +15,10 @@ export interface Opportunity {
   impact: number | null;
   impactLabel: string;
   entityId?: string;
+  /** One-click change the UI can stage (goes through AdManageService preview → publish). */
+  action?:
+    | { kind: 'scale'; campaignId: string; pct: number; label: string }
+    | { kind: 'patch'; level: 'campaign' | 'adset' | 'ad'; entityId: string; patch: { status: 'PAUSED' }; label: string };
 }
 
 type CampaignRow = {
@@ -84,13 +88,17 @@ export class GrowthOpportunityService {
           out.push({ id: `scale:${c.id}`, kind: 'scale', severity: 'good', entityId: c.id,
             title: `Scale ${c.name} by 20%`,
             detail: `Expected ROAS ${c.expRoas.toFixed(2)}× vs break-even ${be.toFixed(2)}×, frequency ${freq.toFixed(1)}. There is room before fatigue.`,
-            impact: monthly(Math.max(0, gain)), impactLabel: 'expected net / mo' });
+            impact: monthly(Math.max(0, gain)), impactLabel: 'expected net / mo',
+            action: { kind: 'scale', campaignId: c.id, pct: 20, label: 'Stage +20% budget' } });
         } else if (c.expRoas < be * 0.85 && share >= 0.05) {
           const loss = c.spend - c.expected / be;
           out.push({ id: `cut:${c.id}`, kind: 'cut', severity: 'bad', entityId: c.id,
             title: `${c.name} is below break-even`,
             detail: `Expected ROAS ${c.expRoas.toFixed(2)}× vs break-even ${be.toFixed(2)}×. Cut budget or fix targeting before it loses more.`,
-            impact: monthly(Math.max(0, loss)), impactLabel: 'saved / mo' });
+            impact: monthly(Math.max(0, loss)), impactLabel: 'saved / mo',
+            action: c.expRoas < be * 0.6
+              ? { kind: 'patch', level: 'campaign', entityId: c.id, patch: { status: 'PAUSED' }, label: 'Stage pause' }
+              : { kind: 'scale', campaignId: c.id, pct: -30, label: 'Stage −30% budget' } });
         }
       }
     }
@@ -102,7 +110,8 @@ export class GrowthOpportunityService {
       out.push({ id: `fatigue:${ad.id}`, kind: 'fatigue', severity: 'warn', entityId: String(ad.id),
         title: `Refresh “${ad.name}”`,
         detail: `CTR fell from ${t.prevCtr.toFixed(2)}% to ${t.ctr.toFixed(2)}% week over week while frequency reached ${t.freq.toFixed(1)}.`,
-        impact: monthly(n(ad.spend) * 0.1), impactLabel: 'spend at risk / mo' });
+        impact: monthly(n(ad.spend) * 0.1), impactLabel: 'spend at risk / mo',
+        action: { kind: 'patch', level: 'ad', entityId: String(ad.id), patch: { status: 'PAUSED' }, label: 'Stage pause ad' } });
     }
 
     out.push(...(await this.geoRules(companyId, q, monthly)));

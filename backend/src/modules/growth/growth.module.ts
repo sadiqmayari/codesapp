@@ -23,6 +23,9 @@ import { CapiService } from './services/capi.service';
 import { MariaDbStore } from './store/mariadb.store';
 import { ClickHouseStore } from './store/clickhouse.store';
 import { GrowthMirrorService } from './store/growth-mirror.service';
+import { MetaWriter } from './platforms/meta/meta.writer';
+import { AdManageService } from './services/ad-manage.service';
+import { AdCreateService } from './services/ad-create.service';
 
 /**
  * Growth (formerly "Ad Report"): the parent module for multi-platform ads,
@@ -52,6 +55,9 @@ import { GrowthMirrorService } from './store/growth-mirror.service';
     MariaDbStore,
     ClickHouseStore,
     GrowthMirrorService,
+    MetaWriter,
+    AdManageService,
+    AdCreateService,
   ],
 })
 export class GrowthModule {}

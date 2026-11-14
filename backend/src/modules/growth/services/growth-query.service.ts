@@ -16,6 +16,14 @@ interface Node {
   status: string | null;
   objective: string | null;
   dailyBudget: number | null;
+  configuredStatus: string | null;
+  budgetOwner: string | null;
+  budgetType: string | null;
+  lifetimeBudget: number | null;
+  bidStrategy: string | null;
+  bidAmount: number | null;
+  roasFloor: number | null;
+  optimizationGoal: string | null;
   thumb: string | null;
   matched: boolean;
   spend: number;
@@ -473,7 +481,9 @@ export class GrowthQueryService {
         this.prisma.adEntity.findMany({
           where: { company_id: companyId },
           select: { level: true, external_id: true, name: true, status: true, objective: true, daily_budget: true,
-            creative_thumb_url: true, platform: true, parent_external_id: true, campaign_id: true },
+            creative_thumb_url: true, platform: true, parent_external_id: true, campaign_id: true,
+            configured_status: true, budget_owner: true, budget_type: true, lifetime_budget: true, bid_strategy: true,
+            bid_amount: true, roas_floor: true, optimization_goal: true, start_time: true },
         }),
       ]);
       const ent = new Map(entities.map((e) => [`${e.level}:${e.external_id}`, e]));
@@ -484,6 +494,14 @@ export class GrowthQueryService {
           name: e?.name ?? (id.startsWith('name:') ? id.slice(5) : id.startsWith('c:') ? id.slice(2) : id),
           status: e?.status ?? null, objective: e?.objective ?? null,
           dailyBudget: e?.daily_budget != null ? Number(e.daily_budget) : null,
+          configuredStatus: e?.configured_status ?? null,
+          budgetOwner: e?.budget_owner ?? null,
+          budgetType: e?.budget_type ?? null,
+          lifetimeBudget: e?.lifetime_budget != null ? Number(e.lifetime_budget) : null,
+          bidStrategy: e?.bid_strategy ?? null,
+          bidAmount: e?.bid_amount != null ? Number(e.bid_amount) : null,
+          roasFloor: e?.roas_floor != null ? Number(e.roas_floor) : null,
+          optimizationGoal: e?.optimization_goal ?? null,
           thumb: e?.creative_thumb_url ?? null,
           matched: !!e,
           spend: 0, impressions: 0, reach: 0, clicks: 0, linkClicks: 0, video3s: 0, thruplay: 0, platformPurchases: 0,
@@ -546,6 +564,22 @@ export class GrowthQueryService {
           }
           if (m === 'first') node.firstNet += n(r.net);
           if (m === 'last') node.lastNet += n(r.net);
+        }
+      }
+      // Live or just-created objects with no spend yet still belong in the table
+      // (a campaign duplicated / created from CodesApp must be editable right away).
+      const recent = Date.now() - 30 * 86_400_000;
+      const byKey = (lvl: string, id: string) => ent.get(`${lvl}:${id}`);
+      for (const e of entities) {
+        if (e.platform == null) continue;
+        const fresh = e.start_time != null && e.start_time.getTime() >= recent;
+        if (e.configured_status !== 'ACTIVE' && !fresh) continue;
+        if (e.level === 'campaign') {
+          if (!camps.has(e.external_id)) nodeFor(e.platform, e.external_id, null, null);
+        } else if (e.level === 'adset' && e.parent_external_id && byKey('campaign', e.parent_external_id)) {
+          if (!sets.has(e.external_id)) nodeFor(e.platform, e.parent_external_id, e.external_id, null);
+        } else if (e.level === 'ad' && e.parent_external_id && e.campaign_id) {
+          if (!ads.has(e.external_id)) nodeFor(e.platform, e.campaign_id, e.parent_external_id, e.external_id);
         }
       }
       const sparkDays = dayList(sparkFrom, q.to);

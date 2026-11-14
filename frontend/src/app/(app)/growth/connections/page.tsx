@@ -9,6 +9,7 @@ import { ConfirmDialog } from '@/components/ui/modal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { growthApi, SYNC_INTERVALS, type Accounts, type AdAccount, type GrowthStatus } from '@/lib/growth';
 import { Panel } from '@/components/growth/ui';
+import { WriteAccessPanel } from '@/components/growth/manage/write-access';
 
 const LOGO: Record<string, [string, string]> = { meta: ['M', '#1877f2'], google: ['G', '#ea4335'], tiktok: ['T', '#111827'], snap: ['S', '#eab308'] };
 const ID_HELP: Record<string, string> = {
@@ -145,6 +146,8 @@ export default function GrowthConnectionsPage() {
           </ul>
         )}
       </Panel>
+
+      <WriteAccessPanel />
 
       <Panel title="Connect an ad account">
         <form className="grid gap-3 sm:grid-cols-[180px_1fr]" onSubmit={(e) => {

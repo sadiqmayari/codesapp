@@ -779,3 +779,7 @@ Supersedes the Meta Ads / Ad Report tables above: **`ad_spend_daily`, `ad_campai
 - `growth_attribution` — credit per order × model (first|last|lnd|linear|position|decay) × window (1|7|28) ×
   channel/platform/campaign/adset/ad, with credited net / expected_net / delivered. INDEX (company_id, model, win, order_date).
 
+## Growth ad management (migration 20261115000000_growth_ad_manage)
+- `ad_entities` + `configured_status VARCHAR(16)`, `budget_owner VARCHAR(8)` ('campaign'|'adset'), `budget_type VARCHAR(8)` ('daily'|'lifetime'), `lifetime_budget DECIMAL(14,2)`, `bid_strategy VARCHAR(40)`, `bid_amount DECIMAL(14,2)`, `roas_floor DECIMAL(8,4)` (plain ratio), `optimization_goal VARCHAR(40)`, `conversion_event VARCHAR(40)`, `destination_type VARCHAR(32)`, `attribution_spec JSON`, `start_time DATETIME`, `end_time DATETIME` — all nullable, written by the ad sync.
+- `ad_change_log` — id, company_id, account_id, user_id, user_name, platform, level, entity_id, entity_name, action (pause|resume|budget|bid|optimization|rename|schedule|duplicate|create|undo|edit), before JSON, after JSON, batch_id (one publish), result (pending|ok|failed), error, undo_of_id, undone_at, created_at. Indexes (company_id, created_at), (company_id, entity_id), (batch_id).
+- `ad_drafts` — id, company_id, user_id, payload JSON, updated_at; unique (company_id, user_id).

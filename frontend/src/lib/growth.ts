@@ -112,6 +112,14 @@ export interface CampaignNode {
   status: string | null;
   objective: string | null;
   dailyBudget: number | null;
+  configuredStatus?: string | null;
+  budgetOwner?: string | null;
+  budgetType?: string | null;
+  lifetimeBudget?: number | null;
+  bidStrategy?: string | null;
+  bidAmount?: number | null;
+  roasFloor?: number | null;
+  optimizationGoal?: string | null;
   thumb: string | null;
   matched: boolean;
   spend: number;
@@ -214,6 +222,9 @@ export interface Opportunity {
   impact: number | null;
   impactLabel: string;
   entityId?: string;
+  action?:
+    | { kind: 'scale'; campaignId: string; pct: number; label: string }
+    | { kind: 'patch'; level: 'campaign' | 'adset' | 'ad'; entityId: string; patch: { status: 'PAUSED' }; label: string };
 }
 
 export interface Brief {
