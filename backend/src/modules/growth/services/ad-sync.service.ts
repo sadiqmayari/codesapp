@@ -18,6 +18,7 @@ const ENTITY_REFRESH_MS = 6 * 3_600_000;
 const CHUNK_DAYS = 7; // per insights request (big windows time out on Meta) // a day's spend keeps firming up for ~72h
 const MAX_WINDOW_DAYS = 90;
 const TICK_MS = 10 * 60_000;
+const TODAY_REFRESH_MS = 60 * 60_000;
 
 interface AdsJob {
   accountId: number;
@@ -47,6 +48,8 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AdSyncService.name);
   private timer?: ReturnType<typeof setInterval>;
   private lastFxDay = '';
+  /** accountId → last light today-refresh enqueue (in-process; worker-only scheduler). */
+  private readonly lastQuick = new Map<number, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -106,9 +109,25 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
     let enqueued = 0;
     for (const a of accounts) {
       const interval = Math.min(1440, Math.max(30, a.sync_interval_min ?? DEFAULT_SYNC_INTERVAL_MIN));
-      if (now - (a.last_attempt_at?.getTime() ?? 0) < interval * 60_000) continue;
-      await this.request(a.id);
-      enqueued++;
+      const sinceFull = now - (a.last_attempt_at?.getTime() ?? 0);
+      if (sinceFull >= interval * 60_000) {
+        await this.request(a.id);
+        this.lastQuick.set(a.id, now);
+        enqueued++;
+        continue;
+      }
+      // Today's spend must stay current even on a long (e.g. daily) cadence:
+      // a light today+yesterday pull every hour, without moving the full-sync
+      // clock. Same dedup key, so it never overlaps a running full sync.
+      const lastQuick = Math.max(this.lastQuick.get(a.id) ?? 0, a.last_attempt_at?.getTime() ?? 0);
+      if (now - lastQuick >= TODAY_REFRESH_MS) {
+        this.lastQuick.set(a.id, now);
+        await this.jobs.enqueue(ADS_QUEUE, { accountId: a.id, sinceDays: 2 } satisfies AdsJob, {
+          dedupKey: `growth:ads:${a.id}`,
+          maxAttempts: 2,
+        });
+        enqueued++;
+      }
     }
     return { enqueued };
   }
