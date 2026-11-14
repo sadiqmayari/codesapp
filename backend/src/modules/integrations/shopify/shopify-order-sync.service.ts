@@ -105,6 +105,19 @@ interface ImportJob {
 }
 
 const RECONCILE_QUEUE = 'shopify-order-reconcile';
+// Fills subtotal / discounts / shipping / tax (+ line prices & discounts) for
+// mirror rows saved before the financial breakdown existed. Resumable: each job
+// handles a slice and re-enqueues itself with the last id as the cursor.
+const FINANCIALS_QUEUE = 'shopify-financials-backfill';
+const FIN_BATCH = 50; // gids per nodes() call
+const FIN_BATCHES_PER_JOB = 30; // 1,500 orders per job, well inside the lease
+
+interface FinancialsJob {
+  kind: 'financials';
+  companyId: number;
+  storeId: number | null;
+  afterId: number;
+}
 // Ad attribution: fetch an order's first-touch customer journey (UTM) from
 // Shopify GraphQL and stamp utm_campaign on the mirror. Drives the Ad Report.
 const JOURNEY_QUEUE = 'shopify-order-journey';
@@ -173,6 +186,14 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       },
       1, // one import per tenant at a time
       600,
+    );
+    this.jobQueue.registerWorker(
+      FINANCIALS_QUEUE,
+      async (p: unknown) => {
+        await this.runFinancialsBackfill(p as FinancialsJob);
+      },
+      1,
+      900,
     );
     this.jobQueue.registerWorker(
       RECONCILE_QUEUE,
@@ -1013,6 +1034,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           totalOutstandingSet { shopMoney { amount } }
           currentSubtotalPriceSet { shopMoney { amount } }
           currentTotalDiscountsSet { shopMoney { amount } }
+          totalDiscountsSet { shopMoney { amount } }
           currentTotalTaxSet { shopMoney { amount } }
           totalShippingPriceSet { shopMoney { amount } }
           phone
@@ -1022,6 +1044,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           fulfillments(first: 5) { displayStatus updatedAt trackingInfo { company } }
           lineItems(first: 50) { edges { node { title quantity variantTitle
             variant { id price }
+            originalUnitPriceSet { shopMoney { amount } }
             discountAllocations { allocatedAmountSet { shopMoney { amount } } } } } }
         } }
         pageInfo { hasNextPage }
@@ -1047,6 +1070,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       totalOutstandingSet?: { shopMoney?: { amount?: string } };
       currentSubtotalPriceSet?: { shopMoney?: { amount?: string } };
       currentTotalDiscountsSet?: { shopMoney?: { amount?: string } };
+      totalDiscountsSet?: { shopMoney?: { amount?: string } };
       currentTotalTaxSet?: { shopMoney?: { amount?: string } };
       totalShippingPriceSet?: { shopMoney?: { amount?: string } };
       phone?: string | null;
@@ -1072,6 +1096,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             quantity?: number;
             variantTitle?: string | null;
             variant?: { id?: string; price?: string } | null;
+            originalUnitPriceSet?: { shopMoney?: { amount?: string } };
             discountAllocations?: Array<{
               allocatedAmountSet?: { shopMoney?: { amount?: string } };
             }>;
@@ -1156,7 +1181,10 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             subtotalPrice: this.num(
               (n.cancelledAt ? n.subtotalPriceSet : n.currentSubtotalPriceSet)?.shopMoney?.amount,
             ),
-            totalDiscounts: this.num(n.currentTotalDiscountsSet?.shopMoney?.amount),
+            // Cancelled (VOIDED) → current discounts read 0; keep the original.
+            totalDiscounts: this.num(
+              (n.cancelledAt ? n.totalDiscountsSet : n.currentTotalDiscountsSet)?.shopMoney?.amount,
+            ),
             totalTax: this.num(n.currentTotalTaxSet?.shopMoney?.amount),
             totalShipping: this.num(n.totalShippingPriceSet?.shopMoney?.amount),
             currency: n.currentTotalPriceSet?.shopMoney?.currencyCode ?? null,
@@ -1181,7 +1209,8 @@ export class ShopifyOrderSyncService implements OnModuleInit {
               quantity: e.node.quantity ?? 1,
               variantId: e.node.variant?.id ?? null,
               variantTitle: e.node.variantTitle ?? null,
-              price: e.node.variant?.price ?? null,
+              // Price AT ORDER TIME (before discounts), not today's catalogue price.
+              price: e.node.originalUnitPriceSet?.shopMoney?.amount ?? e.node.variant?.price ?? null,
               lineDiscount: (e.node.discountAllocations ?? []).reduce(
                 (s, d) => s + (this.num(d.allocatedAmountSet?.shopMoney?.amount) ?? 0),
                 0,
@@ -1507,28 +1536,139 @@ export class ShopifyOrderSyncService implements OnModuleInit {
   }
 
   /**
-   * Ad Report v3: re-import recent orders so the new financial breakdown
-   * (subtotal/discount/tax/shipping + per-line discount) fills in for history.
-   * Reuses the import worker with a date-bounded `status:any` filter.
+   * Fill the financial breakdown for every mirror row that lacks it
+   * (`subtotal_price IS NULL`), any age, every store. One job per store; each
+   * job does FIN_BATCHES_PER_JOB × FIN_BATCH orders and re-enqueues itself.
    */
-  async backfillFinancials(
-    companyId: number,
-    days = 90,
-    storeId?: number,
-  ): Promise<{ started: true }> {
-    const since = new Date(Date.now() - Math.min(days, 365) * 86_400_000)
-      .toISOString()
-      .slice(0, 10);
-    await this.jobQueue.enqueue(
-      IMPORT_QUEUE,
-      {
-        kind: 'import',
-        companyId,
-        filter: `status:any created_at:>=${since}`,
-        storeId,
-      } as ImportJob,
-      { dedupKey: `shopify-import:${companyId}:financials`, maxAttempts: 1 },
+  async backfillFinancials(companyId: number, _days = 0, storeId?: number): Promise<{ started: true; stores: number; missing: number }> {
+    const rows = await this.prisma.$queryRawUnsafe<Array<{ s: number | null; c: bigint }>>(
+      `SELECT shopify_store_id s, COUNT(*) c FROM shopify_orders
+        WHERE company_id = ? AND subtotal_price IS NULL ${storeId ? 'AND shopify_store_id = ?' : ''}
+        GROUP BY shopify_store_id`,
+      ...(storeId ? [companyId, storeId] : [companyId]),
     );
-    return { started: true };
+    for (const r of rows) {
+      await this.jobQueue.enqueue(
+        FINANCIALS_QUEUE,
+        { kind: 'financials', companyId, storeId: r.s == null ? null : Number(r.s), afterId: 0 } as FinancialsJob,
+        { dedupKey: `shopify-financials:${companyId}:${r.s ?? 'legacy'}`, maxAttempts: 5 },
+      );
+    }
+    return { started: true, stores: rows.length, missing: rows.reduce((a, r) => a + Number(r.c), 0) };
+  }
+
+  /** Coverage of the financial breakdown (for the progress chip). */
+  async financialsCoverage(companyId: number): Promise<{ total: number; missing: number; pct: number }> {
+    const [r] = await this.prisma.$queryRawUnsafe<Array<{ t: bigint; m: bigint }>>(
+      'SELECT COUNT(*) t, SUM(subtotal_price IS NULL) m FROM shopify_orders WHERE company_id = ?',
+      companyId,
+    );
+    const total = Number(r?.t ?? 0);
+    const missing = Number(r?.m ?? 0);
+    return { total, missing, pct: total ? Math.round(((total - missing) / total) * 1000) / 10 : 100 };
+  }
+
+  private async runFinancialsBackfill(job: FinancialsJob): Promise<void> {
+    const { companyId, storeId } = job;
+    let afterId = job.afterId;
+    const storeSql = storeId == null ? 'shopify_store_id IS NULL' : 'shopify_store_id = ?';
+    const query = `query($ids: [ID!]!) {
+      nodes(ids: $ids) { ... on Order {
+        id cancelledAt
+        subtotalPriceSet { shopMoney { amount } }
+        currentSubtotalPriceSet { shopMoney { amount } }
+        totalDiscountsSet { shopMoney { amount } }
+        currentTotalDiscountsSet { shopMoney { amount } }
+        totalShippingPriceSet { shopMoney { amount } }
+        currentTotalTaxSet { shopMoney { amount } }
+        lineItems(first: 50) { edges { node { title quantity
+          originalUnitPriceSet { shopMoney { amount } }
+          discountAllocations { allocatedAmountSet { shopMoney { amount } } } } } }
+      } }
+    }`;
+    type Money = { shopMoney?: { amount?: string } } | null | undefined;
+    type OrderNode = {
+      id: string;
+      cancelledAt: string | null;
+      subtotalPriceSet?: Money;
+      currentSubtotalPriceSet?: Money;
+      totalDiscountsSet?: Money;
+      currentTotalDiscountsSet?: Money;
+      totalShippingPriceSet?: Money;
+      currentTotalTaxSet?: Money;
+      lineItems?: { edges?: Array<{ node: { title?: string; quantity?: number; originalUnitPriceSet?: Money; discountAllocations?: Array<{ allocatedAmountSet?: Money }> } }> };
+    } | null;
+    const amt = (m: Money) => this.num(m?.shopMoney?.amount);
+
+    for (let b = 0; b < FIN_BATCHES_PER_JOB; b++) {
+      const rows = await this.prisma.$queryRawUnsafe<Array<{ id: number; gid: string; line_items: unknown }>>(
+        `SELECT id, shopify_order_gid gid, line_items FROM shopify_orders
+          WHERE company_id = ? AND ${storeSql} AND subtotal_price IS NULL AND id > ?
+          ORDER BY id LIMIT ${FIN_BATCH}`,
+        ...(storeId == null ? [companyId, afterId] : [companyId, storeId, afterId]),
+      );
+      if (!rows.length) {
+        this.logger.log(`financials backfill done: company ${companyId} store ${storeId ?? 'legacy'}`);
+        return;
+      }
+      afterId = rows[rows.length - 1].id;
+      type GqlRes = { data?: { nodes?: OrderNode[] }; errors?: Array<{ message?: string; extensions?: { code?: string } }> };
+      let res = null as GqlRes | null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        res = await this.graphql<GqlRes>(companyId, query, { ids: rows.map((r) => r.gid) }, storeId);
+        const throttled = res?.errors?.some((e) => e.extensions?.code === 'THROTTLED');
+        if (!throttled) break;
+        await new Promise((r) => setTimeout(r, 2_000 * (attempt + 1)));
+      }
+      if (res?.errors?.length && !res.data?.nodes) {
+        throw new Error(`financials backfill: ${res.errors.map((e) => e.message).join('; ').slice(0, 300)}`);
+      }
+      const byGid = new Map<string, OrderNode>();
+      for (const node of res?.data?.nodes ?? []) if (node?.id) byGid.set(node.id, node);
+      for (const r of rows) {
+        const node = byGid.get(r.gid);
+        if (!node) {
+          // Deleted in Shopify: mark as "no breakdown available" so we don't retry forever.
+          await this.prisma.$executeRawUnsafe(
+            'UPDATE shopify_orders SET subtotal_price = GREATEST(0, COALESCE(total_price,0) - COALESCE(total_shipping,0) - COALESCE(total_tax,0)), total_discounts = COALESCE(total_discounts, 0) WHERE id = ? AND subtotal_price IS NULL',
+            r.id,
+          );
+          continue;
+        }
+        const cancelled = !!node.cancelledAt;
+        const subtotal = amt(cancelled ? node.subtotalPriceSet : node.currentSubtotalPriceSet) ?? amt(node.subtotalPriceSet);
+        const discounts = amt(cancelled ? node.totalDiscountsSet : node.currentTotalDiscountsSet) ?? amt(node.totalDiscountsSet) ?? 0;
+        const shipping = amt(node.totalShippingPriceSet);
+        const tax = amt(node.currentTotalTaxSet);
+        // Merge order-time price + discount into the stored line items (same order/length only).
+        let lines: string | null = null;
+        const edges = node.lineItems?.edges ?? [];
+        const stored = Array.isArray(r.line_items) ? (r.line_items as Array<Record<string, unknown>>) : null;
+        if (stored && stored.length === edges.length) {
+          lines = JSON.stringify(
+            stored.map((l, i) => {
+              const e = edges[i].node;
+              const price = amt(e.originalUnitPriceSet);
+              const disc = (e.discountAllocations ?? []).reduce((acc, d) => acc + (amt(d.allocatedAmountSet) ?? 0), 0);
+              return { ...l, ...(price != null ? { price: String(price) } : {}), lineDiscount: disc };
+            }),
+          );
+        }
+        await this.prisma.$executeRawUnsafe(
+          `UPDATE shopify_orders
+              SET subtotal_price = ?, total_discounts = ?, total_shipping = COALESCE(?, total_shipping),
+                  total_tax = COALESCE(?, total_tax)${lines ? ', line_items = ?' : ''}, updated_at = NOW(3)
+            WHERE id = ?`,
+          ...(lines ? [subtotal ?? 0, discounts, shipping, tax, lines, r.id] : [subtotal ?? 0, discounts, shipping, tax, r.id]),
+        );
+      }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    // More left → next slice (fresh lease, resumes after the last id).
+    await this.jobQueue.enqueue(
+      FINANCIALS_QUEUE,
+      { ...job, afterId } as FinancialsJob,
+      { dedupKey: `shopify-financials:${companyId}:${storeId ?? 'legacy'}:${afterId}`, maxAttempts: 5 },
+    );
   }
 }

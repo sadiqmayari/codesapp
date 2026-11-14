@@ -81,7 +81,11 @@ export class GrowthService {
   }
 
   backfillFinancials(companyId: number) {
-    return this.orderSync.backfillFinancials(companyId, 90);
+    return this.orderSync.backfillFinancials(companyId);
+  }
+
+  financialsCoverage(companyId: number) {
+    return this.orderSync.financialsCoverage(companyId);
   }
 
   /** Background catalogue sync (pulls Shopify cost per item → COGS). */

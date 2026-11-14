@@ -140,6 +140,11 @@ export class GrowthController {
     return this.growth.backfillAttribution(u.companyId);
   }
 
+  @Get('backfill/financials')
+  financialsCoverage(@CurrentUser() u: U) {
+    return this.growth.financialsCoverage(u.companyId);
+  }
+
   @Post('backfill/financials')
   backfillFinancials(@CurrentUser() u: U) {
     return this.growth.backfillFinancials(u.companyId);
