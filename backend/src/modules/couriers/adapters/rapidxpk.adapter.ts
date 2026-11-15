@@ -28,6 +28,10 @@ export interface RapidxpkCredentials {
   apiKey: string;
   citiesServed?: string;
   service?: string;
+  /** Optional: signing secret pasted from the RapidXpk portal when the webhook
+   *  URL was set there instead of auto-registered. Accepted alongside the
+   *  auto-registered secret (courier_credentials.webhook_secret_encrypted). */
+  webhookSecret?: string;
 }
 
 export const RAPIDXPK_BASE_URL = 'https://api.rapidxpk.com/v1';

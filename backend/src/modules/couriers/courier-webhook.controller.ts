@@ -109,7 +109,13 @@ export class CourierWebhookController {
     // RapidXpk signs every delivery (HMAC over the RAW body) and needs a 2xx
     // within 12s — verify, de-dup, ACK, then process in the background.
     if (courierType === 'rapidxpk') {
-      return this.receiveRapidxpk(cred.company_id, cred.webhook_secret_encrypted, body, req);
+      return this.receiveRapidxpk(
+        cred.company_id,
+        cred.webhook_secret_encrypted,
+        cred.credentials_encrypted,
+        body,
+        req,
+      );
     }
 
     // Bearer-token check: enforced only when this tenant has a `webhookToken`
@@ -135,18 +141,32 @@ export class CourierWebhookController {
   private async receiveRapidxpk(
     companyId: number,
     secretEncrypted: string | null,
+    credentialsEncrypted: string | null,
     body: unknown,
     req: RawBodyRequest<Request>,
   ) {
-    let secret = '';
+    // Two possible secrets: the one CodesApp got when it registered the URL
+    // (webhook_secret_encrypted) and one pasted from the RapidXpk portal
+    // (credentials.webhookSecret). A delivery signed with either is accepted.
+    const secrets: string[] = [];
     if (secretEncrypted) {
       try {
-        secret = this.encryption.decrypt(secretEncrypted);
+        secrets.push(this.encryption.decrypt(secretEncrypted));
       } catch {
-        secret = '';
+        /* rotated key */
       }
     }
-    if (!secret) {
+    if (credentialsEncrypted) {
+      try {
+        const c = JSON.parse(this.encryption.decrypt(credentialsEncrypted));
+        if (typeof c?.webhookSecret === 'string' && c.webhookSecret.trim()) {
+          secrets.push(c.webhookSecret.trim());
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!secrets.length) {
       throw new UnauthorizedException('RapidXpk webhook not registered for this account.');
     }
     const header = (n: string) => {
@@ -154,14 +174,9 @@ export class CourierWebhookController {
       return Array.isArray(v) ? v[0] : v;
     };
     const raw = req.rawBody ?? Buffer.from(JSON.stringify(body ?? {}));
-    if (
-      !verifyRapidxpkSignature(
-        secret,
-        header('x-rapidxpk-timestamp'),
-        header('x-rapidxpk-signature'),
-        raw,
-      )
-    ) {
+    const ts = header('x-rapidxpk-timestamp');
+    const sig = header('x-rapidxpk-signature');
+    if (!secrets.some((secret) => verifyRapidxpkSignature(secret, ts, sig, raw))) {
       throw new UnauthorizedException('Invalid RapidXpk signature.');
     }
 

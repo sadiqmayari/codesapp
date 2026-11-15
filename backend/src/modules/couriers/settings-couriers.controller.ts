@@ -45,7 +45,7 @@ const SECRET_CRED_KEYS: Record<CourierType, string[]> = {
   rocket: ['token'],
   mnp: ['password', 'webhookToken'],
   manual: [], // no credentials — not a real courier
-  rapidxpk: ['apiKey'],
+  rapidxpk: ['apiKey', 'webhookSecret'],
 };
 import {
   SetCourierCredentialsDto,

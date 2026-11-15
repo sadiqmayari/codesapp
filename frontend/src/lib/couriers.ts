@@ -266,6 +266,13 @@ export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
       default: 'STANDARD 24 HR',
       hint: 'Sent with every order and printed on the RapidXpk label.',
     },
+    {
+      key: 'webhookSecret',
+      label: 'Webhook signing secret',
+      type: 'secret',
+      optional: true,
+      hint: 'Only needed if you set the webhook URL in the RapidXpk portal yourself — paste the secret it shows. Leave blank when CodesApp registers the webhook for you (on save).',
+    },
   ],
 };
 

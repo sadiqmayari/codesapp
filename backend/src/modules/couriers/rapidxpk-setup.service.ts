@@ -144,7 +144,7 @@ export class RapidxpkSetupService {
     return {
       configured: true,
       mode: keyMode(creds?.apiKey),
-      registered: !!row.webhook_secret_encrypted,
+      registered: !!row.webhook_secret_encrypted || !!creds?.webhookSecret?.trim(),
       url: this.webhookUrl(row.webhook_key),
       remote,
       remoteError,

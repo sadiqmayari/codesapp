@@ -4091,17 +4091,18 @@ function CourierCredentialCard({
         </span>
       </div>
 
-      {courierType === 'rapidxpk' && row?.configured && <RapidxpkWebhookPanel />}
-
-      {webhookUrl && courierType !== 'rapidxpk' && (
+      {webhookUrl && (
         <div className="mt-3">
           <CopyField label="Tracking webhook URL" value={webhookUrl} />
           <p className="text-xs text-gray-500 mt-1">
-            Give this URL to {COURIER_LABELS[courierType]} so delivery status
-            updates flow in automatically.
+            {courierType === 'rapidxpk'
+              ? 'CodesApp registers this URL with RapidXpk automatically when you save the API key. You can also set it yourself in the RapidXpk portal and paste its signing secret in the credentials.'
+              : `Give this URL to ${COURIER_LABELS[courierType]} so delivery status updates flow in automatically.`}
           </p>
         </div>
       )}
+
+      {courierType === 'rapidxpk' && row?.configured && <RapidxpkWebhookPanel />}
 
       {row?.configured && !open && (
         <div className="mt-4 pt-4 border-t border-gray-100">
@@ -4369,7 +4370,6 @@ function RapidxpkWebhookPanel() {
           {st?.registered ? 'Status webhook registered' : 'Status webhook not registered'}
         </span>
       </div>
-      {st?.url && <p className="mt-2 break-all font-mono text-xs text-gray-600">{st.url}</p>}
       <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
         <dt className="text-gray-500">Last delivery</dt>
         <dd className="text-gray-800">{lastOk ? fmtDateTime(lastOk) : '—'}</dd>
