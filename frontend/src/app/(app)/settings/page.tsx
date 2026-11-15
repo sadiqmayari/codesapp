@@ -4324,7 +4324,12 @@ function RapidxpkWebhookPanel() {
     load();
   }, [load]);
 
-  const remote = (st?.remote ?? null) as Record<string, unknown> | null;
+  // RapidXpk GET /v1/webhooks answers { webhook: { url, failed, pending,
+  // last_ok_at, last_error, created_at } } — read the nested object.
+  const rawRemote = (st?.remote ?? null) as Record<string, unknown> | null;
+  const remote = ((rawRemote?.webhook as Record<string, unknown> | undefined) ?? rawRemote) as
+    | Record<string, unknown>
+    | null;
   const pick = (...keys: string[]) => {
     for (const k of keys) {
       const v = remote?.[k];
@@ -4332,8 +4337,11 @@ function RapidxpkWebhookPanel() {
     }
     return null;
   };
-  const lastOk = pick('last_success_at', 'last_succeeded_at', 'last_delivery_at');
-  const lastErr = pick('last_error', 'last_failure_reason', 'last_failed_at');
+  const lastOk = pick('last_ok_at', 'last_success_at', 'last_delivery_at');
+  const lastErr = pick('last_error', 'last_failure_reason');
+  const failed = Number(remote?.failed ?? 0);
+  const remoteUrl = pick('url');
+  const urlMismatch = !!remoteUrl && !!st?.url && remoteUrl !== st.url;
 
   const reRegister = async () => {
     setBusy(true);
@@ -4374,12 +4382,20 @@ function RapidxpkWebhookPanel() {
         <dt className="text-gray-500">Last delivery</dt>
         <dd className="text-gray-800">{lastOk ? fmtDateTime(lastOk) : '—'}</dd>
         <dt className="text-gray-500">Last error</dt>
-        <dd className="text-gray-800">{st?.remoteError || lastErr || 'None'}</dd>
+        <dd className="text-gray-800">
+          {st?.remoteError || lastErr || 'None'}
+          {failed > 0 ? ` · ${failed} failed deliveries` : ''}
+        </dd>
         <dt className="text-gray-500">Catch-up sync</dt>
         <dd className="text-gray-800">
           {st?.syncCursor?.since ? `up to ${fmtDateTime(st.syncCursor.since)}` : 'not run yet'}
         </dd>
       </dl>
+      {urlMismatch && (
+        <p className="mt-2 text-xs text-amber-700">
+          RapidXpk is posting to a different URL ({remoteUrl}). Re-register to point it at this account.
+        </p>
+      )}
       <button
         type="button"
         onClick={reRegister}
