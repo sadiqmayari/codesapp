@@ -29,6 +29,7 @@ import {
   ReconciledLine,
   ReconcileSummary,
 } from './courier-invoice.types';
+import { SharedStateService } from '../../../common/services/shared-state.service';
 
 // A courier statement arrives as an Excel workbook (Rocket) or a CSV (PostEx).
 // The outer guard just accepts the container; each parser validates its own shape.
@@ -65,6 +66,7 @@ export class CourierInvoiceService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly media: MediaService,
     private readonly cache: CacheService,
+    private readonly sharedState: SharedStateService,
     private readonly jobQueue: JobQueueService,
     private readonly registry: CourierInvoiceRegistry,
     private readonly shopifyFulfillment: ShopifyFulfillmentClient,
@@ -664,7 +666,8 @@ export class CourierInvoiceService implements OnModuleInit {
     }
     if (!gid) return; // order has no fulfillment — nothing to attach an event to
     const numId = shipment.shopify_order_gid.split('/').pop();
-    if (numId) this.cache.set(`shopify-sync-suppress:${companyId}:${numId}`, 1, 1800);
+    // Shared (Redis): the apply runs in the WORKER, the Shopify webhook in the WEB container.
+    if (numId) await this.sharedState.set(`shopify-sync-suppress:${companyId}:${numId}`, 1, 1800);
     await this.shopifyFulfillment
       .createFulfillmentEvent(companyId, gid, event, undefined, shipment.shopify_store_id)
       .catch(() => undefined);

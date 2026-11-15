@@ -34,6 +34,7 @@ import { AiRagService, RagItem } from '../../ai/ai-rag.service';
 import { courierTrackingUrl } from '../../couriers/couriers.constants';
 import { formatLineItemsSummary } from '../../../common/utils/line-items-summary';
 import { classifySearch, likeContains } from '../../../common/utils/search';
+import { SharedStateService } from '../../../common/services/shared-state.service';
 
 export interface ShopifyOrderPayload {
   id?: number | string;
@@ -440,6 +441,7 @@ export class ShopifyService implements OnModuleInit {
     private readonly config: ConfigService,
     private readonly encryption: EncryptionService,
     private readonly cache: CacheService,
+    private readonly sharedState: SharedStateService,
     private readonly shopifyToken: ShopifyTokenService,
     private readonly jobQueue: JobQueueService,
     private readonly metering: UsageMeteringService,
@@ -2254,7 +2256,7 @@ export class ShopifyService implements OnModuleInit {
     const suppressId = order.id != null ? String(order.id) : '';
     if (
       suppressId &&
-      this.cache.get(`shopify-sync-suppress:${companyId}:${suppressId}`)
+      (await this.sharedState.get(`shopify-sync-suppress:${companyId}:${suppressId}`))
     ) {
       return { received: true, ignored: 'sync-suppressed' };
     }

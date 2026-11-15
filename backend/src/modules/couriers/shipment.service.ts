@@ -32,6 +32,7 @@ import {
   formatLineItemsSummary,
   SummaryLineItem,
 } from '../../common/utils/line-items-summary';
+import { SharedStateService } from '../../common/services/shared-state.service';
 
 // Local contact tag added when a parcel is returned (RTO) — a visible marker in
 // the inbox + contacts that this customer didn't receive the package and it
@@ -306,16 +307,14 @@ export class ShipmentService implements OnModuleInit {
   }
 
   // Live progress for a bulk-cancel batch, keyed by a server-issued batchId.
-  // In-memory (single-process) like the pre-flight map; the modal polls it and
-  // it's pruned by age on write. `errors` keeps a short sample for the UI.
-  private readonly bulkCancelBatches = new Map<string, BulkCancelProgress>();
-  private static readonly BULK_CANCEL_TTL_MS = 30 * 60 * 1000;
+  // Kept in SharedStateService (Redis in prod), NOT an in-process Map: the web
+  // container creates the batch and answers the modal's polls, but the WORKER
+  // container runs the job — an in-memory map left the bar stuck at 0 even
+  // though every cancel succeeded (Nov-2026). `errors` keeps a short sample.
+  private static readonly BULK_CANCEL_TTL_S = 30 * 60;
 
-  private pruneBulkCancelBatches(): void {
-    const cutoff = Date.now() - ShipmentService.BULK_CANCEL_TTL_MS;
-    for (const [k, v] of this.bulkCancelBatches) {
-      if ((v.finishedAt ?? v.startedAt) < cutoff) this.bulkCancelBatches.delete(k);
-    }
+  private bulkCancelKey(batchId: string): string {
+    return `bulk-cancel:${batchId}`;
   }
 
   // ─── Booking conflict lock ────────────────────────────────────────────────
@@ -482,6 +481,7 @@ export class ShipmentService implements OnModuleInit {
     private readonly ops: CourierOpsService,
     private readonly agentActivity: AgentActivityService,
     private readonly gateway: InboxGateway,
+    private readonly sharedState: SharedStateService,
   ) {}
 
   onModuleInit(): void {
@@ -791,8 +791,7 @@ export class ShipmentService implements OnModuleInit {
     const batchId = `bulkcancel-${companyId}-${Date.now()}-${Math.random()
       .toString(36)
       .slice(2, 8)}`;
-    this.pruneBulkCancelBatches();
-    this.bulkCancelBatches.set(batchId, {
+    await this.sharedState.set(this.bulkCancelKey(batchId), {
       batchId,
       mode,
       total: orderGids.length,
@@ -804,7 +803,7 @@ export class ShipmentService implements OnModuleInit {
       startedAt: Date.now(),
       finishedAt: null,
       errors: [],
-    });
+    } satisfies BulkCancelProgress, ShipmentService.BULK_CANCEL_TTL_S);
 
     await this.jobQueue.enqueue(
       COURIER_BULK_CANCEL_QUEUE,
@@ -815,8 +814,8 @@ export class ShipmentService implements OnModuleInit {
   }
 
   /** Live counters for a bulk-cancel batch (polled by the client). */
-  getBulkCancelProgress(companyId: number, batchId: string): BulkCancelProgress {
-    const b = this.bulkCancelBatches.get(batchId);
+  async getBulkCancelProgress(companyId: number, batchId: string): Promise<BulkCancelProgress> {
+    const b = batchId ? await this.sharedState.get<BulkCancelProgress>(this.bulkCancelKey(batchId)) : null;
     // batchId embeds the company; guard against cross-tenant polling.
     if (!b || !batchId.startsWith(`bulkcancel-${companyId}-`)) {
       throw new NotFoundException('Unknown or expired batch.');
@@ -825,9 +824,24 @@ export class ShipmentService implements OnModuleInit {
   }
 
   private async processBulkCancelJob(payload: BulkCancelJobPayload): Promise<void> {
-    const batch = this.bulkCancelBatches.get(payload.batchId);
-    const done = (outcome: 'ok' | 'skip' | 'fail', err?: string) => {
-      if (!batch) return;
+    const key = this.bulkCancelKey(payload.batchId);
+    // Seed from the shared record; if it expired/never reached us, rebuild one so
+    // the modal still gets counters.
+    const batch: BulkCancelProgress = (await this.sharedState.get<BulkCancelProgress>(key)) ?? {
+      batchId: payload.batchId,
+      mode: payload.mode,
+      total: payload.orderGids.length,
+      processed: 0,
+      succeeded: 0,
+      skipped: 0,
+      failed: 0,
+      finished: false,
+      startedAt: Date.now(),
+      finishedAt: null,
+      errors: [],
+    };
+    const save = () => this.sharedState.set(key, batch, ShipmentService.BULK_CANCEL_TTL_S);
+    const done = async (outcome: 'ok' | 'skip' | 'fail', err?: string) => {
       batch.processed++;
       if (outcome === 'ok') batch.succeeded++;
       else if (outcome === 'skip') batch.skipped++;
@@ -835,6 +849,7 @@ export class ShipmentService implements OnModuleInit {
         batch.failed++;
         if (err && batch.errors.length < 20) batch.errors.push(err);
       }
+      await save();
     };
 
     for (const gid of payload.orderGids) {
@@ -849,28 +864,30 @@ export class ShipmentService implements OnModuleInit {
             !shipment ||
             ['delivered', 'returned', 'cancelled'].includes(shipment.status)
           ) {
-            done('skip');
+            await done('skip');
             continue;
           }
           await this.ops.cancelBooking(payload.companyId, shipment.id);
-          done('ok');
+          await done('ok');
         } else {
           await this.cancelOrderFully(payload.companyId, gid);
-          done('ok');
+          await done('ok');
         }
       } catch (err) {
-        done('fail', `${gid}: ${err instanceof Error ? err.message : String(err)}`);
+        await done('fail', `${gid}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
-    if (batch) {
-      batch.finished = true;
-      batch.finishedAt = Date.now();
-    }
+    batch.finished = true;
+    batch.finishedAt = Date.now();
+    await save();
+    // Boards refresh as soon as the batch lands (the worker's emit reaches the
+    // browsers through the Redis socket adapter).
+    this.notifyOrdersChanged(payload.companyId);
     this.logger.log(
       `Bulk cancel (${payload.mode}) complete (company ${payload.companyId}): ` +
-        `succeeded=${batch?.succeeded ?? '?'} skipped=${batch?.skipped ?? '?'} ` +
-        `failed=${batch?.failed ?? '?'} of ${batch?.total ?? '?'}`,
+        `succeeded=${batch.succeeded} skipped=${batch.skipped} ` +
+        `failed=${batch.failed} of ${batch.total}`,
     );
   }
 

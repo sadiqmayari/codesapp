@@ -13,6 +13,7 @@ import { ObservabilityService } from './services/observability.service';
 import { CustomerRegistryService } from './services/customer-registry.service';
 import { AgentActivityService } from './services/agent-activity.service';
 import { SipTrunkAuthService } from './services/sip-trunk-auth.service';
+import { SharedStateService } from './services/shared-state.service';
 
 @Global()
 @Module({
@@ -31,6 +32,7 @@ import { SipTrunkAuthService } from './services/sip-trunk-auth.service';
     CustomerRegistryService,
     AgentActivityService,
     SipTrunkAuthService,
+    SharedStateService,
   ],
   exports: [
     EncryptionService,
@@ -47,6 +49,7 @@ import { SipTrunkAuthService } from './services/sip-trunk-auth.service';
     CustomerRegistryService,
     AgentActivityService,
     SipTrunkAuthService,
+    SharedStateService,
   ],
 })
 export class CommonModule {}

@@ -18,6 +18,7 @@ import {
   UnmappedCourierStatusError,
 } from './adapters/courier-adapter.interface';
 import { runsBackground } from '../../common/utils/process-role';
+import { SharedStateService } from '../../common/services/shared-state.service';
 
 const SYNC_QUEUE = 'courier-status-sync';
 
@@ -75,6 +76,7 @@ export class CourierStatusSyncService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly jobQueue: JobQueueService,
     private readonly cache: CacheService,
+    private readonly sharedState: SharedStateService,
     private readonly registry: CourierRegistryService,
     private readonly shopify: ShopifyService,
     private readonly shopifyFulfillment: ShopifyFulfillmentClient,
@@ -515,7 +517,8 @@ export class CourierStatusSyncService implements OnModuleInit, OnModuleDestroy {
           if (enr?.fulfillmentGid && shopifyEvent) {
             const numId = s.shopify_order_gid.split('/').pop();
             if (numId) {
-              this.cache.set(`shopify-sync-suppress:${companyId}:${numId}`, 1, 1800);
+              // Shared (Redis) — the Shopify webhook that reads it runs in the WEB container.
+              await this.sharedState.set(`shopify-sync-suppress:${companyId}:${numId}`, 1, 1800);
             }
             await this.shopifyFulfillment
               .createFulfillmentEvent(companyId, enr.fulfillmentGid, shopifyEvent, undefined, s.shopify_store_id)

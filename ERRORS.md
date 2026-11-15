@@ -7,6 +7,7 @@
 
 ## How to Add an Entry
 ```
+
 ### [Module] — Short description of the bug
 **Error message:** paste exact error
 **Cause:** what caused it
@@ -17,6 +18,12 @@
 ---
 
 ## Entries
+
+### [Ops] Bulk-cancel progress bar stuck + sync-suppress flag ignored after the web/worker split (2026-11-15)
+**Symptom:** Cancel-booking popup's bar never finished although the booking WAS cancelled at the courier, in CodesApp and Shopify (found on the first RapidXpk cancel).
+**Root cause:** progress lived in an in-process `Map` on `ShipmentService`. Since APP_ROLE web/worker (2026-11-13) the WEB container creates the batch + answers polls, the WORKER runs the job and updated its own copy. Same class of bug: `shopify-sync-suppress` (CacheService) was set by status-sync / statement-apply in the worker and read by the Shopify fulfillment webhook in web — so backfilled courier statuses could WhatsApp customers again.
+**Fix:** new `SharedStateService` (Redis, memory fallback) for both; bulk-cancel worker saves progress after every order + emits `orders.changed` when done.
+**Rule:** anything a web request and a queue job both touch goes through `SharedStateService`, never an in-process map/cache.
 
 ### [Search/Filter] App-wide audit — phone formats, stale responses, page-only filters, clobbered filters
 **Symptoms:** (1) Searching `0300…` / `+92300…` found nothing in the inbox, calls, Orders board and payments (only Contacts normalised). (2) Fast tab/filter/search changes sometimes showed the PREVIOUS lane's / courier's rows (pending payments could then settle the wrong rows); the calls tab spinner could stick forever. (3) Super-admin Clients/Audit/Billing filtered only the current page ("Pending 3" = 3 on this page); tickets were capped at 200 with a client-side overdue sort. (4) On the Orders board, To-book → Confirmed silently dropped the courier filter; Select-all ignored the Confirmed/Awaiting sub-tab (bulk-book hit unconfirmed orders); shipment-status tabs capped gids at 20,000 unordered so rows vanished; paging skipped/repeated rows. (5) Attendance grid started one day early for UTC+ tenants; analytics/leaderboard custom ranges used UTC / browser clocks. (6) "No products yet — Sync from Shopify" / "No templates yet" shown for a zero-result FILTER.
