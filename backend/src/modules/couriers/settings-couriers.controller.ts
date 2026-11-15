@@ -416,6 +416,14 @@ export class SettingsCouriersController {
     return this.cityMapping.coverage(user.companyId, active);
   }
 
+  /** Per-city × courier delivery performance (settled parcels, 21–180 days)
+   *  + 90-day order value per city — the City → courier grid's rates and
+   *  "best pick". Read-only; joins to `city-coverage` on `cityName`. */
+  @Get('city-performance')
+  async cityPerformance(@CurrentUser() user: { companyId: number }) {
+    return this.cityMapping.performance(user.companyId);
+  }
+
   /** Bulk: make a courier the default for many cities at once (both entry
    *  points — "cities → courier" and "courier → cities" — hit this). */
   @Put('city-mappings/bulk-default')

@@ -1723,6 +1723,33 @@ export function getCityCoverage() {
   return apiFetch<CityCoverageRow[]>('/settings/couriers/city-coverage');
 }
 
+/** One courier's settled delivery record in one city (21–180 days old). */
+export interface CityCourierPerf {
+  courierType: CourierType;
+  /** Settled parcels (delivered + returned). */
+  parcels: number;
+  delivered: number;
+  returned: number;
+  /** delivered ÷ parcels, null when no settled parcels. */
+  rate: number | null;
+}
+
+export interface CityPerformance {
+  windowDays: { from: number; to: number };
+  cities: Array<{
+    /** Same key as CityCoverageRow.cityName (lower-cased city text). */
+    cityName: string;
+    orders90d: number;
+    value90d: number;
+    couriers: CityCourierPerf[];
+  }>;
+}
+
+/** Per-city × courier delivery performance for the Settings City → courier grid. */
+export function getCityPerformance() {
+  return apiFetch<CityPerformance>('/settings/couriers/city-performance');
+}
+
 /** Make a courier the default for many cities at once. */
 export function bulkSetDefaultCourier(courierType: CourierType, cities: string[]) {
   return apiFetch<{ set: number; skipped: string[] }>(

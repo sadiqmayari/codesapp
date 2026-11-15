@@ -67,7 +67,11 @@ export default function TeamChatPage() {
   const params = useSearchParams();
   const meId = user?.id ?? 0;
 
-  const [view, setView] = useState<'chat' | 'attendance'>('chat');
+  // `?view=attendance` deep-links straight to the Attendance tab (used by
+  // Settings → Attendance & payroll).
+  const [view, setView] = useState<'chat' | 'attendance'>(
+    params.get('view') === 'attendance' ? 'attendance' : 'chat',
+  );
   const [threads, setThreads] = useState<ThreadItem[]>([]);
   const [roster, setRoster] = useState<RosterUser[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);

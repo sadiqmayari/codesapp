@@ -6,7 +6,14 @@
 
 ## Current Status
 
-**RapidXpk courier — 6th courier (2026-11-16, latest):** migration `20261116000000_courier_type_rapidxpk` (auto-applies). Preview: https://claude.ai/artifact/QngvUEgUYsSPWpKkesNiKY
+**Settings redesign (2026-11-15, latest):** NO migration. One new read endpoint. Preview: https://claude.ai/artifact/H8poULan4mfykPgS5SHr3r
+- The 5,486-line `settings/page.tsx` is split into `components/settings/*` (one file per section) behind `/settings/[section]` routes: grouped left nav + settings search (desktop), chip bar (mobile), role gating from ONE `components/settings/nav.ts`. `/settings?tab=` links still work.
+- **Duplicates removed:** legacy single-store Shopify credentials (now shown only when a tenant has NO store, as a "Move to Connected stores" card), WhatsApp status grid (folded into the number's Manage sheet), abandoned-cart settings spread over 3 cards (one Abandoned carts page), password in Profile (→ Security), Ad accounts stub tab (→ Integrations tile).
+- **Moved:** branding/timezone → General; tracking page → own page; notification sound → Notifications; knowledge base → own page (agents see only this + account); WhatsApp page is owner/admin only now.
+- **New:** real brand logos (`components/icons/brand-logo.tsx` + `public/brands/*.png`), courier/store logo tiles with side sheets (`ui/side-sheet.tsx`), `ui/switch.tsx`, sticky `ui/save-bar.tsx`, store health (write_products/write_inventory), Calling "Check & re-sync", Billing + Attendance shortcuts, Integrations hub.
+- **City → courier grid:** `GET /api/settings/couriers/city-performance` (`CityMappingService.performance`, settled parcels 21–180 d, rtoSql, 5-min cache) → delivery-rate cells, ★ best pick (≥30 parcels), "better available" (≥5 pts), unmapped value, review-&-apply sheet, bulk bar, CSV import/export.
+
+**RapidXpk courier — 6th courier (2026-11-16):** migration `20261116000000_courier_type_rapidxpk` (auto-applies). Preview: https://claude.ai/artifact/QngvUEgUYsSPWpKkesNiKY
 - Adapter: book with external_id = order # without '#' (adopt-or-suffix check), cancel, tracking + synthesised timeline, change feed; status map incl. rto→failed.
 - Settings: key validated on save; CodesApp registers its webhook with RapidXpk and stores the signing secret; cities served → city mapping; TEST/LIVE badge + webhook status card + Re-register.
 - Webhook receiver: HMAC + timestamp check on the raw body, delivery-id dedupe, immediate 200 + background processing. RapidXpk `order.cancelled` releases the order back to To-book.

@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { CourierType } from '@prisma/client';
+import { CourierType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { COURIER_TYPES } from './courier-registry.service';
 import { likePrefix } from '../../common/utils/search';
+import { CacheService } from '../../common/services/cache.service';
+import { rtoSql } from '../../common/utils/shipment-outcome';
 
 function normalizeCity(city: string): string {
   return city.trim().toLowerCase();
@@ -27,7 +29,133 @@ export interface CourierSuggestion {
  */
 @Injectable()
 export class CityMappingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: CacheService,
+  ) {}
+
+  /**
+   * How each courier has actually performed in each of the tenant's order
+   * cities — drives the Settings → Couriers "City → courier" grid (delivery
+   * rate per cell + "best pick").
+   *
+   * - City key = `LOWER(TRIM(shopify_orders.city))`, the SAME key `coverage()`
+   *   uses as `cityName`, so the frontend joins the two exactly.
+   * - Only SETTLED parcels count: booked 21–180 days ago (returns take ~14 d to
+   *   come back; recent parcels would inflate the rate — same rule as Growth's
+   *   `SETTLE_DAYS`). A parcel is a return per the app-wide `rtoSql` rule;
+   *   cancelled-before-dispatch (no receipt) and `address_issue` are excluded
+   *   (not courier outcomes). Manual shipments are excluded (no courier).
+   * - `rate` = delivered ÷ (delivered + returned) over those settled parcels.
+   * - Also returns each city's 90-day order count + value (non-cancelled) so
+   *   the UI can rank unmapped cities by money at stake.
+   * Read-only, cached 5 min per tenant.
+   */
+  async performance(companyId: number): Promise<{
+    windowDays: { from: number; to: number };
+    cities: Array<{
+      cityName: string;
+      orders90d: number;
+      value90d: number;
+      couriers: Array<{
+        courierType: CourierType;
+        parcels: number;
+        delivered: number;
+        returned: number;
+        rate: number | null;
+      }>;
+    }>;
+  }> {
+    const key = `city-perf:${companyId}`;
+    const hit = this.cache.get<Awaited<ReturnType<CityMappingService['performance']>>>(key);
+    if (hit) return hit;
+
+    const SETTLE_DAYS = 21;
+    const WINDOW_DAYS = 180;
+    const n = (v: bigint | number | null | undefined) => (v == null ? 0 : Number(v));
+
+    type PerfRow = {
+      city: string;
+      courier: CourierType;
+      delivered: bigint | number;
+      returned: bigint | number;
+    };
+    const perf = await this.prisma.$queryRaw<PerfRow[]>(Prisma.sql`
+      SELECT LOWER(TRIM(o.city)) AS city, s.courier_type AS courier,
+        SUM(s.status = 'delivered' AND s.received_at IS NULL) AS delivered,
+        SUM(${Prisma.raw(rtoSql('s'))}) AS returned
+      FROM shipments s
+      JOIN shopify_orders o
+        ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+      WHERE s.company_id = ${companyId}
+        AND s.courier_type <> 'manual'
+        AND s.booked_at >= NOW() - INTERVAL ${WINDOW_DAYS} DAY
+        AND s.booked_at <  NOW() - INTERVAL ${SETTLE_DAYS} DAY
+        AND o.city IS NOT NULL AND TRIM(o.city) <> ''
+        AND ((s.status = 'delivered' AND s.received_at IS NULL) OR ${Prisma.raw(rtoSql('s'))})
+      GROUP BY LOWER(TRIM(o.city)), s.courier_type
+    `);
+
+    type ValRow = { city: string; orders: bigint | number; value: number | string | null };
+    const vals = await this.prisma.$queryRaw<ValRow[]>(Prisma.sql`
+      SELECT LOWER(TRIM(o.city)) AS city, COUNT(*) AS orders,
+        COALESCE(SUM(o.total_price), 0) AS value
+      FROM shopify_orders o
+      WHERE o.company_id = ${companyId}
+        AND o.cancelled_at IS NULL
+        AND o.shopify_created_at >= NOW() - INTERVAL 90 DAY
+        AND o.city IS NOT NULL AND TRIM(o.city) <> ''
+      GROUP BY LOWER(TRIM(o.city))
+    `);
+
+    const byCity = new Map<
+      string,
+      {
+        cityName: string;
+        orders90d: number;
+        value90d: number;
+        couriers: Array<{
+          courierType: CourierType;
+          parcels: number;
+          delivered: number;
+          returned: number;
+          rate: number | null;
+        }>;
+      }
+    >();
+    const entry = (city: string) => {
+      let e = byCity.get(city);
+      if (!e) {
+        e = { cityName: city, orders90d: 0, value90d: 0, couriers: [] };
+        byCity.set(city, e);
+      }
+      return e;
+    };
+    for (const v of vals) {
+      const e = entry(v.city);
+      e.orders90d = n(v.orders);
+      e.value90d = Math.round(Number(v.value ?? 0));
+    }
+    for (const p of perf) {
+      const delivered = n(p.delivered);
+      const returned = n(p.returned);
+      const parcels = delivered + returned;
+      entry(p.city).couriers.push({
+        courierType: p.courier,
+        parcels,
+        delivered,
+        returned,
+        rate: parcels ? delivered / parcels : null,
+      });
+    }
+
+    const out = {
+      windowDays: { from: WINDOW_DAYS, to: SETTLE_DAYS },
+      cities: Array.from(byCity.values()),
+    };
+    this.cache.set(key, out, 300);
+    return out;
+  }
 
   /** Resolve a single courier's city code for a destination city. Throws
    *  nothing — returns null when unresolved so callers can decide (throw for
