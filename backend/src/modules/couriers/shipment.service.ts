@@ -3308,6 +3308,16 @@ export class ShipmentService implements OnModuleInit {
    * All destructive steps are best-effort/non-throwing so one failing step
    * (e.g. Shopify already-cancelled) never blocks the others.
    */
+  /** Refresh every open Orders board for a tenant (socket `orders.changed`).
+   *  Used by paths outside this service that move an order between lanes. */
+  notifyOrdersChanged(companyId: number): void {
+    try {
+      this.gateway.emitOrdersChanged(companyId);
+    } catch {
+      /* a socket failure never blocks a status change */
+    }
+  }
+
   /**
    * Early-warning blacklist on a FAILED delivery — TAG ONLY. The moment a
    * courier reports the first 'failed' status (NOT attempted, NOT a return), add
@@ -4041,6 +4051,8 @@ export class ShipmentService implements OnModuleInit {
       // Trax documents a field limit (190 chars), which its adapter enforces;
       // PostEx/Leopards/Rocket document none, so they get the full description.
       let itemsDescription = order?.lineItemsSummary ?? '';
+      // Structured lines for couriers that take items[] (RapidXpk).
+      let items: Array<{ sku?: string; name: string; qty: number }> | undefined;
       try {
         const rawLi: unknown =
           typeof mirror?.line_items === 'string'
@@ -4054,6 +4066,16 @@ export class ShipmentService implements OnModuleInit {
           if (sum > 0) totalQuantity = sum;
           const desc = formatLineItemsSummary(rawLi as SummaryLineItem[]);
           if (desc) itemsDescription = desc;
+          items = (rawLi as Array<Record<string, unknown>>)
+            .map((li) => {
+              const title = String(li?.title ?? li?.name ?? '').trim();
+              const variant = String(li?.variantTitle ?? li?.variant_title ?? '').trim();
+              const sku = String(li?.sku ?? '').trim();
+              const name = variant && variant !== 'Default Title' ? `${title} - ${variant}` : title;
+              return { ...(sku ? { sku } : {}), name, qty: Number(li?.quantity) || 1 };
+            })
+            .filter((li) => li.name);
+          if (!items.length) items = undefined;
         }
       } catch {
         // Malformed line_items JSON → fall back to the stored summary + default (1).
@@ -4076,6 +4098,7 @@ export class ShipmentService implements OnModuleInit {
         email: mirror?.email ?? undefined,
         totalPrice,
         totalQuantity,
+        items,
       });
 
       trackingNumber = result.trackingNumber;
@@ -4092,6 +4115,12 @@ export class ShipmentService implements OnModuleInit {
           courier_city_code: cityCode,
           courier_slip_link: slipLink ?? undefined,
           booked_at: new Date(),
+          // RapidXpk: keep the booking reply (carries external_id + tracking_url,
+          // which its label + loadsheet print). Later webhooks overwrite it with
+          // the same-shaped order body.
+          ...(shipment.courier_type === 'rapidxpk' && result.raw && typeof result.raw === 'object'
+            ? { raw_last_webhook: result.raw as object }
+            : {}),
         },
       });
     }

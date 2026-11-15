@@ -30,6 +30,7 @@ const cmarkBg: Record<string, string> = {
   postex: '#2a9d5c',
   rocket: '#2f8fd6',
   mnp: '#c2782a',
+  rapidxpk: '#111311',
 };
 
 export default function ReturnsHistoryPage() {

@@ -9,6 +9,9 @@ import { buildMnpSlipPdf, MnpSlipData } from './mnp-slip.util';
 import { buildRocketSlipSheetPdf, RocketSlipData } from './rocket-slip.util';
 import { MnpCredentials } from './adapters/mnp.adapter';
 import { RocketCredentials } from './adapters/rocket.adapter';
+import { RapidxpkCredentials } from './adapters/rapidxpk.adapter';
+import { loadRapidxpkParcels } from './rapidxpk-docs';
+import { buildRapidxpkLabelsPdf } from './rapidxpk-slip.util';
 
 export interface GeneratedLabel {
   shipmentId: number;
@@ -179,6 +182,29 @@ export class CourierOpsService {
       return { courier: COURIER_DISPLAY_NAME[courier], labels };
     }
 
+    // RapidXpk has no label API — print RapidXpk's own label spec, one PDF per
+    // parcel, saved to media and served like any other label.
+    if (courier === 'rapidxpk') {
+      const creds = (await this.registry.getCredentials(companyId, courier).catch(() => null)) as
+        | RapidxpkCredentials
+        | null;
+      const parcels = await loadRapidxpkParcels(
+        this.prisma,
+        companyId,
+        shipments.map((s) => s.courier_tracking_number as string),
+        creds?.service,
+      );
+      const idByTn = new Map(shipments.map((s) => [s.courier_tracking_number as string, s.id]));
+      for (const p of parcels) {
+        const url = this.savePdf(await buildRapidxpkLabelsPdf([p]), companyId);
+        if (url) labels.push({ shipmentId: idByTn.get(p.orderId) as number, trackingNumber: p.orderId, url });
+      }
+      if (!labels.length) {
+        throw new BadRequestException('Could not build any RapidXpk labels for the selected parcels.');
+      }
+      return { courier: COURIER_DISPLAY_NAME[courier], labels };
+    }
+
     // M&P has NO label/AWB API — we generate the slip ourselves (one PDF per
     // parcel), saved to media and served like any other label.
     if (courier === 'mnp') {
@@ -328,6 +354,25 @@ export class CourierOpsService {
       throw new BadRequestException(
         'Leopards slips come as a single combined file — use its own slip links / loadsheet.',
       );
+    }
+
+    // RapidXpk: its own label spec, stacked as many per A4 as fit.
+    if (courier === 'rapidxpk') {
+      const creds = (await this.registry.getCredentials(companyId, courier).catch(() => null)) as
+        | RapidxpkCredentials
+        | null;
+      const parcels = await loadRapidxpkParcels(
+        this.prisma,
+        companyId,
+        shipments.map((s) => s.courier_tracking_number as string),
+        creds?.service,
+      );
+      if (!parcels.length) {
+        throw new BadRequestException('Could not build any RapidXpk labels for the selected parcels.');
+      }
+      const url = this.savePdf(await buildRapidxpkLabelsPdf(parcels), companyId);
+      if (!url) throw new BadRequestException('Failed to build the label sheet.');
+      return { courier: COURIER_DISPLAY_NAME[courier], url, parcels: parcels.length };
     }
 
     // M&P: generate each parcel's slip ourselves, then 2-up onto A4 (each slip is

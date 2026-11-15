@@ -45,6 +45,9 @@ import {
   getTraxPickupAddresses,
   getMnpLocations,
   seedMnpCities,
+  getRapidxpkWebhook,
+  registerRapidxpkWebhook,
+  type RapidxpkWebhookStatus,
   getCityCoverage,
   bulkSetDefaultCourier,
   clearDefaultCourier,
@@ -3996,8 +3999,9 @@ function CourierCredentialCard({
 
     setBusy(true);
     try {
-      await setCourierCredentials(courierType, payload);
+      const res = await setCourierCredentials(courierType, payload);
       toastSuccess(`${COURIER_LABELS[courierType]} credentials saved`);
+      if (res?.webhookError) toastError(res.webhookError);
       setValues({});
       setOpen(false);
       onSaved();
@@ -4087,7 +4091,9 @@ function CourierCredentialCard({
         </span>
       </div>
 
-      {webhookUrl && (
+      {courierType === 'rapidxpk' && row?.configured && <RapidxpkWebhookPanel />}
+
+      {webhookUrl && courierType !== 'rapidxpk' && (
         <div className="mt-3">
           <CopyField label="Tracking webhook URL" value={webhookUrl} />
           <p className="text-xs text-gray-500 mt-1">
@@ -4297,6 +4303,91 @@ function CourierCredentialCard({
         onConfirm={remove}
         onCancel={() => setConfirmDisconnect(false)}
       />
+    </div>
+  );
+}
+
+// RapidXpk: CodesApp registers its webhook with RapidXpk itself (on save), so
+// instead of a "give this URL to the courier" field we show TEST/LIVE mode, the
+// registration state, RapidXpk's own last-success/last-error, and a Re-register.
+function RapidxpkWebhookPanel() {
+  const { success: toastSuccess, error: toastError } = useToast();
+  const [st, setSt] = useState<RapidxpkWebhookStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    getRapidxpkWebhook()
+      .then(setSt)
+      .catch(() => setSt(null));
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const remote = (st?.remote ?? null) as Record<string, unknown> | null;
+  const pick = (...keys: string[]) => {
+    for (const k of keys) {
+      const v = remote?.[k];
+      if (v != null && v !== '') return String(v);
+    }
+    return null;
+  };
+  const lastOk = pick('last_success_at', 'last_succeeded_at', 'last_delivery_at');
+  const lastErr = pick('last_error', 'last_failure_reason', 'last_failed_at');
+
+  const reRegister = async () => {
+    setBusy(true);
+    try {
+      await registerRapidxpkWebhook();
+      toastSuccess('RapidXpk webhook registered — new signing secret saved');
+      load();
+    } catch (e) {
+      toastError(e instanceof ApiError ? e.userMessage : 'Webhook registration failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        {st?.mode === 'test' && (
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+            TEST KEY · orders never dispatch
+          </span>
+        )}
+        {st?.mode === 'live' && (
+          <span className="rounded-full bg-gray-900 px-2 py-0.5 text-xs font-semibold text-lime-300">
+            LIVE KEY
+          </span>
+        )}
+        <span
+          className={cn(
+            'rounded-full px-2 py-0.5 text-xs font-semibold',
+            st?.registered ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700',
+          )}
+        >
+          {st?.registered ? 'Status webhook registered' : 'Status webhook not registered'}
+        </span>
+      </div>
+      {st?.url && <p className="mt-2 break-all font-mono text-xs text-gray-600">{st.url}</p>}
+      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+        <dt className="text-gray-500">Last delivery</dt>
+        <dd className="text-gray-800">{lastOk ? fmtDateTime(lastOk) : '—'}</dd>
+        <dt className="text-gray-500">Last error</dt>
+        <dd className="text-gray-800">{st?.remoteError || lastErr || 'None'}</dd>
+        <dt className="text-gray-500">Catch-up sync</dt>
+        <dd className="text-gray-800">
+          {st?.syncCursor?.since ? `up to ${fmtDateTime(st.syncCursor.since)}` : 'not run yet'}
+        </dd>
+      </dl>
+      <button
+        type="button"
+        onClick={reRegister}
+        disabled={busy}
+        className="mt-3 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+      >
+        {busy ? 'Registering…' : 'Re-register webhook'}
+      </button>
     </div>
   );
 }

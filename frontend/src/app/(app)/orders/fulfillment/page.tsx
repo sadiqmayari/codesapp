@@ -1463,6 +1463,7 @@ function ManifestsPanel({
     rocket: '#0F766E',
     mnp: '#BE123C',
     manual: '#475569',
+    rapidxpk: '#111311',
   };
 
   const ManifestRow = ({ b }: { b: LoadsheetBatch }) => {

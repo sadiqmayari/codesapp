@@ -7,6 +7,8 @@ import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyService } from '../integrations/shopify/shopify.service';
 import { ShipmentService } from './shipment.service';
 import { CourierOpsService } from './courier-ops.service';
+import { ShipmentTrackingService } from './shipment-tracking.service';
+import { CourierChangeCursor } from './adapters/courier-adapter.interface';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { SHIPMENT_STATUS_TO_SHOPIFY_EVENT } from './couriers.constants';
 import { isReturnedToShipper } from './adapters/return-status.util';
@@ -78,6 +80,7 @@ export class CourierStatusSyncService implements OnModuleInit, OnModuleDestroy {
     private readonly shopifyFulfillment: ShopifyFulfillmentClient,
     private readonly shipments: ShipmentService,
     private readonly courierOps: CourierOpsService,
+    private readonly tracking: ShipmentTrackingService,
   ) {}
 
   private schedulerTimer?: ReturnType<typeof setInterval>;
@@ -123,6 +126,77 @@ export class CourierStatusSyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Replay each active courier's change feed (adapter.listChanges) through
+   * ShipmentTrackingService.handleWebhookItem, resuming from
+   * courier_credentials.sync_cursor and saving the cursor after every run.
+   * Returns the couriers whose feed succeeded (their per-parcel poll is
+   * skipped). Never throws.
+   */
+  private async runChangeFeeds(companyId: number): Promise<Set<CourierType>> {
+    const ok = new Set<CourierType>();
+    const active = await this.registry.getActiveCouriers(companyId).catch(() => [] as CourierType[]);
+    for (const ct of active) {
+      const adapter = this.registry.getAdapter(ct);
+      if (!adapter.listChanges) continue;
+      try {
+        const row = await this.prisma.courierCredential.findUnique({
+          where: { company_id_courier_type: { company_id: companyId, courier_type: ct } },
+          select: { id: true, sync_cursor: true },
+        });
+        const creds = await this.registry.getCredentials(companyId, ct);
+        if (!row || !creds) continue;
+        let cursor = row.sync_cursor as unknown as CourierChangeCursor | null;
+        if (!cursor?.since) {
+          // First run: start at the oldest still-open parcel's booking (else 14d).
+          const oldest = await this.prisma.shipment.findFirst({
+            where: {
+              company_id: companyId,
+              courier_type: ct,
+              status: { in: NON_TERMINAL },
+              booked_at: { not: null },
+            },
+            orderBy: { booked_at: 'asc' },
+            select: { booked_at: true },
+          });
+          const start = oldest?.booked_at ?? new Date(Date.now() - 14 * 24 * 3600 * 1000);
+          cursor = { since: start.toISOString(), afterId: 0 };
+        }
+        let hasMore = true;
+        let applied = 0;
+        // A run walks at most a few feed pulls; hasMore across pulls continues.
+        for (let round = 0; round < 3 && hasMore; round++) {
+          const page = await adapter.listChanges(creds, cursor);
+          for (const item of page.items) {
+            await this.tracking
+              .handleWebhookItem(companyId, ct, item)
+              .then(() => applied++)
+              .catch((e) =>
+                this.logger.warn(
+                  `${ct} change-feed item failed (company ${companyId}): ${(e as Error)?.message ?? e}`,
+                ),
+              );
+          }
+          cursor = page.cursor;
+          hasMore = page.hasMore;
+          await this.prisma.courierCredential.update({
+            where: { id: row.id },
+            data: { sync_cursor: cursor as unknown as object },
+          });
+        }
+        ok.add(ct);
+        this.logger.log(
+          `${ct} change feed (company ${companyId}): ${applied} change(s) applied, cursor ${cursor.since}#${cursor.afterId ?? 0}${hasMore ? ' (more pending)' : ''}.`,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `${ct} change feed failed (company ${companyId}) — falling back to per-parcel poll: ${(err as Error)?.message ?? err}`,
+        );
+      }
+    }
+    return ok;
+  }
+
+  /**
    * Scheduler + cron entrypoint — enqueue a sync for every company with active
    * couriers whose per-tenant cadence has elapsed. Gated by
    * companies.courier_sync_interval_minutes (?? DEFAULT) vs courier_sync_last_at,
@@ -165,8 +239,14 @@ export class CourierStatusSyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   async runSync(companyId: number): Promise<void> {
+    // Phase 0 — couriers with a "changes since" feed (RapidXpk): replay every
+    // change through the webhook handler from the saved cursor. Their parcels
+    // are then SKIPPED in the per-parcel poll below; if the feed fails, they
+    // fall back to the per-parcel poll this run.
+    const feedOk = await this.runChangeFeeds(companyId);
+
     const failedCutoff = new Date(Date.now() - FAILED_REPOLL_MAX_AGE_MS);
-    const shipments = await this.prisma.shipment.findMany({
+    const allShipments = await this.prisma.shipment.findMany({
       where: {
         company_id: companyId,
         OR: [
@@ -193,6 +273,7 @@ export class CourierStatusSyncService implements OnModuleInit, OnModuleDestroy {
       },
       take: 5000,
     });
+    const shipments = allShipments.filter((s) => !feedOk.has(s.courier_type));
     if (!shipments.length) {
       this.logger.log(`Status sync (company ${companyId}): nothing non-terminal.`);
       return;
@@ -363,6 +444,12 @@ export class CourierStatusSyncService implements OnModuleInit, OnModuleDestroy {
           // status; freeing an order for re-booking stays a deliberate human action
           // (Cancel-booking button), never an automatic reaction to a courier status.
           if (mapped === 'cancelled') {
+            // EXCEPTION — RapidXpk cancels pre-dispatch on its own side (it
+            // confirms orders with the customer). Release to To-book, same as
+            // the webhook path. Only reached when its change feed failed.
+            if (s.courier_type === 'rapidxpk') {
+              await this.tracking.releaseCourierCancelled(companyId, s.id, s.status);
+            }
             return;
           }
 

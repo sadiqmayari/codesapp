@@ -20,6 +20,7 @@ export const COURIER_DISPLAY_NAME: Record<CourierType, string> = {
   rocket: 'Rocket',
   mnp: 'M&P',
   manual: 'Manual',
+  rapidxpk: 'RapidXpk',
 };
 
 /**
@@ -35,6 +36,7 @@ export const COURIER_TRACKING_URL: Record<CourierType, ((tn: string) => string) 
   rocket: (tn) => `https://client.rocketcourier.pk/tracking?trackingno=${encodeURIComponent(tn)}`,
   mnp: (tn) => `https://www.mulphilog.com/tracking/${encodeURIComponent(tn)}`,
   manual: null, // no courier portal — tracking (if any) is whatever the agent typed
+  rapidxpk: (tn) => `https://rapidxpk.com/track.html?tn=${encodeURIComponent(tn)}`,
 };
 
 export function courierTrackingUrl(courier: CourierType, tn: string): string | undefined {

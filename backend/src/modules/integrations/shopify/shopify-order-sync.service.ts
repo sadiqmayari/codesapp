@@ -616,6 +616,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     if (t.includes('leopard')) return 'leopards';
     if (t.includes('rocket')) return 'rocket';
     if (t.includes('m&p') || t.includes('mnp') || t.includes('muller')) return 'mnp';
+    if (/rapid\s*x/.test(t)) return 'rapidxpk';
     return null;
   }
 

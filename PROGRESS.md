@@ -6,6 +6,14 @@
 
 ## Current Status
 
+**RapidXpk courier — 6th courier (2026-11-16, latest):** migration `20261116000000_courier_type_rapidxpk` (auto-applies). Preview: https://claude.ai/artifact/QngvUEgUYsSPWpKkesNiKY
+- Adapter: book with external_id = order # without '#' (adopt-or-suffix check), cancel, tracking + synthesised timeline, change feed; status map incl. rto→failed.
+- Settings: key validated on save; CodesApp registers its webhook with RapidXpk and stores the signing secret; cities served → city mapping; TEST/LIVE badge + webhook status card + Re-register.
+- Webhook receiver: HMAC + timestamp check on the raw body, delivery-id dedupe, immediate 200 + background processing. RapidXpk `order.cancelled` releases the order back to To-book.
+- Catch-up sync via `GET /v1/orders?updated_since` cursor (`courier_credentials.sync_cursor`), per-parcel poll fallback.
+- Label + loadsheet PDFs in RapidXpk's own sample format (COD vs "PREPAID - DO NOT COLLECT CASH"; one loadsheet per brand with totals).
+- Not done: COD statement parser (no payout file yet), RapidXpk bulk endpoint (queue books one at a time). End-to-end test needs an `rxp_test_` key.
+
 **Search & filter overhaul — app-wide (2026-11-13, latest):** NO migration. Audit (88 findings) + preview: https://claude.ai/artifact/6T3CxvftQxCorKtBuervK5
 - **Foundation:** backend `common/utils/search.ts` (escaped LIKE, `classifySearch`, `clampQuery`, spec); frontend `SearchInput`, `filter-bar` (`StatusChips`/`FilterSelect`/`ActiveFilters`/`DateRangeFilter`), `NoResults`, `lib/use-list-query.ts`, `apiFetch({signal})`, `zonedDayRange` + tenant-zoned `periodRange`.
 - **Bugs fixed:** phone search in every format (inbox, calls, tickets, Orders board, payments, abandoned, agent/ad orders, PR); Orders board courier+sub-tab clobber, 20k gid cap, unstable paging, Select-all ignoring the sub-tab, exact order # first, URL-persisted filters, stale-response guards, filtered empty state; pending payments search/store + stale guard; shortfalls full scan + "N cleared hidden"; super-admin clients/audit/billing server-side; tickets server pagination + search + agent pool RBAC; attendance/analytics/leaderboard/orders-list/agents tenant-clock dates; inbox label exact match + `unassigned=false` bug + × clear + single initial load; calls stuck spinner; Ctrl+F from the composer + transcripts; finance tracking lookup; multi-store duplicate order numbers; product search (store, drafts, partial words); bulk RTO receive store-ambiguity guard.

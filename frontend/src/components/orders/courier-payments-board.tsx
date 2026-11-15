@@ -823,6 +823,7 @@ const COURIER_ACCENT: Record<string, string> = {
   postex: 'bg-violet-50 text-violet-700',
   rocket: 'bg-amber-50 text-amber-700',
   mnp: 'bg-slate-100 text-slate-600',
+  rapidxpk: 'bg-lime-100 text-lime-800',
 };
 const monthLabel = (p?: string | null): string => {
   const m = /^(\d{4})-(\d{2})$/.exec(p ?? '');

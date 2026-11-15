@@ -2,19 +2,25 @@ import {
   Body,
   Controller,
   Headers,
+  Logger,
   HttpCode,
   HttpStatus,
   NotFoundException,
   Param,
   Post,
+  RawBodyRequest,
+  Req,
   UnauthorizedException,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { CourierType } from '@prisma/client';
 import * as crypto from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EncryptionService } from '../../common/services/encryption.service';
 import { ShipmentTrackingService } from './shipment-tracking.service';
 import { COURIER_TYPES } from './courier-registry.service';
+import { CacheService } from '../../common/services/cache.service';
+import { verifyRapidxpkSignature } from './adapters/rapidxpk.adapter';
 
 /**
  * Per-tenant courier webhook receiver: /webhooks/couriers/:courier/:webhookKey.
@@ -39,10 +45,13 @@ import { COURIER_TYPES } from './courier-registry.service';
  */
 @Controller('webhooks/couriers')
 export class CourierWebhookController {
+  private readonly logger = new Logger(CourierWebhookController.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly tracking: ShipmentTrackingService,
     private readonly encryption: EncryptionService,
+    private readonly cache: CacheService,
   ) {}
 
   /**
@@ -84,6 +93,7 @@ export class CourierWebhookController {
     @Param('webhookKey') webhookKey: string,
     @Headers('authorization') authorization: string | undefined,
     @Body() body: unknown,
+    @Req() req: RawBodyRequest<Request>,
   ) {
     const courierType = courierParam as CourierType;
     if (!COURIER_TYPES.includes(courierType)) {
@@ -96,6 +106,12 @@ export class CourierWebhookController {
       throw new NotFoundException('Invalid webhook URL.');
     }
 
+    // RapidXpk signs every delivery (HMAC over the RAW body) and needs a 2xx
+    // within 12s — verify, de-dup, ACK, then process in the background.
+    if (courierType === 'rapidxpk') {
+      return this.receiveRapidxpk(cred.company_id, cred.webhook_secret_encrypted, body, req);
+    }
+
     // Bearer-token check: enforced only when this tenant has a `webhookToken`
     // saved in its courier credentials. Absent token = accept (URL key remains
     // the guard) so pushes work before it's set.
@@ -106,6 +122,63 @@ export class CourierWebhookController {
     }
 
     await this.dispatch(cred.company_id, courierType, body);
+    return { received: true };
+  }
+
+  /**
+   * RapidXpk delivery. Signature = "sha256=" + HMAC(secret, `${ts}.${rawBody}`),
+   * timestamp within 5 min. `X-RapidXpk-Delivery` is stable across retries, so a
+   * repeat is acknowledged and dropped. Processing runs AFTER the 200 so a slow
+   * Shopify push can never blow RapidXpk's 12s budget; a lost event is caught up
+   * by the change-feed sync (CourierStatusSyncService).
+   */
+  private async receiveRapidxpk(
+    companyId: number,
+    secretEncrypted: string | null,
+    body: unknown,
+    req: RawBodyRequest<Request>,
+  ) {
+    let secret = '';
+    if (secretEncrypted) {
+      try {
+        secret = this.encryption.decrypt(secretEncrypted);
+      } catch {
+        secret = '';
+      }
+    }
+    if (!secret) {
+      throw new UnauthorizedException('RapidXpk webhook not registered for this account.');
+    }
+    const header = (n: string) => {
+      const v = req.headers[n];
+      return Array.isArray(v) ? v[0] : v;
+    };
+    const raw = req.rawBody ?? Buffer.from(JSON.stringify(body ?? {}));
+    if (
+      !verifyRapidxpkSignature(
+        secret,
+        header('x-rapidxpk-timestamp'),
+        header('x-rapidxpk-signature'),
+        raw,
+      )
+    ) {
+      throw new UnauthorizedException('Invalid RapidXpk signature.');
+    }
+
+    const deliveryId = header('x-rapidxpk-delivery');
+    if (deliveryId) {
+      const key = `rapidxpk:delivery:${companyId}:${deliveryId}`;
+      if (this.cache.get<boolean>(key)) return { received: true, duplicate: true };
+      this.cache.set(key, true, 24 * 3600);
+    }
+
+    void this.tracking.handleWebhookItem(companyId, 'rapidxpk', body).catch((err) =>
+      this.logger.error(
+        `RapidXpk webhook processing failed (company ${companyId}, delivery ${deliveryId ?? '?'}): ${
+          (err as Error)?.message ?? err
+        }`,
+      ),
+    );
     return { received: true };
   }
 

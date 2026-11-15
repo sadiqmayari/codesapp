@@ -196,6 +196,7 @@ enum CourierType {
   // "fulfill manually"). Never routed through an adapter; excluded from
   // COURIER_TYPES/bookable lists.
   manual
+  rapidxpk
 }
 
 enum ShipmentStatus {
@@ -1982,6 +1983,10 @@ model CourierCredential {
   // this; it does NOT touch is_active, so deactivating stops new-order routing
   // while existing orders keep syncing. See getBookableCouriers().
   booking_enabled          Boolean     @default(true)
+  // Change-cursor for couriers with a "changes since" pull (RapidXpk:
+  // {since: ISO, afterId: number}). Null = never synced. Kept OUT of the
+  // encrypted blob because that is rewritten on every settings save.
+  sync_cursor              Json?
   created_at               DateTime    @default(now())
   updated_at               DateTime    @updatedAt
 

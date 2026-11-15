@@ -3,7 +3,7 @@ import { apiFetch, postMultipart } from '@/lib/api';
 // 'manual' = a Shopify-style manual fulfilment (no courier booking). It's a real
 // shipment courier_type but is NOT in COURIER_TYPES (never offered as a bookable
 // courier); the book modal exposes it as a separate "Manual" option.
-export type CourierType = 'trax' | 'leopards' | 'postex' | 'rocket' | 'mnp' | 'manual';
+export type CourierType = 'trax' | 'leopards' | 'postex' | 'rocket' | 'mnp' | 'manual' | 'rapidxpk';
 
 export type ShipmentStatus =
   | 'booked'
@@ -18,7 +18,7 @@ export type ShipmentStatus =
   | 'cancelled'
   | 'returned';
 
-export const COURIER_TYPES: CourierType[] = ['trax', 'leopards', 'postex', 'rocket', 'mnp'];
+export const COURIER_TYPES: CourierType[] = ['trax', 'leopards', 'postex', 'rocket', 'mnp', 'rapidxpk'];
 
 export const COURIER_LABELS: Record<CourierType, string> = {
   trax: 'Trax',
@@ -27,6 +27,7 @@ export const COURIER_LABELS: Record<CourierType, string> = {
   rocket: 'Rocket',
   mnp: 'M&P',
   manual: 'Manual',
+  rapidxpk: 'RapidXpk',
 };
 
 export const STATUS_LABELS: Record<ShipmentStatus, string> = {
@@ -244,7 +245,47 @@ export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
   ],
   // Manual fulfilment has no courier account — never shown in the credentials UI.
   manual: [],
+  rapidxpk: [
+    {
+      key: 'apiKey',
+      label: 'API key',
+      type: 'secret',
+      hint: 'rxp_test_… (orders never dispatch) or rxp_live_…. Checked with RapidXpk on save; the status webhook is registered for you.',
+    },
+    {
+      key: 'citiesServed',
+      label: 'Cities served',
+      type: 'text',
+      hint: 'Comma-separated, e.g. Karachi, Lahore. RapidXpk is only suggested for / bookable to these cities (they appear in City Mapping).',
+    },
+    {
+      key: 'service',
+      label: 'Service',
+      type: 'text',
+      optional: true,
+      default: 'STANDARD 24 HR',
+      hint: 'Sent with every order and printed on the RapidXpk label.',
+    },
+  ],
 };
+
+export interface RapidxpkWebhookStatus {
+  configured: boolean;
+  mode?: 'test' | 'live' | null;
+  registered?: boolean;
+  url?: string;
+  remote?: unknown;
+  remoteError?: string | null;
+  syncCursor?: { since?: string; afterId?: number } | null;
+}
+
+export function getRapidxpkWebhook() {
+  return apiFetch<RapidxpkWebhookStatus>('/settings/couriers/rapidxpk/webhook');
+}
+
+export function registerRapidxpkWebhook() {
+  return apiFetch<{ url: string }>('/settings/couriers/rapidxpk/register-webhook', { method: 'POST' });
+}
 
 export interface Shipment {
   id: number;
@@ -1797,7 +1838,7 @@ export function setCourierCredentials(
   courierType: CourierType,
   credentials: Record<string, string>,
 ) {
-  return apiFetch<{ courierType: CourierType; webhookUrl: string }>(
+  return apiFetch<{ courierType: CourierType; webhookUrl: string; webhookError?: string }>(
     `/settings/couriers/${courierType}`,
     { method: 'PUT', body: { credentials } },
   );

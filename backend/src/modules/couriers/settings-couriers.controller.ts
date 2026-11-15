@@ -28,6 +28,8 @@ import {
 import { TraxAdapter, TraxCredentials } from './adapters/trax.adapter';
 import { MnpAdapter, MnpCredentials } from './adapters/mnp.adapter';
 import { CityMappingService } from './city-mapping.service';
+import { RapidxpkSetupService } from './rapidxpk-setup.service';
+import { RapidxpkCredentials } from './adapters/rapidxpk.adapter';
 
 /**
  * Which credential keys are SECRET per courier. Secret keys are never echoed
@@ -43,6 +45,7 @@ const SECRET_CRED_KEYS: Record<CourierType, string[]> = {
   rocket: ['token'],
   mnp: ['password', 'webhookToken'],
   manual: [], // no credentials — not a real courier
+  rapidxpk: ['apiKey'],
 };
 import {
   SetCourierCredentialsDto,
@@ -67,6 +70,7 @@ export class SettingsCouriersController {
     private readonly encryption: EncryptionService,
     private readonly cityMapping: CityMappingService,
     private readonly registry: CourierRegistryService,
+    private readonly rapidxpk: RapidxpkSetupService,
   ) {}
 
   @Get()
@@ -225,6 +229,19 @@ export class SettingsCouriersController {
     return { seeded: data.length };
   }
 
+  /** RapidXpk webhook status card: TEST/LIVE mode, signing secret stored, and
+   *  RapidXpk's own last-success/last-error for our URL. */
+  @Get('rapidxpk/webhook')
+  async rapidxpkWebhook(@CurrentUser() user: { companyId: number }) {
+    return this.rapidxpk.status(user.companyId);
+  }
+
+  /** Re-register CodesApp's webhook with RapidXpk (issues a new signing secret). */
+  @Post('rapidxpk/register-webhook')
+  async rapidxpkRegisterWebhook(@CurrentUser() user: { companyId: number }) {
+    return this.rapidxpk.registerWebhook(user.companyId);
+  }
+
   @Put(':courierType')
   async setCredentials(
     @CurrentUser() user: { companyId: number },
@@ -261,6 +278,10 @@ export class SettingsCouriersController {
         merged[k] = val;
       }
     }
+    // RapidXpk: reject a bad key BEFORE saving (RapidXpk's own message).
+    if (courierType === 'rapidxpk') {
+      await this.rapidxpk.assertKeyValid(merged as unknown as RapidxpkCredentials);
+    }
     const credentialsEncrypted = this.encryption.encrypt(JSON.stringify(merged));
     const webhookSecretEncrypted = dto.webhookSecret
       ? this.encryption.encrypt(dto.webhookSecret)
@@ -281,10 +302,27 @@ export class SettingsCouriersController {
         is_active: true,
       },
     });
+    // RapidXpk: mirror cities served into city mapping, and (re)register our
+    // webhook when the key changed or no signing secret is stored yet. A
+    // registration failure never undoes the save — it's reported back so the
+    // settings card can offer "Re-register".
+    let webhookError: string | null = null;
+    if (courierType === 'rapidxpk') {
+      await this.rapidxpk.syncCities(user.companyId, merged.citiesServed);
+      const keyChanged = (base.apiKey ?? '') !== (merged.apiKey ?? '');
+      if (keyChanged || !row.webhook_secret_encrypted) {
+        try {
+          await this.rapidxpk.registerWebhook(user.companyId);
+        } catch (err) {
+          webhookError = (err as Error)?.message ?? 'Webhook registration failed.';
+        }
+      }
+    }
     return {
       courierType,
       configured: true,
       webhookUrl: `/webhooks/couriers/${courierType}/${row.webhook_key}`,
+      ...(webhookError ? { webhookError } : {}),
     };
   }
 

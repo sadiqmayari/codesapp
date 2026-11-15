@@ -96,6 +96,16 @@ function normalizeEvent(courierType: CourierType, body: any): NormalizedEvent | 
       reason: cmt ? String(cmt) : undefined,
     };
   }
+  if (courierType === 'rapidxpk') {
+    // RapidXpk webhook body AND each item of its `GET /v1/orders?updated_since`
+    // change feed share one shape: { order_id:"RXK-…", status, reason, … }.
+    if (!body?.order_id || !body?.status) return null;
+    return {
+      trackingNumber: String(body.order_id),
+      rawStatus: String(body.status),
+      reason: body.reason ? String(body.reason) : undefined,
+    };
+  }
   if (courierType === 'rocket') {
     // Rocket's status-webhook payload isn't in the published API doc, so accept
     // the common key spellings for the tracking ref and status. `shipped_ref`
@@ -234,6 +244,15 @@ export class ShipmentTrackingService {
     // no way to distinguish a booking-cancel, so we simply never populate it.
     // Every OTHER status is processed normally below.
     if (mapped === 'cancelled') {
+      // EXCEPTION — RapidXpk: it confirms every order with the customer itself
+      // and can cancel BEFORE the rider takes it. That is a real courier-side
+      // decision (not an echo of ours: our own cancel deletes the row first, so
+      // its echo never finds a shipment). Release the order back to To-book —
+      // unfulfil Shopify, strip tags, delete the row — exactly what the
+      // Cancel-booking button does, minus the courier call.
+      if (courierType === 'rapidxpk') {
+        await this.releaseCourierCancelled(companyId, shipment.id, shipment.status);
+      }
       return;
     }
 
@@ -388,6 +407,37 @@ export class ShipmentTrackingService {
     // WhatsApp delivery template for this event — no extra send code needed
     // here (see ShopifyService.DELIVERY_EVENTS / ShopifyOrderConfig.
     // delivery_notifications).
+  }
+
+  /**
+   * A courier cancelled a parcel on ITS side before dispatch (RapidXpk only).
+   * Frees the order back to To-book via the same path as the Cancel-booking
+   * button, skipping the courier call (it's already cancelled there). Only for
+   * pre-dispatch shipments — a cancel can't legitimately follow a pickup.
+   * Public so the pull-sync path can reuse it. Never throws.
+   */
+  async releaseCourierCancelled(
+    companyId: number,
+    shipmentId: number,
+    currentStatus: ShipmentStatus,
+  ): Promise<boolean> {
+    if (!['booked', 'ready_for_pickup'].includes(currentStatus)) {
+      this.logger.warn(
+        `Courier cancelled shipment ${shipmentId} but it is '${currentStatus}' (past pickup) — left as is.`,
+      );
+      return false;
+    }
+    try {
+      await this.courierOps.cancelBooking(companyId, shipmentId, { skipCourierCancel: true });
+      this.shipments.notifyOrdersChanged(companyId);
+      this.logger.log(`Courier-side cancel → shipment ${shipmentId} released to To-book (company ${companyId}).`);
+      return true;
+    } catch (err) {
+      this.logger.warn(
+        `Releasing courier-cancelled shipment ${shipmentId} failed: ${(err as Error)?.message ?? err}`,
+      );
+      return false;
+    }
   }
 
   /**

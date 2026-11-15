@@ -21,6 +21,9 @@ import {
   PicklistRow,
 } from './pdf.util';
 import { httpFetch } from './adapters/http.util';
+import { RapidxpkCredentials } from './adapters/rapidxpk.adapter';
+import { loadRapidxpkParcels, ymdInTz } from './rapidxpk-docs';
+import { buildRapidxpkLoadsheetPdf, toRapidxpkLoadsheets } from './rapidxpk-loadsheet.util';
 
 type BatchWithShipments = {
   id: number;
@@ -805,6 +808,11 @@ export class LoadsheetService implements OnModuleInit {
   ): Promise<Buffer | undefined> {
     const ships = batch.shipments.filter((s) => s.courier_tracking_number);
     if (!ships.length) return undefined;
+    // RapidXpk has no loadsheet API but a fixed loadsheet FORMAT (one sheet per
+    // brand: date, brand, total parcels, total COD + per-order rows).
+    if (batch.courier_type === 'rapidxpk') {
+      return this.buildRapidxpkLoadsheetFor(batch, ships.map((s) => s.courier_tracking_number as string));
+    }
     const [company, orders] = await Promise.all([
       this.prisma.company.findUnique({
         where: { id: batch.company_id },
@@ -846,6 +854,28 @@ export class LoadsheetService implements OnModuleInit {
       rows,
       currency,
     });
+  }
+
+  private async buildRapidxpkLoadsheetFor(
+    batch: BatchWithShipments,
+    trackingNumbers: string[],
+  ): Promise<Buffer | undefined> {
+    const creds = (await this.registry
+      .getCredentials(batch.company_id, 'rapidxpk')
+      .catch(() => null)) as RapidxpkCredentials | null;
+    const parcels = await loadRapidxpkParcels(
+      this.prisma,
+      batch.company_id,
+      trackingNumbers,
+      creds?.service,
+    );
+    if (!parcels.length) return undefined;
+    const company = await this.prisma.company.findUnique({
+      where: { id: batch.company_id },
+      select: { timezone: true },
+    });
+    const date = ymdInTz(batch.created_at, company?.timezone || 'Asia/Karachi');
+    return buildRapidxpkLoadsheetPdf(toRapidxpkLoadsheets(parcels, date));
   }
 
   private async processLoadsheetJob(payload: LoadsheetJobPayload): Promise<void> {

@@ -29,6 +29,11 @@ export interface BookShipmentInput {
   totalPrice?: number;
   /** Total units across the order's line items (Trax item_quantity). */
   totalQuantity?: number;
+  /** Structured line items (RapidXpk `items[]`). Couriers that only take a
+   *  description string ignore this and use `itemsDescription`. */
+  items?: Array<{ sku?: string; name: string; qty: number }>;
+  /** Free-text note shown to the rider (RapidXpk `notes`). Optional. */
+  notes?: string;
   /**
    * This parcel is a REPLACEMENT (a re-send for a returned/damaged/wrong order,
    * booked from a support ticket) — not a first delivery. Couriers that expose a
@@ -116,6 +121,25 @@ export type TrackingProbe =
     }
   | { kind: 'dead' } // ref no longer tracks at the courier (e.g. rerouted)
   | { kind: 'none' }; // reachable but nothing status-like / transient
+
+/** Resume point for a courier's "changes since" feed (RapidXpk). Stored in
+ *  courier_credentials.sync_cursor. */
+export interface CourierChangeCursor {
+  /** ISO timestamp — the courier's `updated_since`. */
+  since: string;
+  /** Tie-breaker id for changes sharing `since` (RapidXpk `after_id`). */
+  afterId?: number;
+}
+
+/** One run of a change feed: raw items (each in the courier's WEBHOOK body
+ *  shape, so they replay through ShipmentTrackingService.handleWebhookItem)
+ *  plus the cursor to save. */
+export interface CourierChangePage {
+  items: unknown[];
+  cursor: CourierChangeCursor;
+  /** True when the page cap was hit and more changes remain. */
+  hasMore: boolean;
+}
 
 /** One checkpoint in a parcel's tracking history (oldest → newest), normalized
  *  across couriers for the in-app tracking view. */
@@ -230,6 +254,14 @@ export interface CourierAdapter {
     creds: unknown,
     trackingNumber: string,
   ): Promise<TrackingProbe>;
+
+  /**
+   * Bulk "everything that changed since" pull (RapidXpk). When implemented the
+   * status-sync replays these items through the webhook handler and skips the
+   * per-parcel poll for this courier. Throws on a transport/API failure (the
+   * sync then falls back to per-parcel `queryTrackingResult`).
+   */
+  listChanges?(creds: unknown, cursor: CourierChangeCursor): Promise<CourierChangePage>;
 
   /**
    * Full checkpoint HISTORY (oldest → newest) for the in-app tracking view.

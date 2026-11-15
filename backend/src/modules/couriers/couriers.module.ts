@@ -8,6 +8,8 @@ import { LeopardsAdapter } from './adapters/leopards.adapter';
 import { PostexAdapter } from './adapters/postex.adapter';
 import { RocketAdapter } from './adapters/rocket.adapter';
 import { MnpAdapter } from './adapters/mnp.adapter';
+import { RapidxpkAdapter } from './adapters/rapidxpk.adapter';
+import { RapidxpkSetupService } from './rapidxpk-setup.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { CityMappingService } from './city-mapping.service';
 import { CityCanonicalizerService } from './city-canonicalizer.service';
@@ -41,6 +43,8 @@ import { CourierCronController } from './courier-cron.controller';
     PostexAdapter,
     RocketAdapter,
     MnpAdapter,
+    RapidxpkAdapter,
+    RapidxpkSetupService,
     CourierRegistryService,
     CityMappingService,
     CityCanonicalizerService,
