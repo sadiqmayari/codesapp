@@ -39,7 +39,7 @@ ALTER TABLE `ai_knowledge_chunks`
   ADD COLUMN `store_id` INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE `ai_knowledge_chunks`
   DROP INDEX `ai_knowledge_chunks_company_id_source_type_source_id_key`;
-CREATE UNIQUE INDEX `ai_knowledge_chunks_company_id_store_id_source_type_source_id_key`
+CREATE UNIQUE INDEX `ai_kc_scope_key`
   ON `ai_knowledge_chunks`(`company_id`, `store_id`, `source_type`, `source_id`);
 
 CREATE TABLE `ai_agent_profiles` (

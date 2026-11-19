@@ -1497,7 +1497,8 @@ model AiKnowledgeChunk {
 
   company Company @relation(fields: [company_id], references: [id])
 
-  @@unique([company_id, store_id, source_type, source_id])
+  // Explicit short name: the default exceeds MariaDB's 64-char identifier limit.
+  @@unique([company_id, store_id, source_type, source_id], map: "ai_kc_scope_key")
   @@index([company_id])
   @@map("ai_knowledge_chunks")
 }
