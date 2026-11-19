@@ -76,6 +76,7 @@ function build(opts: { windowOpen: boolean }) {
     companyStatus,
     {} as unknown as import('../ai/audio-transcription.service').AudioTranscriptionService,
     {} as unknown as import('../ai/ai-metering.service').AiMeteringService,
+    {} as unknown as import('../ai/ai-profile.service').AiProfileService,
     jobQueue,
   );
   return { service, prisma, metaClient, jobQueue, created };

@@ -6,7 +6,6 @@ import { TicketsModule } from '../../tickets/tickets.module';
 import { ShopifyService } from './shopify.service';
 import { ShopifyTokenService } from './shopify-token.service';
 import { ShopifyOrderSyncService } from './shopify-order-sync.service';
-import { AiAgentService } from './ai-agent.service';
 import { ShopifyController } from './shopify.controller';
 import { SettingsShopifyController } from './settings-shopify.controller';
 import { ShopifyTenantWebhookController } from './shopify-tenant-webhook.controller';
@@ -34,7 +33,6 @@ import { WooCommerceWebhookController } from '../commerce/woocommerce-webhook.co
     ShopifyService,
     ShopifyTokenService,
     ShopifyOrderSyncService,
-    AiAgentService,
     WooCommerceService,
     CommerceResolverService,
   ],
@@ -48,6 +46,8 @@ import { WooCommerceWebhookController } from '../commerce/woocommerce-webhook.co
     ShopifyTokenService,
     ShopifyOrderSyncService,
     CommerceResolverService,
+    // AiAgentModule: nightly per-store AI knowledge re-sync for Woo stores.
+    WooCommerceService,
   ],
   controllers: [
     ShopifyController,

@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Lock } from 'lucide-react';
+import { Lock, UserRound, Wand2, Headphones, Bot, BarChart3, BookOpen } from 'lucide-react';
+import { getAgentStatus, type AgentStatus } from '@/lib/ai-agent';
 import { ApiError } from '@/lib/api';
 import {
   aiGetSettings,
@@ -28,6 +29,15 @@ import {
 } from './shared';
 
 type Tier = 'default' | 'fast' | 'smart';
+
+const AGENT_LINKS = [
+  { href: '/settings/ai-profile', title: 'Profile & persona', sub: 'Industry, name, languages, currency', icon: UserRound },
+  { href: '/settings/ai-skills', title: 'Skills', sub: 'Orders, bookings, leads, knowledge', icon: Wand2 },
+  { href: '/settings/ai-handoff', title: 'Handoff & hours', sub: 'When a person takes over', icon: Headphones },
+  { href: '/settings/knowledge', title: 'Knowledge base', sub: 'FAQ, website, documents, products', icon: BookOpen },
+  { href: '/settings/ai-playground', title: 'Playground', sub: 'Test the agent safely', icon: Bot },
+  { href: '/settings/ai-performance', title: 'Performance', sub: 'Results, handoffs, cost', icon: BarChart3 },
+];
 interface AiForm {
   enabled: boolean;
   autoReply: boolean;
@@ -65,6 +75,7 @@ export function AiSection() {
   const toast = useToast();
   const [settings, setSettings] = useState<AiSettings | null>(null);
   const [usage, setUsage] = useState<AiUsage | null>(null);
+  const [status, setStatus] = useState<AgentStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [base, setBase] = useState<AiForm | null>(null);
@@ -73,7 +84,12 @@ export function AiSection() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [s, u] = await Promise.all([aiGetSettings(), aiGetUsage().catch(() => null)]);
+      const [s, u, st] = await Promise.all([
+        aiGetSettings(),
+        aiGetUsage().catch(() => null),
+        getAgentStatus().catch(() => null),
+      ]);
+      setStatus(st);
       setSettings(s);
       setBase(toForm(s));
       setForm(toForm(s));
@@ -161,7 +177,7 @@ export function AiSection() {
     {
       value: 'smart',
       title: 'High-accuracy',
-      note: 'Sharper on multi-product orders, tricky addresses and Roman Urdu.',
+      note: 'Sharper on multi-product orders, tricky addresses and mixed-language chats.',
       cost: `≈ $${est.highAccuracyPer1kRepliesUsd.toFixed(2)} / 1,000 replies`,
     },
     { value: 'default', title: 'Recommended', note: 'Follow the platform’s default quality.' },
@@ -178,10 +194,49 @@ export function AiSection() {
         </>
       }
     >
+      {status?.blocked && (
+        <Callout tone="danger" icon={<Lock size={15} />}>
+          {
+            {
+              platform_off: 'AI is temporarily paused across the platform. Replies resume automatically.',
+              plan: 'AI isn’t included in your plan.',
+              admin_disabled: 'AI has been turned off for your workspace by the platform. Contact support.',
+              tenant_disabled: 'AI is switched off for this workspace (toggle above).',
+              cap_reached:
+                'This month’s AI spend limit is reached — the AI is paused until next month or until the limit is raised.',
+            }[status.blocked]
+          }
+        </Callout>
+      )}
+      {status?.engine === 'shadow' && (
+        <Callout tone="info">
+          Your workspace is being upgraded to the new AI agent. It runs alongside your current AI and takes over once
+          it’s proven better — nothing for you to do.
+        </Callout>
+      )}
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {AGENT_LINKS.map((l) => (
+          <Link
+            key={l.href}
+            href={l.href}
+            className="flex items-start gap-2.5 rounded-xl border border-line bg-surface p-3 hover:bg-sunken"
+          >
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+              <l.icon size={16} />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-bold text-ink">{l.title}</span>
+              <span className="block text-xs text-muted">{l.sub}</span>
+            </span>
+          </Link>
+        ))}
+      </div>
+
       <SettingsCard title="This month" description="Usage resets on the 1st. Spend is what you’re billed.">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
-            ['Requests', (usage?.requests ?? 0).toLocaleString()],
+            ['AI requests', (usage?.requests ?? 0).toLocaleString()],
             ['Tokens', tokens.toLocaleString()],
             ['Spend', `$${billed.toFixed(2)}`],
             ['Cap', capUsd ? `$${capUsd.toFixed(2)}` : 'No cap'],
@@ -291,7 +346,7 @@ export function AiSection() {
         </SettingsCard>
 
         <SettingsCard title="Style & limits">
-          <FormField label="Brand voice" htmlFor="ai-tone" hint="Shapes how suggested replies and rewrites are written.">
+          <FormField label="Brand voice" htmlFor="ai-tone" hint="Used by suggested replies and rewrites. The auto-reply agent’s voice lives in Profile & persona.">
             <textarea
               id="ai-tone"
               value={form.tone}
@@ -303,7 +358,7 @@ export function AiSection() {
             />
           </FormField>
           <div className="grid gap-4 sm:grid-cols-2">
-            <FormField label="Default reply language" htmlFor="ai-lang">
+            <FormField label="Fallback reply language" htmlFor="ai-lang" hint="Used when the customer’s language is unclear. Allowed languages are set in Profile & persona.">
               <input
                 id="ai-lang"
                 value={form.lang}
@@ -315,14 +370,18 @@ export function AiSection() {
             <FormField
               label="Monthly spend cap (USD)"
               htmlFor="ai-cap"
-              hint="AI stops for the month when reached. Blank = platform default ($20); 0 = no cap."
+              hint={
+                settings.capCeilingCents > 0
+                  ? `AI pauses for the month when reached. Blank = your plan limit ($${(settings.capCeilingCents / 100).toFixed(2)}); you can only set a lower limit.`
+                  : 'AI pauses for the month when reached. Blank = no limit.'
+              }
             >
               <input
                 id="ai-cap"
                 value={form.capDollars}
                 onChange={(e) => set({ capDollars: e.target.value })}
                 inputMode="decimal"
-                placeholder="20"
+                placeholder={settings.capCeilingCents > 0 ? (settings.capCeilingCents / 100).toString() : ''}
                 className={cn(inputCls, 'tabular-nums')}
               />
             </FormField>

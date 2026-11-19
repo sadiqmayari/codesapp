@@ -19,6 +19,7 @@ import {
 } from '../../ai/ai.service';
 import { TicketsService } from '../../tickets/tickets.service';
 import { AiRagService } from '../../ai/ai-rag.service';
+import { AiProfileService } from '../../ai/ai-profile.service';
 import {
   AI_AGENT_MAX_STEPS,
   ActiveTopic,
@@ -203,19 +204,19 @@ export class AiAgentService implements OnModuleInit {
     private readonly platformSetting: PlatformSettingService,
     private readonly featureService: FeatureService,
     private readonly events: EventStoreService,
+    private readonly profiles: AiProfileService,
   ) {}
 
   onModuleInit(): void {
-    // 180s lease — the orchestrator runs triage + a multi-step specialist tool
-    // loop (each step an LLM call, plus Shopify tool round-trips); this can run
-    // well past the default 30s, so the lease must cover the worst case to avoid
-    // a second worker double-executing (e.g. a duplicate create_order tool).
-    this.jobQueue.registerWorker(
-      'ai-agent',
-      (p) => this.process(p as AgentJob),
-      4,
-      180,
-    );
+    // v2: the `ai-agent` worker is owned by AgentRuntimeService (AiAgentModule),
+    // which calls processJob() for tenants on engine 'v1' / 'shadow'. This
+    // legacy brain no longer registers its own worker (two registrations of
+    // one queue would race). Deleted at the v2 cutover.
+  }
+
+  /** Legacy (v1) brain entry — called by the v2 runtime for v1/shadow tenants. */
+  async processJob(job: AgentJob): Promise<void> {
+    return this.process(job);
   }
 
   async enqueue(job: AgentJob): Promise<void> {
@@ -314,10 +315,15 @@ export class AiAgentService implements OnModuleInit {
     // The customer is signing off ("ok thanks", "kuch nahi chahiye"). Send ONE
     // short closing + resolve the chat; if we already closed it, stay SILENT so
     // repeated thanks don't loop.
-    if (triage.intent === 'closing') {
+    if (
+      triage.intent === 'closing' &&
+      !route.pendingOrderExists &&
+      !route.awaitingPaymentAt
+    ) {
       await this.handleClosing(job, ctx, route);
       return;
     }
+    if (triage.intent === 'closing') triage.intent = 'order'; // pending order → treat as order turn
     const wasClosed = route.aiClosedAt != null;
     // A real request after a close → reopen the AI for this chat.
     if (wasClosed) await this.clearClosed(job.conversationId);
@@ -685,6 +691,7 @@ export class AiAgentService implements OnModuleInit {
   ): Promise<{ intent: AgentIntent; ctx?: AgentContext; repeatForced: boolean }> {
     const now = new Date();
     const current = route.activeTopic;
+    let data_keepTopicSwitch = false;
 
     // Tracking session expiry → treat current as cleared (free reclassification).
     const trackingExpired =
@@ -722,6 +729,14 @@ export class AiAgentService implements OnModuleInit {
         triage.score < TOPIC_OVERRIDE_CONFIDENCE
       ) {
         newTopic = effectiveCurrent; // keep — do not tear down a live flow
+      } else if (
+        newTopic === 'ORDER_CREATION' &&
+        (effectiveCurrent === 'SALES' || effectiveCurrent === 'SUPPORT')
+      ) {
+        // v2 hotfix: buying what was just discussed is the SAME journey —
+        // keep the transcript (a new episode dropped the product → re-ask).
+        startNewEpisode = false;
+        data_keepTopicSwitch = true;
       } else {
         startNewEpisode = true; // confident switch
       }
@@ -732,6 +747,10 @@ export class AiAgentService implements OnModuleInit {
     // Persist topic/episode state + clear stale cross-topic state.
     let episodeStart = route.episodeStartedAt;
     const data: Prisma.ConversationUpdateInput = {};
+    if (data_keepTopicSwitch) {
+      data.ai_active_topic = newTopic;
+      data.ai_topic_started_at = now;
+    }
     if (startNewEpisode) {
       // Anchor the episode 1ms before the trigger message so it (and the current
       // burst) is included while older episode messages are excluded.
@@ -808,7 +827,8 @@ export class AiAgentService implements OnModuleInit {
       const q = parseInt(moreQty[1], 10);
       if (q > 0 && q < 1000) quantity = q;
     }
-    if (/\b(send|bhej|de)\s*(me\s*)?(\d{1,3}\s*)?more\b/i.test(t)) match = true;
+    // (v2 hotfix) "send me more pictures/info" is NOT a reorder — the bare
+    // "send more" rule was removed; an explicit "N more" still counts.
     return { match, quantity };
   }
 
@@ -1610,7 +1630,12 @@ export class AiAgentService implements OnModuleInit {
         const matched = maxS > 0 ? scored.filter((x) => x.s === maxS).map((x) => x.h) : [];
         // With query tokens, ONLY return top-matching products — never fall back
         // to Shopify's unrelated hits. Empty query → return the raw hits.
-        const use = (qTokens.length ? matched : hits).slice(0, 10);
+        // v2 hotfix: RANK by word relevance but never DROP the rest — semantic
+        // matches (synonyms, Urdu words, spelling) used to vanish here.
+        const use = (qTokens.length && matched.length
+          ? [...matched, ...scored.filter((x) => x.s !== maxS).map((x) => x.h)]
+          : hits
+        ).slice(0, 10);
         if (!use.length) {
           return (
             'No matching products found for that. Do NOT list unrelated products ' +
@@ -1753,34 +1778,9 @@ export class AiAgentService implements OnModuleInit {
         // product. Fail-safe: if that removes everything (a usage/FAQ/policy
         // query where no title matches by word), keep the original result.
         const qTokens = this.normTokens(query).filter((w) => w.length > 1);
-        if (qTokens.length) {
-          const blocks = k.split(/\n(?=## )/);
-          const scoredBlocks = blocks.map((b) => {
-            const title = b.match(/^## (.+)$/m)?.[1] ?? '';
-            if (!title) return { b, s: -1 }; // non-titled block → keep (neutral)
-            const tTokens = this.normTokens(title);
-            let s = 0;
-            for (const w of qTokens) {
-              if (tTokens.some((tt) => this.tokensRelated(w, tt))) s++;
-            }
-            return { b, s };
-          });
-          const maxS = Math.max(0, ...scoredBlocks.map((x) => x.s));
-          // Keep only the BEST-matching blocks (+ any non-titled), so a broad token
-          // like "gummy" doesn't return the whole catalogue as context.
-          const kept = scoredBlocks
-            .filter((x) => x.s === -1 || (x.s > 0 && x.s === maxS))
-            .map((x) => x.b);
-          if (kept.length) return kept.join('\n');
-          // Nothing lexically matched (e.g. the query was the customer's name, or
-          // an abstract phrase). Do NOT fall back to the unfiltered semantic hits
-          // — that is exactly how unrelated products ("TriVita" for "Codentra")
-          // leaked in. Tell the agent to ask, not to list.
-          return (
-            'No product or policy specifically matches that. Do NOT list unrelated ' +
-            'products — ask the customer to clarify which product they mean.'
-          );
-        }
+        // v2 hotfix: the title-word filter below dropped correct policy
+        // blocks ("return policy" vs "Exchange & Refunds") — disabled.
+        void qTokens;
         return k;
       }
       if (name === 'get_payment_details') {
@@ -3022,12 +3022,11 @@ export class AiAgentService implements OnModuleInit {
 
   /** Bank/payment details for prepaid, from the tenant KB (RAG). Null if none. */
   private async fetchPaymentDetails(companyId: number): Promise<string | null> {
+    // v2 hotfix: structured payment details from the Agent Profile only — the
+    // old vector search could return product chunks / internal notes and
+    // paste them to the customer as "bank details".
     try {
-      const k = await this.rag.retrieve(
-        companyId,
-        'bank account details for advance prepaid payment IBAN account title',
-      );
-      return k && k.trim() ? k.trim() : null;
+      return (await this.profiles.load(companyId)).paymentDetails;
     } catch {
       return null;
     }

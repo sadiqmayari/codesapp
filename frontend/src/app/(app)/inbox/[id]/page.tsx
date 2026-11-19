@@ -51,6 +51,7 @@ import AttachmentPicker, {
 import AttachmentPreview from '@/components/inbox/attachment-preview';
 import AudioMessage from '@/components/inbox/audio-message';
 import AiAuditModal from '@/components/inbox/ai-audit-modal';
+import { AiFeedbackButtons } from '@/components/inbox/ai-feedback';
 import EmojiPicker from '@/components/inbox/emoji-picker';
 import ReplyQuoteStrip from '@/components/inbox/reply-quote-strip';
 import VoiceRecorder from '@/components/inbox/voice-recorder';
@@ -2925,6 +2926,7 @@ function senderLabelOf(m: Message, meId: number | undefined): string | null {
   if (m.user?.name) return m.user.name;
   if (m.broadcast_id) return m.broadcast_name ? `Broadcast · ${m.broadcast_name}` : 'Broadcast';
   if (m.message_type === 'template') return 'Automation · template';
+  if (m.sent_by_ai) return 'Automation · AI agent';
   return 'Automation (bot or AI)';
 }
 
@@ -3108,6 +3110,7 @@ function BubbleImpl({
 
   const timeRow = (
     <span className="flex items-center gap-1">
+      {m.sent_by_ai && m.id > 0 && <AiFeedbackButtons messageId={m.id} />}
       {fmtTime(m.timestamp || m.created_at)}
       <Ticks m={m} />
     </span>

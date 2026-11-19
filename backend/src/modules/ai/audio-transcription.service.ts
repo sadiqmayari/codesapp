@@ -10,6 +10,8 @@ export interface TranscriptionResult {
   text: string;
   /** Audio length in seconds (from Whisper verbose response); 0 if unknown. */
   durationSec: number;
+  /** Seconds billed across all passes (a re-pinned note costs two passes). */
+  billedSec: number;
 }
 
 /**
@@ -38,48 +40,68 @@ export class AudioTranscriptionService {
     return this.client;
   }
 
-  /** Transcribe an audio file on disk. Returns null on any failure. */
-  async transcribe(diskPath: string): Promise<TranscriptionResult | null> {
+  /**
+   * Transcribe an audio file on disk. Returns null on any failure.
+   *
+   * `languageHint` (ISO-639-1, from the tenant's Agent Profile) handles
+   * languages Whisper confuses: when the auto-detected language is a known
+   * sibling of the hint (Urdu↔Hindi, Arabic dialects…), the note is
+   * re-transcribed pinned to the hint. No hint = auto-detect only. Every pass
+   * is counted in `billedSec` (the old code billed only the second pass).
+   */
+  async transcribe(
+    diskPath: string,
+    languageHint?: string | null,
+  ): Promise<TranscriptionResult | null> {
     const client = this.getClient();
     if (!client) return null;
     try {
       if (!fs.existsSync(diskPath)) return null;
-      // First pass: auto-detect language (so genuine English notes stay English).
       const res = await client.audio.transcriptions.create({
         model: 'whisper-1',
         file: fs.createReadStream(diskPath),
         response_format: 'verbose_json',
       });
-      // verbose_json includes `text` + `duration` + `language` (full name).
       let text = (res as { text?: string }).text?.trim() ?? '';
-      let durationSec = Number((res as { duration?: number }).duration ?? 0);
-      const detected = (res as { language?: string }).language ?? '';
+      const firstDur = Number((res as { duration?: number }).duration ?? 0);
+      let durationSec = Number.isFinite(firstDur) ? firstDur : 0;
+      let billedSec = durationSec;
+      const detected = ((res as { language?: string }).language ?? '').toLowerCase();
 
-      // Urdu and Hindi are the same spoken language (Hindustani); Whisper often
-      // mislabels Pakistani/Urdu audio as Hindi and emits Devanagari — which the
-      // tenant does NOT want (English / Roman-Urdu / Urdu ONLY, never Hindi). If
-      // the first pass came back as Hindi or contains any Devanagari glyphs,
-      // re-transcribe with the language pinned to Urdu so it renders in Urdu
-      // script instead. English/other notes are left untouched.
-      if (/hindi/i.test(detected) || /[ऀ-ॿ]/.test(text)) {
+      const hint = (languageHint ?? '').toLowerCase();
+      const SIBLINGS: Record<string, RegExp> = {
+        ur: /hindi|urdu|punjabi/,
+        hi: /urdu|hindi/,
+        ar: /arabic|persian|urdu/,
+        bn: /bengali|hindi/,
+      };
+      const needsRepin =
+        !!hint &&
+        !!SIBLINGS[hint] &&
+        SIBLINGS[hint].test(detected) &&
+        !new RegExp(`^${hint}`).test(detected) &&
+        // a genuine Hindi note for a Hindi tenant / Urdu note for Urdu stays
+        !(hint === 'ur' && /urdu/.test(detected)) &&
+        !(hint === 'hi' && /hindi/.test(detected));
+      const devanagariForUrdu = hint === 'ur' && /[ऀ-ॿ]/.test(text);
+      if (needsRepin || devanagariForUrdu) {
         try {
-          const urRes = await client.audio.transcriptions.create({
+          const r2 = await client.audio.transcriptions.create({
             model: 'whisper-1',
             file: fs.createReadStream(diskPath),
             response_format: 'verbose_json',
-            language: 'ur',
+            language: hint,
           });
-          const urText = (urRes as { text?: string }).text?.trim() ?? '';
-          if (urText) {
-            text = urText;
-            const urDur = Number((urRes as { duration?: number }).duration ?? 0);
-            if (Number.isFinite(urDur) && urDur > 0) durationSec = urDur;
+          const t2 = (r2 as { text?: string }).text?.trim() ?? '';
+          const d2 = Number((r2 as { duration?: number }).duration ?? 0);
+          if (Number.isFinite(d2) && d2 > 0) billedSec += d2;
+          if (t2) {
+            text = t2;
+            if (Number.isFinite(d2) && d2 > 0) durationSec = d2;
           }
         } catch (reErr) {
-          // Keep the first-pass text on a re-run failure rather than losing the
-          // transcription entirely.
           this.logger.warn(
-            `Urdu re-transcription failed for ${diskPath}: ${
+            `Re-transcription (${hint}) failed for ${diskPath}: ${
               reErr instanceof Error ? reErr.message : String(reErr)
             }`,
           );
@@ -87,10 +109,7 @@ export class AudioTranscriptionService {
       }
 
       if (!text) return null;
-      return {
-        text,
-        durationSec: Number.isFinite(durationSec) ? durationSec : 0,
-      };
+      return { text, durationSec, billedSec };
     } catch (e) {
       this.logger.warn(
         `Whisper transcription failed for ${diskPath}: ${

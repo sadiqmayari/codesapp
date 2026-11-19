@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   Menu,
   ShoppingBag,
+  Sparkles,
 } from 'lucide-react';
 import { api, getAccessToken, setAccessToken } from '@/lib/api';
 import { SaThemeProvider, SaThemeToggle, useSaTheme } from './_components/sa-theme';
@@ -49,6 +50,7 @@ const NAV_GROUPS: {
   {
     group: 'System',
     items: [
+      { href: '/super-admin/ai', label: 'AI Control Center', icon: Sparkles },
       { href: '/super-admin/audit', label: 'Audit log', icon: ScrollText },
       { href: '/super-admin/settings', label: 'Settings', icon: Settings },
     ],

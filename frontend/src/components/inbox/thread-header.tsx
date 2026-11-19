@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Ban,
-  Bot,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -26,6 +25,7 @@ import {
   UserMinus,
   X,
 } from 'lucide-react';
+import { AiStateBadge } from './ai-state-badge';
 import { cn } from '@/lib/utils';
 import { avatarColor, initialsOf } from '@/lib/avatar';
 import { apiFetch } from '@/lib/api';
@@ -458,11 +458,7 @@ export default function ThreadHeader(p: ThreadHeaderProps) {
               {blocked && (
                 <span className="shrink-0 rounded bg-red-50 px-1.5 text-xs font-semibold text-red-700">Blocked</span>
               )}
-              {c?.ai_autoreply === true && (
-                <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-emerald-50 px-1.5 text-xs font-semibold text-emerald-700" title="AI auto-pilot is on for this chat">
-                  <Bot size={12} /> <span className="hidden sm:inline">Auto-pilot</span>
-                </span>
-              )}
+              {c?.id ? <AiStateBadge conversationId={c.id} /> : null}
             </span>
             <span className="flex items-center gap-1.5 truncate text-xs text-muted">
               <span className="truncate">{c?.contact?.phone}</span>

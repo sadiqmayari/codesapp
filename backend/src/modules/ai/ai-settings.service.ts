@@ -12,6 +12,12 @@ export interface AiSettingsView {
   brandTone: string | null;
   defaultLanguage: string | null;
   monthlyCapCents: number | null;
+  /** Hard ceiling set by the platform (super-admin cap ?? platform default; 0 = none). */
+  capCeilingCents: number;
+  /** What is actually enforced this month (own cap within the ceiling). */
+  effectiveCapCents: number;
+  /** Super-admin turned AI off for this tenant. */
+  adminDisabled: boolean;
   /** Tenant-selectable autonomous AI quality. null = follow platform default. */
   aiTier: 'fast' | 'smart' | null;
   visionEnabled: boolean;
@@ -48,6 +54,8 @@ export class AiSettingsService {
           ai_vision_enabled: true,
           ai_voice_enabled: true,
           ai_premium_locked: true,
+          ai_admin_cap_cents: true,
+          ai_admin_disabled: true,
           subscription: { select: { ai_enabled: true } },
         },
       }),
@@ -68,6 +76,10 @@ export class AiSettingsService {
       brandTone: c.ai_brand_tone,
       defaultLanguage: c.ai_default_language,
       monthlyCapCents: c.ai_monthly_cap_cents,
+      capCeilingCents:
+        c.ai_admin_cap_cents ?? (await this.metering.getDefaultCapCents()),
+      effectiveCapCents: await this.metering.effectiveCapCents(c),
+      adminDisabled: c.ai_admin_disabled,
       aiTier: tier,
       visionEnabled: c.ai_vision_enabled,
       voiceEnabled: c.ai_voice_enabled,
@@ -101,7 +113,10 @@ export class AiSettingsService {
         : null;
     }
     if (dto.monthlyCapCents !== undefined) {
-      data.ai_monthly_cap_cents = dto.monthlyCapCents;
+      // 0 / null = "use the platform ceiling" (it can no longer mean unlimited);
+      // a positive value can only LOWER the ceiling (enforced in metering).
+      data.ai_monthly_cap_cents =
+        dto.monthlyCapCents && dto.monthlyCapCents > 0 ? dto.monthlyCapCents : null;
     }
 
     // Premium capabilities (tier / vision / voice) are tenant-owned BUT the

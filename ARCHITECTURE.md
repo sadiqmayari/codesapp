@@ -1363,3 +1363,20 @@ Frontend-only. `orders/layout.tsx` is the module shell (header + one tab bar; bo
 Every number on every Growth surface is an aggregate over `growth_order_facts` / `growth_attribution` / `ad_insights_daily`,
 so a definition changes in exactly one place (`GrowthFactsService.build` + `kpisOf` + `metrics/catalog.ts`).
 
+
+
+## AI Agent v2 (Nov-2026)
+```
+inbound → meta-webhook → BotEngine ──(5 s burst, 1 pending turn/chat)──▶ queue 'ai-agent'
+                                                                       │
+                                AgentRuntimeService.process (worker container)
+   preflight (auto-reply resolver · mute · pause · human replied · 24h · cap · kill switch)
+   → engine? v1/shadow → legacy v1 (+ v2 dry run logged as ai.shadow)
+   → v2: merged turn → deterministic rules (slip · keywords · asks human · no progress · hours)
+        → store resolve → AgentProfile (+ store override) → prompt (cached stable + volatile)
+        → ONE tool loop (LlmService: catalogue model, failover, thinking replay, tool_choice none)
+             skills: knowledge · products · orders (code-gated) · status · payments · bookings · leads · store · handoff
+        → handoff v2 | system summary | sanitized reply (sentByAi) → memory → ai.reply trace
+```
+- AiModule (no Inbox dependency): LlmService + providers, metering/caps, RAG (store-scoped) + pgvector, knowledge (import/test), AiProfileService, PromptRegistryService, copilot (suggest/rewrite/translate/summarize/draft-order).
+- AiAgentModule (leaf): runtime, skills, handoff, bookings, insights (state/trace/feedback/performance), maintenance (nightly re-sync), super-admin AI Control Center, evals.

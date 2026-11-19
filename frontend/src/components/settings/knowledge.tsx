@@ -1,7 +1,18 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Plus, Trash2, RefreshCw, Pencil, BookOpen, CheckCircle2 } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, Pencil, BookOpen, CheckCircle2, Globe, FileUp, Search } from 'lucide-react';
+import { useAuth } from '@/context/auth-context';
+import {
+  getKnowledgeIndex,
+  getStoreProfiles,
+  importKnowledgeFile,
+  importKnowledgeUrl,
+  syncStoreKnowledge,
+  testKnowledge,
+  type KnowledgeIndexStatus,
+  type StoreAiProfile,
+} from '@/lib/ai-agent';
 import { apiFetch, ApiError } from '@/lib/api';
 import { aiListKnowledge, aiCreateKnowledge, aiUpdateKnowledge, aiDeleteKnowledge, type AiKnowledgeEntry } from '@/lib/ai';
 import { useToast } from '@/components/toast';
@@ -21,6 +32,17 @@ import { Callout, SettingsCard, SettingsPage, inputCls } from './shared';
  */
 export function KnowledgeSection() {
   const toast = useToast();
+  const { user } = useAuth();
+  const canManage = user?.role === 'owner' || user?.role === 'admin';
+  const [index, setIndex] = useState<KnowledgeIndexStatus | null>(null);
+  const [stores, setStores] = useState<StoreAiProfile[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importUrl, setImportUrl] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [question, setQuestion] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [hits, setHits] = useState<Awaited<ReturnType<typeof testKnowledge>>['hits'] | null>(null);
+  const [storeSyncing, setStoreSyncing] = useState<number | 'all' | null>(null);
   const [rows, setRows] = useState<AiKnowledgeEntry[]>([]);
   const [kbQuery, setKbQuery] = useState('');
   const shownKb = rows.filter((e) => {
@@ -56,19 +78,73 @@ export function KnowledgeSection() {
 
   const loadStatus = useCallback(async () => {
     try {
-      setKbStatus(
-        await apiFetch<{
-          configured: boolean;
-          products: number;
-          policies: number;
-          total: number;
-          lastSyncedAt: string | null;
-        }>('/shopify/knowledge-status'),
-      );
+      const ix = await getKnowledgeIndex();
+      setIndex(ix);
+      setKbStatus(ix);
     } catch {
-      /* Shopify not connected / no permission — just hide the status card */
+      /* hide the status card */
     }
-  }, []);
+    if (canManage) getStoreProfiles().then(setStores).catch(() => setStores([]));
+  }, [canManage]);
+
+  const syncStore = async (target: number | 'all') => {
+    setStoreSyncing(target);
+    try {
+      await syncStoreKnowledge(target === 'all' ? { all: true } : { storeId: target });
+      toast.success('Sync started — products are indexed in the background (a minute or two for a large catalogue).');
+      setTimeout(() => {
+        loadStatus();
+        setStoreSyncing(null);
+      }, 45000);
+    } catch (e) {
+      setStoreSyncing(null);
+      toast.error(e instanceof ApiError ? e.userMessage : 'Sync failed');
+    }
+  };
+
+  const doImportUrl = async () => {
+    if (!importUrl.trim()) return;
+    setImporting(true);
+    try {
+      const r = await importKnowledgeUrl(importUrl.trim());
+      toast.success(`Imported ${r.imported} page${r.imported === 1 ? '' : 's'}${r.failed ? ` · ${r.failed} skipped` : ''}`);
+      setImportOpen(false);
+      setImportUrl('');
+      await load();
+      await loadStatus();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Import failed');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const doImportFile = async (file: File | undefined) => {
+    if (!file) return;
+    setImporting(true);
+    try {
+      const r = await importKnowledgeFile(file);
+      toast.success(`Imported “${r.title}” (${r.chars.toLocaleString()} characters)`);
+      await load();
+      await loadStatus();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Upload failed');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const doTest = async () => {
+    if (!question.trim()) return;
+    setTesting(true);
+    try {
+      setHits((await testKnowledge(question.trim())).hits);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Test failed');
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const syncShopify = async () => {
     setSyncing(true);
@@ -171,16 +247,101 @@ export function KnowledgeSection() {
       description="Facts the AI uses to answer customers. Products and store policies sync from your store; add FAQs and anything else yourself."
       actions={
         <>
-          <Button variant="secondary" loading={syncing} onClick={syncShopify} title="Pull your store's products and policies into the knowledge base">
-            {!syncing && <RefreshCw size={14} />}
-            {syncing ? 'Syncing…' : 'Sync from store'}
+          {canManage && stores.length <= 1 && (
+            <Button variant="secondary" loading={syncing} onClick={syncShopify} title="Pull your store's products and policies into the knowledge base">
+              {!syncing && <RefreshCw size={14} />}
+              {syncing ? 'Syncing…' : 'Sync from store'}
+            </Button>
+          )}
+          <Button variant="secondary" onClick={() => setImportOpen(true)}>
+            <Globe size={14} /> Import website
           </Button>
+          <label className={cn('inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-line bg-surface px-4 text-sm font-semibold text-ink hover:bg-sunken', importing && 'pointer-events-none opacity-60')}>
+            <FileUp size={14} /> Upload PDF / text
+            <input
+              type="file"
+              accept=".pdf,.txt,.md,.csv,application/pdf,text/plain,text/csv,text/markdown"
+              className="sr-only"
+              onChange={(e) => {
+                doImportFile(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+          </label>
           <Button onClick={openNew}>
             <Plus size={15} /> Add entry
           </Button>
         </>
       }
     >
+      {canManage && stores.length > 1 && (
+        <SettingsCard
+          title="Products & policies by store"
+          description="Each store keeps its own catalogue knowledge — syncing one never removes another. Product changes re-sync automatically within ~10 minutes, plus a nightly refresh."
+          action={
+            <Button size="sm" variant="secondary" loading={storeSyncing === 'all'} onClick={() => syncStore('all')}>
+              <RefreshCw size={13} /> Sync all stores
+            </Button>
+          }
+          flush
+        >
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
+                <th className="px-5 py-2">Store</th>
+                <th className="px-3 py-2 text-right">Products</th>
+                <th className="px-3 py-2 text-right">Policies</th>
+                <th className="px-3 py-2">Last sync</th>
+                <th className="px-5 py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {stores.map((st) => {
+                const s2 = index?.byStore.find((b) => b.storeId === st.storeId);
+                return (
+                  <tr key={st.storeId} className="border-b border-line last:border-0">
+                    <td className="px-5 py-2.5 font-semibold text-ink">
+                      {st.label} <span className="text-xs font-normal text-muted">· {st.provider}</span>
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{s2?.products ?? 0}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{s2?.policies ?? 0}</td>
+                    <td className="px-3 py-2.5 text-muted">{s2?.lastSyncedAt ? fmtDateTime(s2.lastSyncedAt) : 'never'}</td>
+                    <td className="px-5 py-2.5 text-right">
+                      <Button size="sm" variant="ghost" loading={storeSyncing === st.storeId} onClick={() => syncStore(st.storeId)}>
+                        Sync
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </SettingsCard>
+      )}
+
+      <SettingsCard title="Test a question" description="See exactly which knowledge the AI would read for a customer question.">
+        <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); doTest(); }}>
+          <input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="e.g. what is your return policy?" className={inputCls} aria-label="Test question" />
+          <Button type="submit" variant="secondary" loading={testing}><Search size={14} /> Test</Button>
+        </form>
+        {hits && (
+          hits.length === 0 ? (
+            <p className="text-sm text-muted">Nothing relevant found — add an entry that answers this.</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {hits.map((h, i) => (
+                <li key={i} className="rounded-lg border border-line px-3 py-2">
+                  <p className="flex items-center justify-between gap-2 text-sm font-semibold text-ink">
+                    <span className="truncate">{h.title}</span>
+                    <span className="shrink-0 text-xs font-normal text-muted">{h.sourceType} · {h.score.toFixed(2)}</span>
+                  </p>
+                  <p className="line-clamp-2 text-xs text-muted">{h.preview}</p>
+                </li>
+              ))}
+            </ul>
+          )
+        )}
+      </SettingsCard>
       {kbStatus && (kbStatus.total > 0 || syncing) && (
         <Callout tone="brand" icon={syncing ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle2 size={15} className="text-brand-600" />}>
           {syncing ? (
@@ -202,7 +363,7 @@ export function KnowledgeSection() {
 
       <SettingsCard
         title="Your entries"
-        description="Always given to the AI in full — keep each one short and factual."
+        description="Searched by meaning — the AI reads the parts relevant to each question. One topic per entry works best."
         action={
           rows.length > 5 ? (
             <SearchInput value={kbQuery} onChange={setKbQuery} placeholder="Search entries" size="sm" className="w-full sm:w-60" />
@@ -302,6 +463,24 @@ export function KnowledgeSection() {
               className={inputCls}
             />
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        title="Import from your website"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setImportOpen(false)}>Cancel</Button>
+            <Button loading={importing} onClick={doImportUrl}>Import</Button>
+          </div>
+        }
+      >
+        <div className="space-y-2">
+          <label htmlFor="kb-url" className="block text-[13px] font-semibold text-ink">Page or sitemap URL</label>
+          <input id="kb-url" value={importUrl} onChange={(e) => setImportUrl(e.target.value)} placeholder="https://yourshop.com/pages/faq  or  …/sitemap.xml" className={inputCls} />
+          <p className="text-xs text-muted">A single page, or a sitemap.xml (up to 25 pages). Each page becomes an entry you can edit or switch off.</p>
         </div>
       </Modal>
 

@@ -789,3 +789,19 @@ Supersedes the Meta Ads / Ad Report tables above: **`ad_spend_daily`, `ad_campai
 ## Sales targets (migration 20261115010000_sales_targets)
 - `sales_targets` — id, company_id, month VARCHAR(7) `YYYY-MM`, store_id INT DEFAULT 0 (0 = all stores), net_sales_target DECIMAL(14,2), orders_target INT NULL, ad_budget DECIMAL(14,2) NULL, updated_by, created_at, updated_at; UNIQUE (company_id, month, store_id).
 - `shopify_orders.subtotal_price` = Shopify subtotal AFTER discounts, before shipping/tax; `total_discounts` = original discounts for cancelled orders (current otherwise). Line items `price` = order-time unit price before discounts (`originalUnitPriceSet`).
+
+
+## AI Agent v2 (migration 20261117000000_ai_agent_v2, Nov-2026)
+- `ai_agent_profiles` (1/company): industry, agent_name, agent_role, goals, do_rules, dont_rules, tone, country_code, currency_code, currency_symbol, languages JSON, mirror_language, voice_language, payment_methods JSON, payment_details_encrypted (AES-GCM), skills JSON, handoff JSON, hours JSON, engine ('v1'|'shadow'|'v2'). Read ONLY via `resolveProfile()`.
+- `ai_store_profiles` (unique store_id): brand_name, tone, currency_code, currency_symbol, country_code, payment_details_encrypted — layered over the company profile for chats on that store.
+- `ai_bookings`: service, resource, starts_at, ends_at, party_size, name, phone, notes, status ('booked'|'cancelled'), created_by ('ai'|'agent'), conversation_id, contact_id.
+- `ai_feedback` (unique message_id+user_id): rating (1/-1), reason, comment.
+- `ai_eval_runs`: pack, prompt_version, model, cases, passed, results JSON, cost_micros.
+- `ai_prompt_overrides`: prompt_key ('agent.core' | 'pack.<industry>'), version, body, status ('draft'|'live'|'retired'), eval_pass.
+- `companies.ai_admin_disabled` (super-admin hard off), `companies.ai_admin_cap_cents` (hard ceiling; NULL = platform default).
+- `conversations.ai_memory` (v2 working memory JSON), `ai_paused_until`, `ai_handoff_at`, `ai_store_id`.
+- `messages.sent_by_ai`.
+- `whatsapp_numbers.default_store_id`.
+- `ai_usage_log.conversation_id, latency_ms, prompt_version, success, multiplier_x1000` + index (company_id, conversation_id).
+- `ai_knowledge_chunks.store_id` (0 = company-wide) — unique key now (company_id, store_id, source_type, source_id). pgvector `knowledge_chunks` gets the same column/key at boot (`PgVectorService.bootstrap`).
+- v1-only columns kept until the v1 brain is deleted: ai_active_topic, ai_topic_*, ai_episode_started_at, ai_linked_order_id, ai_pending_order*.

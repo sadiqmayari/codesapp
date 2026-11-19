@@ -1003,3 +1003,36 @@ The old `/ad-report` had these defects; each is fixed by the Growth module (see 
 - **Symptom:** drawer showed "Subtotal 3,398.30 − Discount 599.70 = Total 3,597.30" (#3001086). Growth "Net sales +28% vs previous period" while Realized was +3.8%. Expected net ~4–6 pts too optimistic for recent weeks.
 - **Cause:** Shopify `subtotalPriceSet` is AFTER discounts and the card omitted shipping. Growth compared an unsettled period (returns not back yet) with a settled one. Delivery rates were learned from recent parcels where deliveries resolve in ~4 days but returns take ~14 (survivorship bias); returns (which also set cancelled_at) were double-counted in the confirm rate.
 - **Fix:** `common/utils/sales.ts` single definition; drawer `OrderMoney` lines; settled-only rates (`SETTLE_DAYS`), confirm rate = not cancelled before booking; Forecast Model check + "still settling" note. Also ~19k orders had NULL subtotal/discounts (old 90-day one-shot backfill) → resumable `shopify-financials-backfill`.
+
+
+## [AI] Auto-reply re-asked "which product?" right after the customer said "order kar do" (fixed 2026-11-20)
+- Cause: v1 topic manager started a NEW episode on SALES→ORDER_CREATION and re-scoped the transcript to the "order" message — the product discussed seconds earlier vanished.
+- Fix: v2 never cuts the transcript (working memory instead); v1 hotfix keeps the episode on sales→order.
+
+## [AI] AI kept replying after a handoff / agent mute; 3 quick messages → 3 replies (fixed 2026-11-20)
+- Cause: queued `ai-agent` jobs never re-checked `ai_autoreply` / handoff at run time; no burst merge.
+- Fix: all gates re-checked when the job RUNS (`AgentRuntimeService.process`), 5 s burst window + one pending turn per chat (dedupKey), human-reply pause, follow-up job for mid-run messages.
+
+## [AI] "We don't carry that" for products the store sells / policies never found (fixed 2026-11-20)
+- Cause: `search_products` and `search_knowledge` dropped every result that didn't share a literal title word with the query (synonyms, Urdu words, "return policy" vs "Exchange & Refunds").
+- Fix: rank, never drop; knowledge retrieval has no title filter; manual entries are embedded too.
+
+## [AI] Syncing one store wiped another store's AI knowledge; Woo sync deleted all policies (fixed 2026-11-20)
+- Cause: `indexSource` deleted by (company, source_type); Woo called `indexSource('policy', [])`; sync always used the primary store.
+- Fix: `ai_knowledge_chunks.store_id` + store-scoped replace (atomic, per-row savepoints in pgvector); Woo skips empty policy lists; per-store / all-stores sync.
+
+## [AI] Tenant could remove the platform spend cap (fixed 2026-11-20)
+- Cause: `ai_monthly_cap_cents = 0` meant unlimited and overrode the platform default.
+- Fix: cap = super-admin ceiling (per-tenant `ai_admin_cap_cents` ?? platform default) that the tenant can only lower; 0/blank = use the ceiling.
+
+## [AI] pgvector bulk insert silently lost the whole sync (fixed 2026-11-20)
+- Cause: one failed INSERT aborted the Postgres transaction; later inserts all failed and COMMIT rolled back, yet `replaceSource` returned true.
+- Fix: per-row SAVEPOINT / ROLLBACK TO SAVEPOINT.
+
+## [AI] Prompt cache never hit (fixed 2026-11-20)
+- Cause: the stable KB and per-query RAG chunks shared one `cache:true` system block that changed every call (writes billed at 1.25×).
+- Fix: stable tenant block cached; per-turn context (clock, memory, retrieved data via tools) uncached.
+
+## [AI] Saving AI settings in super-admin reset the usage-limit policy to "block" (fixed 2026-11-20)
+- Cause: controller defaulted a missing `usageLimitAction` to 'block' and the service always wrote it.
+- Fix: only fields that were sent are written.

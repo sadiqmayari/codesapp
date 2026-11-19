@@ -20,6 +20,13 @@ import {
 } from '@/components/settings/order-automation';
 import { CouriersSection } from '@/components/settings/couriers';
 import { AiSection } from '@/components/settings/ai';
+import {
+  AiProfileSection,
+  AiSkillsSection,
+  AiHandoffSection,
+  AiPlaygroundSection,
+  AiPerformanceSection,
+} from '@/components/settings/ai-agent';
 import { KnowledgeSection } from '@/components/settings/knowledge';
 import { IntegrationsSection } from '@/components/settings/integrations';
 
@@ -73,6 +80,16 @@ export default function SettingsSectionPage() {
       return <CouriersSection />;
     case 'ai':
       return <AiSection />;
+    case 'ai-profile':
+      return <AiProfileSection />;
+    case 'ai-skills':
+      return <AiSkillsSection />;
+    case 'ai-handoff':
+      return <AiHandoffSection />;
+    case 'ai-playground':
+      return <AiPlaygroundSection />;
+    case 'ai-performance':
+      return <AiPerformanceSection />;
     case 'knowledge':
       return <KnowledgeSection />;
     case 'integrations':

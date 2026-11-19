@@ -31,6 +31,7 @@ import { MetaClientService, MetaSendPayload } from './meta-client.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import { CompanyStatusService } from '../../common/services/company-status.service';
 import { AiMeteringService } from '../ai/ai-metering.service';
+import { AiProfileService } from '../ai/ai-profile.service';
 import {
   AudioTranscriptionService,
   WHISPER_MICROS_PER_SEC,
@@ -213,6 +214,7 @@ export class InboxService implements OnModuleInit {
     private readonly companyStatus: CompanyStatusService,
     private readonly transcription: AudioTranscriptionService,
     private readonly aiMetering: AiMeteringService,
+    private readonly aiProfile: AiProfileService,
     private readonly jobQueue: JobQueueService,
   ) {}
 
@@ -275,11 +277,19 @@ export class InboxService implements OnModuleInit {
     }
     // Enforces AI-enabled + monthly spend cap (throws 403 when off/over cap).
     await this.aiMetering.assertAllowed(companyId);
+    const co = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { ai_premium_locked: true },
+    });
+    if (co?.ai_premium_locked) {
+      throw new ForbiddenException('Voice transcription is locked for this account.');
+    }
     if (!msg.media_url) throw new BadRequestException('No audio file to transcribe');
 
     const rel = msg.media_url.replace(/^\/storage\/media\//, '');
     const diskPath = path.join(STORAGE_ROOT, rel);
-    const result = await this.transcription.transcribe(diskPath);
+    const hint = (await this.aiProfile.load(companyId)).profile.voiceLanguage;
+    const result = await this.transcription.transcribe(diskPath, hint);
     if (!result) {
       throw new ServiceUnavailableException(
         'Could not transcribe this voice note',
@@ -291,7 +301,8 @@ export class InboxService implements OnModuleInit {
     });
     await this.aiMetering.recordTranscription(
       companyId,
-      Math.round(result.durationSec * WHISPER_MICROS_PER_SEC),
+      Math.round(result.billedSec * WHISPER_MICROS_PER_SEC),
+      conversationId,
     );
     return { text: result.text, cached: false };
   }
@@ -727,7 +738,11 @@ export class InboxService implements OnModuleInit {
     const value = mode === 'on' ? true : mode === 'off' ? false : null;
     const updated = await this.prisma.conversation.update({
       where: { id },
-      data: { ai_autoreply: value },
+      // Turning the AI back on also lifts a v2 handoff pause.
+      data: {
+        ai_autoreply: value,
+        ...(mode !== 'off' ? { ai_paused_until: null } : {}),
+      },
     });
     this.gateway.emitToCompany(companyId, 'conversation.updated', {
       conversationId: id,
@@ -1125,6 +1140,7 @@ export class InboxService implements OnModuleInit {
     conversationId: number,
     dto: SendMessageDto,
     userId?: number,
+    opts?: { sentByAi?: boolean },
   ) {
     // Hard backstop: a suspended/inactive tenant sends NOTHING outbound, no
     // matter the caller (AI worker, bot, broadcast, agent). TenantGuard already
@@ -1258,6 +1274,7 @@ export class InboxService implements OnModuleInit {
         user_id: userId ?? null,
         // Echo the optimistic client id back so the inbox reconciles by it.
         client_id: dto.clientId ?? null,
+        sent_by_ai: opts?.sentByAi === true,
         timestamp: new Date(),
       },
       include: MESSAGE_INCLUDE,

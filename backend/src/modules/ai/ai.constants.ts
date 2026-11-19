@@ -27,25 +27,105 @@ export interface ModelConfig {
   outMicros: number;
 }
 
+/**
+ * Model catalogue — the SINGLE source of truth for per-model price + request
+ * capabilities. The model id used for each tier is a super-admin platform
+ * setting (`ai_model_<provider>_<tier>`, see AI_MODEL_KEY); an id not listed
+ * here is still usable and is priced at its provider's tier default.
+ *
+ *  - `temperature`  false → the model rejects a non-default temperature (Claude
+ *    Haiku 5.5 / Sonnet 5.5): the provider omits it.
+ *  - `effort`       true → send `output_config.effort` (Claude 4.6+ / 5.x).
+ *  - `thinkingOff`  how to switch thinking off for a plain (non-agentic) call:
+ *    'disabled' = `{type:'disabled'}`, 'between_tools' = Sonnet 5.5's form,
+ *    'none' = the model can't (omit and lower effort), 'n/a' = no thinking.
+ *  - `thinkingReplay` true → assistant thinking blocks MUST be echoed back
+ *    unchanged inside a tool loop (we keep the provider-native content).
+ */
+export interface ModelSpec extends ModelConfig {
+  provider: AiProviderName;
+  label: string;
+  /** Micro-dollars per cached-read input token. */
+  cacheReadMicros: number;
+  temperature: boolean;
+  effort: boolean;
+  thinkingOff: 'disabled' | 'between_tools' | 'none' | 'n/a';
+  thinkingReplay: boolean;
+}
+
+export const MODEL_CATALOG: ModelSpec[] = [
+  // ── Anthropic — current generation (recommended) ──
+  { provider: 'anthropic', id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5', inMicros: 0.1, outMicros: 0.5, cacheReadMicros: 0.01, temperature: false, effort: true, thinkingOff: 'disabled', thinkingReplay: true },
+  { provider: 'anthropic', id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', inMicros: 2, outMicros: 10, cacheReadMicros: 0.1, temperature: false, effort: true, thinkingOff: 'between_tools', thinkingReplay: true },
+  { provider: 'anthropic', id: 'claude-opus-5-5', label: 'Claude Opus 5.5', inMicros: 4, outMicros: 20, cacheReadMicros: 0.2, temperature: false, effort: true, thinkingOff: 'none', thinkingReplay: true },
+  // ── Anthropic — previous generation (kept so old ids still price correctly) ──
+  { provider: 'anthropic', id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', inMicros: 1, outMicros: 5, cacheReadMicros: 0.1, temperature: true, effort: false, thinkingOff: 'n/a', thinkingReplay: false },
+  { provider: 'anthropic', id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', inMicros: 1, outMicros: 5, cacheReadMicros: 0.1, temperature: true, effort: false, thinkingOff: 'n/a', thinkingReplay: false },
+  { provider: 'anthropic', id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', inMicros: 3, outMicros: 15, cacheReadMicros: 0.3, temperature: true, effort: false, thinkingOff: 'n/a', thinkingReplay: false },
+  // ── OpenAI ──
+  { provider: 'openai', id: 'gpt-4o-mini', label: 'GPT-4o mini', inMicros: 0.15, outMicros: 0.6, cacheReadMicros: 0.075, temperature: true, effort: false, thinkingOff: 'n/a', thinkingReplay: false },
+  { provider: 'openai', id: 'gpt-4o', label: 'GPT-4o', inMicros: 2.5, outMicros: 10, cacheReadMicros: 1.25, temperature: true, effort: false, thinkingOff: 'n/a', thinkingReplay: false },
+];
+
+/** Default model id per provider × tier (used until the super-admin changes it). */
+export const DEFAULT_TIER_MODELS: Record<AiProviderName, Record<ModelTier, string>> = {
+  anthropic: { fast: 'claude-haiku-5-5', smart: 'claude-sonnet-5-5' },
+  openai: { fast: 'gpt-4o-mini', smart: 'gpt-4o' },
+};
+
+/** Platform-setting key holding the model id for a provider tier. */
+export const AI_MODEL_KEY = (p: AiProviderName, t: ModelTier): string =>
+  `ai_model_${p}_${t}`;
+
+/** Look up a model's spec; unknown ids inherit the provider tier default's price. */
+export function modelSpec(
+  id: string,
+  provider: AiProviderName,
+  tier: ModelTier,
+): ModelSpec {
+  const hit = MODEL_CATALOG.find((m) => m.id === id);
+  if (hit) return hit;
+  const base =
+    MODEL_CATALOG.find((m) => m.id === DEFAULT_TIER_MODELS[provider][tier]) ??
+    MODEL_CATALOG[0];
+  // Unknown id: price like the tier default; assume the newest request rules
+  // (no temperature, effort supported) for Anthropic, classic for OpenAI.
+  return {
+    ...base,
+    id,
+    label: id,
+    provider,
+  };
+}
+
+/**
+ * Back-compat view of the DEFAULT tier models (older callers + cost
+ * estimates). New code resolves the live model via LlmService.modelFor().
+ */
 export const PROVIDER_MODELS: Record<
   AiProviderName,
   Record<ModelTier, ModelConfig>
 > = {
   anthropic: {
-    // Claude Haiku 4.5 — $1 / $5 per MTok.
-    fast: { id: 'claude-haiku-4-5-20251001', inMicros: 1, outMicros: 5 },
-    // Claude Sonnet 4.6 — $3 / $15 per MTok.
-    smart: { id: 'claude-sonnet-4-6', inMicros: 3, outMicros: 15 },
+    fast: modelSpec(DEFAULT_TIER_MODELS.anthropic.fast, 'anthropic', 'fast'),
+    smart: modelSpec(DEFAULT_TIER_MODELS.anthropic.smart, 'anthropic', 'smart'),
   },
   openai: {
-    // GPT-4o mini — $0.15 / $0.60 per MTok.
-    fast: { id: 'gpt-4o-mini', inMicros: 0.15, outMicros: 0.6 },
-    // GPT-4o — $2.50 / $10.00 per MTok.
-    smart: { id: 'gpt-4o', inMicros: 2.5, outMicros: 10 },
+    fast: modelSpec(DEFAULT_TIER_MODELS.openai.fast, 'openai', 'fast'),
+    smart: modelSpec(DEFAULT_TIER_MODELS.openai.smart, 'openai', 'smart'),
   },
 };
 
-/** Cache-read tokens are billed at 0.1x the base input rate. */
+/** Optional second provider tried once when the active one errors / times out. */
+export const AI_FALLBACK_PROVIDER_KEY = 'ai_fallback_provider';
+/** Platform-wide AI kill switch ('off' = every AI feature paused). */
+export const AI_KILL_SWITCH_KEY = 'ai_platform_enabled';
+
+/** Per-request timeout (ms) for a single model call. */
+export const LLM_CALL_TIMEOUT_MS = 45_000;
+
+/** Cache-read tokens are billed at 0.1x the base input rate (fallback when a
+ *  spec has no explicit cacheReadMicros). */
 export const CACHE_READ_MULTIPLIER = 0.1;
 /** Anthropic 5-minute cache-write tokens are billed at 1.25x the input rate. */
 export const CACHE_WRITE_MULTIPLIER = 1.25;
@@ -62,7 +142,12 @@ export type AiFeature =
   | 'transcription'
   | 'embedding'
   | 'address_quality'
-  | 'growth';
+  | 'growth'
+  | 'agent'
+  | 'shadow'
+  | 'playground'
+  | 'eval'
+  | 'knowledge';
 
 /**
  * RAG embeddings (OpenAI). Used independently of the active TEXT provider

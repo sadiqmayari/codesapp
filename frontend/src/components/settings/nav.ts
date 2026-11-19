@@ -18,6 +18,11 @@ import {
   Sparkles,
   BookOpen,
   Plug,
+  UserRound,
+  Wand2,
+  Headphones,
+  Bot,
+  BarChart3,
 } from 'lucide-react';
 
 /**
@@ -47,6 +52,11 @@ export type SettingsSectionId =
   | 'delivery'
   | 'couriers'
   | 'ai'
+  | 'ai-profile'
+  | 'ai-skills'
+  | 'ai-handoff'
+  | 'ai-playground'
+  | 'ai-performance'
   | 'knowledge'
   | 'integrations';
 
@@ -107,8 +117,13 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
   {
     label: 'AI',
     items: [
-      { id: 'ai', label: 'AI assistant', icon: Sparkles, access: 'manage', keywords: 'copilot auto reply auto order quality photos voice notes cap usage brand voice' },
-      { id: 'knowledge', label: 'Knowledge base', icon: BookOpen, access: 'kb', keywords: 'faq policies products sync knowledge' },
+      { id: 'ai', label: 'AI assistant', icon: Sparkles, access: 'manage', keywords: 'copilot auto reply auto order quality photos voice notes cap usage' },
+      { id: 'ai-profile', label: 'Profile & persona', icon: UserRound, access: 'manage', keywords: 'industry pack persona name tone language currency country payment bank brand store' },
+      { id: 'ai-skills', label: 'Skills', icon: Wand2, access: 'manage', keywords: 'skills orders bookings appointments reservations leads capture tools' },
+      { id: 'ai-handoff', label: 'Handoff & hours', icon: Headphones, access: 'manage', keywords: 'handoff human agent business hours away message off hours resume' },
+      { id: 'knowledge', label: 'Knowledge base', icon: BookOpen, access: 'kb', keywords: 'faq policies products sync knowledge website pdf import' },
+      { id: 'ai-playground', label: 'Playground', icon: Bot, access: 'manage', keywords: 'test try chat simulate playground' },
+      { id: 'ai-performance', label: 'Performance', icon: BarChart3, access: 'manage', keywords: 'performance metrics handoffs feedback cost results' },
     ],
   },
   {

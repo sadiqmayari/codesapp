@@ -12,6 +12,7 @@ import { ContactsModule } from './modules/contacts/contacts.module';
 import { TemplatesModule } from './modules/templates/templates.module';
 import { BroadcastsModule } from './modules/broadcasts/broadcasts.module';
 import { BotsModule } from './modules/bots/bots.module';
+import { AiAgentModule } from './modules/ai-agent/ai-agent.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { BillingModule } from './modules/billing/billing.module';
@@ -54,6 +55,7 @@ import { AppController } from './app.controller';
     BillingModule,
     AnalyticsModule,
     BotsModule,
+    AiAgentModule,
     InboxModule,
     ContactsModule,
     TemplatesModule,

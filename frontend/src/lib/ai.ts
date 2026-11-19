@@ -121,6 +121,10 @@ export interface AiSettings {
   brandTone: string | null;
   defaultLanguage: string | null;
   monthlyCapCents: number | null;
+  /** Hard platform ceiling (cents; 0 = none). The tenant cap can only lower it. */
+  capCeilingCents: number;
+  effectiveCapCents: number;
+  adminDisabled: boolean;
   /** Tenant-selectable autonomous AI quality. null = follow platform default. */
   aiTier: 'fast' | 'smart' | null;
   visionEnabled: boolean;

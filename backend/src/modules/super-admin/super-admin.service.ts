@@ -82,11 +82,13 @@ export class SuperAdminService {
   }
 
   async updateSettings(
-    usageLimitAction: UsageLimitAction,
+    usageLimitAction: UsageLimitAction | undefined,
     aiProvider?: 'anthropic' | 'openai',
     aiAutonomousTier?: 'fast' | 'smart',
   ) {
-    await this.platformSetting.setUsageLimitAction(usageLimitAction);
+    // Only write what was sent — a PATCH carrying only AI fields used to reset
+    // the usage-limit policy to 'block'.
+    if (usageLimitAction) await this.platformSetting.setUsageLimitAction(usageLimitAction);
     if (aiProvider) {
       await this.platformSetting.set('ai_provider', aiProvider);
     }
@@ -94,7 +96,7 @@ export class SuperAdminService {
       await this.platformSetting.setAutonomousTier(aiAutonomousTier);
     }
     return {
-      usageLimitAction,
+      usageLimitAction: await this.platformSetting.getUsageLimitAction(),
       aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
       aiAutonomousTier: await this.platformSetting.getAutonomousTier(),
     };

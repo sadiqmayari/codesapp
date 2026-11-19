@@ -12,5 +12,7 @@ import { OgService } from './og.service';
   imports: [AuthModule],
   controllers: [OgController],
   providers: [OgService],
+  // AiModule reuses the SSRF-safe page fetcher for Knowledge → Import website.
+  exports: [OgService],
 })
 export class OgModule {}

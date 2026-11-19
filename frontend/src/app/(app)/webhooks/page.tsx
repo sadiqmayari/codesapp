@@ -26,6 +26,9 @@ const EVENTS = [
   'template.approved',
   'template.rejected',
   'subscription.limit.warning',
+  // AI Agent v2
+  'lead.qualified',
+  'booking.created',
 ];
 
 const LIMIT = 20;

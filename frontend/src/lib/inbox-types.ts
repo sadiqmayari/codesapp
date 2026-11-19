@@ -114,6 +114,8 @@ export interface Message {
   error_reason?: string | null;
   /** Agent who composed an outbound message (null = bot / AI / broadcast). */
   user_id?: number | null;
+  /** v2: written by the AI agent (labels the bubble + thumbs feedback). */
+  sent_by_ai?: boolean;
   user?: { id: number; name: string } | null;
   broadcast_id?: number | null;
   broadcast_name?: string | null;

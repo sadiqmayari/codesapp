@@ -96,6 +96,54 @@ export class OgService {
     return result;
   }
 
+  /**
+   * SSRF-safe fetch of a public HTML/text page (AI Knowledge → Import website).
+   * Same host validation on the initial URL and every redirect hop, 1MB cap,
+   * 8s deadline. Never throws — `ok:false` on any block/failure.
+   */
+  async fetchPage(
+    rawUrl: string,
+  ): Promise<{ ok: boolean; url: string; contentType: string; body: string; reason?: string }> {
+    let current: URL;
+    try {
+      current = new URL(rawUrl);
+    } catch {
+      return { ok: false, url: rawUrl, contentType: '', body: '', reason: 'invalid url' };
+    }
+    if (current.protocol !== 'http:' && current.protocol !== 'https:') {
+      return { ok: false, url: rawUrl, contentType: '', body: '', reason: 'scheme' };
+    }
+    const deadline = Date.now() + 8000;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const blocked = await this.hostBlockReason(current);
+      if (blocked) {
+        return { ok: false, url: current.toString(), contentType: '', body: '', reason: blocked };
+      }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      const res = await this.httpRequest(current, remaining);
+      if (res.kind === 'redirect') {
+        try {
+          current = new URL(res.location, current);
+        } catch {
+          break;
+        }
+        if (current.protocol !== 'http:' && current.protocol !== 'https:') break;
+        continue;
+      }
+      if (res.kind !== 'response' || res.statusCode >= 400) {
+        return { ok: false, url: current.toString(), contentType: '', body: '', reason: res.kind };
+      }
+      return {
+        ok: true,
+        url: current.toString(),
+        contentType: res.contentType.toLowerCase(),
+        body: res.body.toString('utf8'),
+      };
+    }
+    return { ok: false, url: current.toString(), contentType: '', body: '', reason: 'failed' };
+  }
+
   private miss(url: string): OgData {
     return {
       url,

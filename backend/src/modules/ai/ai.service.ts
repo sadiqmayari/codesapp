@@ -30,6 +30,8 @@ import {
 } from './ai.constants';
 import { RewriteMode } from './dto/ai-actions.dto';
 import { resolveAiCapabilities } from '../../common/utils/ai-capabilities';
+import { AiProfileService } from './ai-profile.service';
+import { ResolvedProfile } from './agent/profile';
 
 /** Max concurrent AI calls per company (interactive — protects the process). */
 const MAX_CONCURRENCY_PER_COMPANY = 3;
@@ -77,6 +79,8 @@ interface CompanyAiContext {
   autoOrderEnabled: boolean;
   /** Tenant default ISO-2 country for order creation (fallback for shipping). */
   defaultCountryCode: string | null;
+  /** v2 Agent Profile (languages, currency, persona) — the locale source. */
+  profile: ResolvedProfile;
 }
 
 /**
@@ -172,6 +176,7 @@ export class AiService {
     private readonly platformSetting: PlatformSettingService,
     private readonly audio: AudioTranscriptionService,
     private readonly rag: AiRagService,
+    private readonly profiles: AiProfileService,
   ) {}
 
   // ── Public features ──────────────────────────────────────────────────
@@ -204,6 +209,7 @@ export class AiService {
       images,
       maxTokens: 600,
       temperature: 0.5,
+      conversationId,
     });
   }
 
@@ -221,7 +227,13 @@ export class AiService {
       `Summarize this conversation for an agent picking it up. Use short bullet points: ` +
       `who the customer is, what they want, what's been done, and the next action needed. Keep it tight.`;
 
-    return this.run(companyId, userId, 'summarize', 'smart', {
+    const sumCo = await this.loadCompany(companyId);
+    const sumTier = resolveAiCapabilities(
+      { ai_autonomous_tier: sumCo.autonomousTier, ai_premium_locked: sumCo.premiumLocked },
+      await this.platformSetting.getAutonomousTier(),
+    ).tier;
+    return this.run(companyId, userId, 'summarize', sumTier, {
+      conversationId,
       system: [
         {
           text: 'You are a support-operations assistant. You write crisp, scannable handoff summaries.',
@@ -282,13 +294,13 @@ export class AiService {
         `List each distinct product ONCE with its final quantity. paymentMethod ` +
         `is "cod" (cash on delivery) ` +
         `or "prepaid" only if clearly indicated, else null. countryCode is an ` +
-        `ISO-2 code (e.g. "PK") if the country is clear, else null. Set ` +
+        `ISO-2 code (e.g. "${company.profile.countryCode}") if the country is clear, else null. Set ` +
         `"confidence" to "low" if the order details are unclear or incomplete.\n\n` +
         `For the customer NAME, use the name the customer gives in THIS chat for ` +
         `the order/delivery (the recipient) — this is more reliable than their ` +
         `WhatsApp profile name; only fall back to null if no name is stated. ` +
         `For PHONE, capture the delivery/contact number stated in the chat ` +
-        `EXACTLY as written (keep leading zeros, e.g. "03171234567"); set null ` +
+        `EXACTLY as written (keep leading zeros and any +country code); set null ` +
         `if none is given (do not guess). For EMAIL, capture the email address ` +
         `the customer gives in THIS chat (e.g. "name@example.com") exactly as ` +
         `written; set null if none is stated (never invent one).\n\n` +
@@ -298,7 +310,7 @@ export class AiService {
         `product, name, phone, address and city are present. Otherwise false.\n\n` +
         `Classify the customer's latest intent as "intent": "order_status" if ` +
         `they are asking about an EXISTING order (e.g. "where is my order", ` +
-        `"any update", "tracking", "kab tak aayega"); "place_order" if they want ` +
+        `"any update", "tracking", in any language); "place_order" if they want ` +
         `to buy or are giving order details; else "other". If they mention an ` +
         `order number, put just its digits in "orderNumber" (no "#"), else null.\n\n` +
         `Respond with ONLY a JSON object, no markdown, no prose:\n` +
@@ -328,6 +340,8 @@ export class AiService {
       images,
       maxTokens: 700,
       temperature: 0.2,
+      thinking: 'off',
+      conversationId,
     });
     return this.parseDraftOrder(text);
   }
@@ -363,7 +377,8 @@ export class AiService {
     });
     const langRule = this.languageRule(company);
 
-    const money = (n: number) => `Rs ${Math.round(n).toLocaleString()}`;
+    const sym = company.profile.currencySymbol;
+    const money = (n: number) => `${sym} ${Math.round(n).toLocaleString()}`;
     // Prices are given (resolved from real store variants) → the customer must
     // read back the EXACT unit price / line total / grand total. Relay verbatim;
     // never compute or invent one.
@@ -406,11 +421,13 @@ export class AiService {
       `Payment: ${paymentLabel}\n\n` +
       `Write the confirmation message now, asking them to reply to confirm.`;
 
-    return this.run(companyId, null, 'autoreply', 'fast', {
+    return this.run(companyId, null, 'agent', 'fast', {
       system,
       userText,
       maxTokens: 400,
       temperature: 0.3,
+      thinking: 'off',
+      conversationId,
     });
   }
 
@@ -444,6 +461,7 @@ export class AiService {
       userText: task,
       maxTokens: 800,
       temperature: 0.4,
+      thinking: 'off',
     });
   }
 
@@ -467,6 +485,7 @@ export class AiService {
       userText: task,
       maxTokens: 1000,
       temperature: 0.2,
+      thinking: 'off',
     });
   }
 
@@ -525,6 +544,32 @@ export class AiService {
       tier,
       autoOrderEnabled: company.autoOrderEnabled,
       defaultCountryCode: company.defaultCountryCode,
+    };
+  }
+
+  /**
+   * v2 runtime context: the FULL recent transcript (24h window, never
+   * episode-cut), inbound images (when vision is on), voice notes transcribed
+   * with the tenant's language hint, and the customer's recent text (the
+   * retrieval query). Gating of billable work happens inside loadTranscript.
+   */
+  async agentTranscript(
+    companyId: number,
+    conversationId: number,
+  ): Promise<{
+    transcript: string;
+    images: ImageInput[];
+    customerQuery: string;
+    hasCustomerText: boolean;
+  }> {
+    const r = await this.loadTranscript(companyId, conversationId, {
+      windowHours: CONTEXT_WINDOW_HOURS,
+    });
+    return {
+      transcript: r.transcript,
+      images: r.images,
+      customerQuery: r.customerQuery,
+      hasCustomerText: r.hasCustomerText,
     };
   }
 
@@ -589,6 +634,7 @@ export class AiService {
       userText: `Conversation so far:\n${transcript}`,
       maxTokens: 120,
       temperature: 0,
+      thinking: 'off',
     });
     await this.metering.recordUsage(
       companyId,
@@ -597,6 +643,7 @@ export class AiService {
       result.provider,
       'fast',
       result.usage,
+      { modelId: result.modelId, latencyMs: result.latencyMs },
     );
     return this.parseTriage(result.text);
   }
@@ -668,7 +715,6 @@ export class AiService {
       input: Record<string, unknown>,
     ) => Promise<string>,
   ): Promise<{ text: string; toolCorpus: string }> {
-    await this.metering.assertAllowed(companyId);
     const maxSteps = Math.min(Math.max(opts.maxSteps ?? 4, 1), 6);
     const messages: AgentMessage[] = [{ role: 'user', text: opts.userText }];
     let finalText = '';
@@ -676,13 +722,18 @@ export class AiService {
     // can check the reply against (e.g. a price stated but not in any tool result).
     let toolCorpus = '';
 
-    for (let step = 0; step <= maxSteps; step++) {
-      const lastStep = step === maxSteps;
+    for (let step = 0; step < maxSteps; step++) {
+      const lastStep = step === maxSteps - 1;
+      // Gate EVERY step (a multi-step loop must not overshoot the cap).
+      await this.metering.assertAllowed(companyId);
       const result = await this.llm.completeWithTools({
         tier,
         system: opts.system,
         messages,
-        tools: lastStep ? [] : opts.tools, // force a text answer on the last step
+        tools: opts.tools,
+        // Last step: tools stay declared (history holds tool blocks) but the
+        // model must answer in text.
+        toolChoice: lastStep ? 'none' : 'auto',
         maxTokens: opts.maxTokens ?? 700,
         temperature: opts.temperature,
       });
@@ -693,6 +744,7 @@ export class AiService {
         result.provider,
         tier,
         result.usage,
+        { modelId: result.modelId, latencyMs: result.latencyMs },
       );
 
       if (!lastStep && result.stop === 'tool_use' && result.toolCalls.length) {
@@ -700,13 +752,15 @@ export class AiService {
           role: 'assistant',
           text: result.text,
           toolCalls: result.toolCalls,
+          raw: result.raw,
         });
         for (const tc of result.toolCalls) {
           let out: string;
           try {
             out = await executeTool(tc.name, tc.input);
-          } catch (e) {
-            out = `Error: ${e instanceof Error ? e.message : String(e)}`;
+          } catch {
+            // Never leak raw internal errors to the model.
+            out = 'Error: that tool is temporarily unavailable.';
           }
           const clipped = (out || '').slice(0, 6000);
           toolCorpus += `${clipped}\n`;
@@ -744,6 +798,8 @@ export class AiService {
       images?: ImageInput[];
       maxTokens: number;
       temperature?: number;
+      thinking?: 'auto' | 'off';
+      conversationId?: number | null;
     },
   ): Promise<{ text: string }> {
     await this.metering.assertAllowed(companyId);
@@ -756,6 +812,7 @@ export class AiService {
         images: opts.images,
         maxTokens: opts.maxTokens,
         temperature: opts.temperature,
+        thinking: opts.thinking,
       });
       await this.metering.recordUsage(
         companyId,
@@ -764,6 +821,11 @@ export class AiService {
         result.provider,
         tier,
         result.usage,
+        {
+          modelId: result.modelId,
+          latencyMs: result.latencyMs,
+          conversationId: opts.conversationId ?? null,
+        },
       );
       return { text: result.text };
     } finally {
@@ -862,29 +924,23 @@ export class AiService {
    * language the customer has not actually used.
    */
   private languageRule(company: CompanyAiContext): string {
-    const fallback = company.defaultLanguage?.trim() || 'English';
+    const p = company.profile;
+    const langs = p.languages.length ? p.languages : ['English'];
+    const fallback = company.defaultLanguage?.trim() || langs[0];
+    const lower = langs.map((l) => l.toLowerCase());
+    const urduish = lower.some((l) => l.includes('urdu'));
+    const hindi = lower.some((l) => l.includes('hindi') || l.includes('hinglish'));
     return (
-      `Language & script: match the language AND script of the customer's MOST ` +
-      `RECENT message. People switch languages mid-chat — if they opened in ` +
-      `English but then write in Roman Urdu, SWITCH to Roman Urdu; do not lock ` +
-      `to the language they started with. Always follow their latest turn.\n` +
-      `MATCH THEIR SCRIPT: if they write in Latin/Roman letters (e.g. Roman ` +
-      `Urdu "aap kaise hain", "ji bhai order kar dein") reply in that SAME ` +
-      `romanized form using Latin letters — NOT the native script, and not ` +
-      `plain English. Mirror their casual Urdu-English ("Urdish") mix.\n` +
-      `ABSOLUTE BAN — NEVER use Hindi or Roman Hindi, under ANY circumstance. ` +
-      `Reply ONLY in English or Urdu/Roman-Urdu. When replying in Roman Urdu use ` +
-      `Urdu vocabulary (aap, theek hai, shukria, baraye meharbani, kitne ka, mil ` +
-      `jayega, behtareen, zaroor) and NEVER Hindi-only words (FORBIDDEN: ` +
-      `dhanyavaad, kripya, namaste, namaskar, prapt, uplabdh, kshama, sahayata, ` +
-      `dhanyवाद, etc.) — those read as Hindi. Even if the customer writes in ` +
-      `Hindi or Devanagari, reply in Urdu/Roman-Urdu or English — NEVER Hindi.\n` +
-      `Determine all of this ONLY from the customer's own messages. If their ` +
-      `latest message is too short or ambiguous to tell (only a product name, ` +
-      `numbers, emojis, a link, or a bare "ok"/"hi"), keep the language already ` +
-      `used earlier in this chat, otherwise ${fallback}. NEVER switch to a ` +
-      `language or script the customer has not used — in particular never reply ` +
-      `in Chinese unless they wrote in Chinese.`
+      `Languages you may reply in: ${langs.join(', ')}. ` +
+      (p.mirrorLanguage
+        ? `Match the language AND script of the customer's MOST RECENT message when it is one of those; follow switches mid-chat. `
+        : `Always reply in ${langs[0]}. `) +
+      `If they write a language in Latin letters (e.g. Roman Urdu, Hinglish), reply in that same Latin-letter style, not the native script. ` +
+      (urduish && !hindi
+        ? `For Urdu / Roman Urdu use Urdu vocabulary (shukria, baraye meharbani) — not Hindi-only words (dhanyavaad, kripya, namaste). `
+        : '') +
+      `If their latest message is too short to tell (a product name, a number, an emoji, "ok"), keep the language already used, otherwise ${fallback}. ` +
+      `Never switch to a language or script the customer has not used.`
     );
   }
 
@@ -904,7 +960,9 @@ export class AiService {
       },
     });
     if (!c) throw new NotFoundException('Company not found');
+    const bundle = await this.profiles.load(companyId);
     return {
+      profile: bundle.profile,
       name: c.company_name,
       brandTone: c.ai_brand_tone,
       defaultLanguage: c.ai_default_language,
@@ -985,8 +1043,7 @@ export class AiService {
           `base, say you'll confirm it rather than guess.\n` +
           `DISCOUNTS: State a discount, % off, or original price ONLY if it appears in the knowledge ` +
           `base / tool data for that EXACT product (a real compare-at price). Relay it VERBATIM in the ` +
-          `form "{price} after {percent}% discount (original price {original})" — e.g. "Kids Duo is ` +
-          `3346 after 7% discount (original price 3600)". NEVER calculate, derive, round, or invent a ` +
+          `form "{price} after {percent}% discount (original price {original})". NEVER calculate, derive, round, or invent a ` +
           `discount, percentage, or before/after price yourself. If the data shows no discount for that ` +
           `exact product, there is NO discount — only quote the current price.${tone}`,
       },
@@ -1104,8 +1161,14 @@ export class AiService {
       )
       .reverse();
 
-    // Voice: transcribe recent inbound audio (lazy + cached) when enabled.
-    if (voiceOn) {
+    // Voice: transcribe recent inbound audio (lazy + cached) when enabled —
+    // and only while AI is allowed for the tenant (Whisper is billable).
+    const voiceAllowed =
+      voiceOn && !(await this.metering.blockReason(companyId));
+    const voiceHint = voiceAllowed
+      ? (await this.profiles.load(companyId)).profile.voiceLanguage
+      : '';
+    if (voiceAllowed) {
       for (const m of ordered) {
         if (
           m.direction !== 'inbound' ||
@@ -1118,6 +1181,7 @@ export class AiService {
         }
         const result = await this.audio.transcribe(
           diskPathFromWeb(m.media_url),
+          voiceHint,
         );
         if (result) {
           m.transcription = result.text;
@@ -1129,7 +1193,8 @@ export class AiService {
             .catch(() => undefined);
           await this.metering.recordTranscription(
             companyId,
-            Math.round(result.durationSec * WHISPER_MICROS_PER_SEC),
+            Math.round(result.billedSec * WHISPER_MICROS_PER_SEC),
+            conversationId,
           );
         }
       }
@@ -1210,9 +1275,9 @@ export class AiService {
         if (!mime) continue;
         try {
           const disk = diskPathFromWeb(m.media_url);
-          const stat = fs.statSync(disk);
+          const stat = await fs.promises.stat(disk);
           if (stat.size > IMAGE_MAX_BYTES) continue;
-          const dataBase64 = fs.readFileSync(disk).toString('base64');
+          const dataBase64 = (await fs.promises.readFile(disk)).toString('base64');
           images.push({ mime, dataBase64 });
         } catch {
           /* missing/expired file → skip */

@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { ShopifyService } from './shopify.service';
 import { ShopifyOrderSyncService } from './shopify-order-sync.service';
 import { WooCommerceService } from '../commerce/woocommerce.service';
@@ -56,6 +57,7 @@ export class ShopifyOrdersController {
     private readonly orderSync: ShopifyOrderSyncService,
     private readonly commerce: CommerceResolverService,
     private readonly woo: WooCommerceService,
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
@@ -637,13 +639,37 @@ export class ShopifyOrdersController {
   @Post('sync-knowledge')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
-  async syncKnowledge(@CurrentUser() user: { companyId: number }) {
+  async syncKnowledge(
+    @CurrentUser() user: { companyId: number },
+    @Query('storeId') storeIdRaw?: string,
+    @Query('all') all?: string,
+  ) {
     // Runs in the background (job queue) — a full catalogue sync (fetch +
-    // embeddings + inserts) exceeds the platform's HTTP request timeout. Routes
-    // to the right provider's queue by the company's primary store.
-    const kind = await this.commerce.kindForStore(user.companyId);
-    if (kind === 'woocommerce') return this.woo.requestKnowledgeSync(user.companyId);
-    return this.shopifyService.requestKnowledgeSync(user.companyId);
+    // embeddings + inserts) exceeds the platform's HTTP request timeout.
+    // v2: per store (?storeId=) or every active store (?all=1); each store's
+    // chunks are scoped to it, so syncing one never wipes another.
+    const storeId = storeIdRaw ? Number(storeIdRaw) : undefined;
+    if (all === '1' || all === 'true') {
+      const stores = await this.prisma.shopifyStore.findMany({
+        where: { company_id: user.companyId, status: 'active' },
+        select: { id: true, provider: true },
+      });
+      const started: number[] = [];
+      for (const st of stores) {
+        try {
+          if (st.provider === 'woocommerce') await this.woo.requestKnowledgeSync(user.companyId, st.id);
+          else await this.shopifyService.requestKnowledgeSync(user.companyId, st.id);
+          started.push(st.id);
+        } catch {
+          /* skip a disconnected store */
+        }
+      }
+      if (!stores.length) return this.shopifyService.requestKnowledgeSync(user.companyId);
+      return { started: started.length > 0, stores: started };
+    }
+    const kind = await this.commerce.kindForStore(user.companyId, storeId);
+    if (kind === 'woocommerce') return this.woo.requestKnowledgeSync(user.companyId, storeId);
+    return this.shopifyService.requestKnowledgeSync(user.companyId, storeId);
   }
 
   /** Indexed-knowledge status for the tenant (counts + last sync time). */

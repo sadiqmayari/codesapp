@@ -1,5 +1,9 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { OgModule } from '../og/og.module';
+import { AiProfileService } from './ai-profile.service';
+import { AiProfileController } from './ai-profile.controller';
+import { PromptRegistryService } from './prompt-registry.service';
 import { AiController } from './ai.controller';
 import { AiKnowledgeController } from './ai-knowledge.controller';
 import { AiSettingsController } from './ai-settings.controller';
@@ -19,7 +23,7 @@ import { AnthropicProvider } from './providers/anthropic.provider';
 import { OpenAiProvider } from './providers/openai.provider';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, OgModule],
   controllers: [
     AiController,
     AiKnowledgeController,
@@ -27,6 +31,7 @@ import { OpenAiProvider } from './providers/openai.provider';
     ObservabilityController,
     AiEvalController,
     AiEvalCronController,
+    AiProfileController,
   ],
   providers: [
     AiService,
@@ -41,6 +46,8 @@ import { OpenAiProvider } from './providers/openai.provider';
     LlmService,
     AnthropicProvider,
     OpenAiProvider,
+    AiProfileService,
+    PromptRegistryService,
   ],
   // AiService is consumed by BotsModule (auto-reply); AiMeteringService by
   // BillingModule (invoice arrears); AiRagService by ShopifyModule (indexing).
@@ -53,6 +60,9 @@ import { OpenAiProvider } from './providers/openai.provider';
     AiRagService,
     AudioTranscriptionService,
     LlmService,
+    AiProfileService,
+    PromptRegistryService,
+    EmbeddingService,
   ],
 })
 export class AiModule {}

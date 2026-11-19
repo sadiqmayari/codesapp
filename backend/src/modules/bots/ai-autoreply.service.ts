@@ -1,123 +1,78 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
-import { CompanyStatusService } from '../../common/services/company-status.service';
 
 /** Conversation label applied when the AI hands off to a human. */
 export const AI_HANDOFF_LABEL = 'needs-human';
+
+/** Burst window: wait this long after an inbound message so a customer's rapid
+ *  "hi" / "price?" / [photo] arrive as ONE turn with ONE reply. */
+export const AI_BURST_MS = 5000;
 
 interface AutoReplyJob {
   companyId: number;
   conversationId: number;
   messageId: number;
   /**
-   * Force a reply even when a human is assigned. Set by an explicit ai_reply
-   * bot action and by a per-conversation auto-pilot override (ai_autoreply ===
-   * true). Inherited/workspace-default auto-replies leave this falsy.
+   * Force a reply even when the chat isn't auto-piloted. Set by an explicit
+   * ai_reply bot action. An explicit per-chat mute (ai_autoreply === false)
+   * still wins — the runtime re-checks every gate when the job runs.
    */
   force?: boolean;
 }
 
 /**
- * AI auto-reply GATE + bridge to the orchestrator.
+ * Bridge from inbound automation (BotEngine) to the AI agent runtime
+ * (`ai-agent` queue, AiAgentModule).
  *
- * This service no longer generates replies itself — the single conversational
- * brain is `AiAgentService` (ShopifyModule, `ai-agent` queue). All this worker
- * does is resolve whether the AI is allowed to answer this chat and, if so,
- * hand the message to the orchestrator. The old "two-brain" flow (a separate
- * `ai-order` pipeline plus `AiService.autoReplyDecision`) was removed: it was a
- * second, divergent implementation of the same behaviour.
- *
- * Runs in a dedicated `ai` job queue (not the inbound message worker) so the
- * gate never holds a message-worker slot. Lives in BotsModule to avoid an
- * AiModule → InboxModule import cycle.
+ * v2: enqueues the agent DIRECTLY (the old `ai` gate hop only re-read the same
+ * flags and added a job + latency). One pending turn per conversation
+ * (dedupKey) after a short burst window, serialised per conversation. ALL
+ * gates (mute, handoff pause, business hours, opt-out, cap) are evaluated by
+ * the runtime at RUN time, so a queued job never replies into a chat a human
+ * has taken over. The `ai` worker remains only to forward jobs queued before
+ * this deploy. Lives in BotsModule to avoid an AiModule → InboxModule cycle.
  */
 @Injectable()
 export class AiAutoReplyService implements OnModuleInit {
   private readonly logger = new Logger(AiAutoReplyService.name);
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly jobQueue: JobQueueService,
-    private readonly companyStatus: CompanyStatusService,
-  ) {}
+  constructor(private readonly jobQueue: JobQueueService) {}
 
   onModuleInit(): void {
-    // The gate itself is cheap (one DB read + an enqueue), but keep a generous
-    // lease so a slow DB never lets a second worker double-enqueue.
+    // Legacy forwarder: pre-v2 jobs in the `ai` queue.
     this.jobQueue.registerWorker(
       'ai',
-      (p) => this.process(p as AutoReplyJob),
-      3,
-      120,
+      (p) => this.enqueue(p as AutoReplyJob),
+      2,
+      60,
     );
   }
 
-  /** Queue an auto-reply for an inbound message (best-effort, never throws). */
+  /** Queue an AI turn for an inbound message (best-effort, never throws). */
   async enqueue(job: AutoReplyJob): Promise<void> {
     try {
-      // Serialize AI work per conversation: the decision for an earlier message
-      // must complete before the next is evaluated, otherwise two
-      // near-simultaneous inbound messages produce parallel / duplicate replies.
-      await this.jobQueue.enqueue('ai', job, {
-        serialKey: `conv:ai:${job.conversationId}`,
-      });
+      await this.jobQueue.enqueue(
+        'ai-agent',
+        {
+          companyId: job.companyId,
+          conversationId: job.conversationId,
+          messageId: job.messageId,
+          force: !!job.force,
+        },
+        {
+          delayMs: AI_BURST_MS,
+          serialKey: `conv:ai-agent:${job.conversationId}`,
+          // One PENDING turn per chat — later messages in the burst fold into
+          // it (the runtime always reads every unanswered inbound message).
+          dedupKey: `ai-agent:turn:${job.conversationId}`,
+        },
+      );
     } catch (e) {
       this.logger.warn(
-        `AI auto-reply enqueue failed for convo ${job.conversationId}: ${
+        `AI turn enqueue failed for convo ${job.conversationId}: ${
           e instanceof Error ? e.message : String(e)
         }`,
       );
     }
-  }
-
-  private async process(job: AutoReplyJob): Promise<void> {
-    // Suspended/inactive tenant: pause AI auto-reply (guards a job queued
-    // before suspension took effect).
-    if (!(await this.companyStatus.isActive(job.companyId))) return;
-
-    const convo = await this.prisma.conversation.findFirst({
-      where: {
-        id: job.conversationId,
-        company_id: job.companyId,
-        deleted_at: null,
-      },
-      select: {
-        id: true,
-        ai_autoreply: true,
-        company: { select: { ai_autoreply_enabled: true } },
-      },
-    });
-    if (!convo) return;
-
-    // Effective auto-reply resolution (mirrors BotEngineService): an explicit
-    // per-chat FALSE (handoff-mute / tenant mute) ALWAYS wins so a human owns
-    // the chat — even under workspace all-chats. Otherwise active when the
-    // workspace toggle is on OR the chat is per-chat auto-piloted. When active,
-    // the AI answers REGARDLESS of assignment; only an explicit mute stops it.
-    const allChats = convo.company?.ai_autoreply_enabled === true;
-    const perChat = convo.ai_autoreply; // true | false | null
-    if (perChat === false) return; // muted / handed-off → leave it to the human
-    const effectiveAuto = allChats || perChat === true;
-    // Allow when the chat is AI-active OR this is an explicit forced reply
-    // (an `ai_reply` bot action sets job.force on a non-muted chat). The AI is
-    // governed ENTIRELY by the tenant's own toggles now — the former
-    // platform-level rollout brake (`ai_agent_company_ids`) was removed.
-    if (!effectiveAuto && !job.force) return;
-
-    // Hand off to the orchestrator. The serialKey MUST match the one
-    // AiAgentService.enqueue() uses (`conv:ai-agent:{id}`) — we enqueue the
-    // 'ai-agent' queue directly here (no module import, to avoid the
-    // Billing↔Ai↔Inbox cycle), so without this key two near-simultaneous
-    // inbound messages spawn two parallel agent runs → duplicate AI replies.
-    await this.jobQueue.enqueue(
-      'ai-agent',
-      {
-        companyId: job.companyId,
-        conversationId: job.conversationId,
-        messageId: job.messageId,
-      },
-      { serialKey: `conv:ai-agent:${job.conversationId}` },
-    );
   }
 }

@@ -9,7 +9,7 @@ import { InboxService } from '../inbox/inbox.service';
 import { SendMessageType } from '../inbox/dto/send-message.dto';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import { AiAutoReplyService } from './ai-autoreply.service';
-import { resolveAiCapabilities } from '../../common/utils/ai-capabilities';
+import { resolveAiCapabilities, resolveAutoReply } from '../../common/utils/ai-capabilities';
 
 export interface BotInboundMessage {
   id: number;
@@ -166,9 +166,14 @@ export class BotEngineService {
     // sticker/video/document the AI can't read).
     const hasText = !!msg.content;
     const caps = resolveAiCapabilities(convo.company ?? {}, 'fast');
+    // v2: images/documents always reach the agent runtime when AI is driving
+    // the chat — a caption-less photo can be a payment slip (no vision needed)
+    // or a product question (vision). The runtime decides; it used to be
+    // silently dropped here.
     const aiActionableMedia =
       (msg.messageType === 'audio' && caps.voice) ||
-      (msg.messageType === 'image' && caps.vision);
+      msg.messageType === 'image' ||
+      msg.messageType === 'document';
     if (!hasText && !aiActionableMedia) return;
 
     // Per-chat autopilot PAUSES keyword bots for THIS chat. When the AI is
@@ -179,8 +184,7 @@ export class BotEngineService {
     // mute) keeps bots active so a non-AI chat still gets keyword automation.
     const allChats = convo.company?.ai_autoreply_enabled === true;
     const perChat = convo.ai_autoreply; // true | false | null
-    const effectiveAuto =
-      perChat === false ? false : allChats || perChat === true;
+    const effectiveAuto = resolveAutoReply(perChat, allChats);
     const forced = effectiveAuto;
 
     // Keyword bots run when the chat is NOT auto-piloted, OR when this is an

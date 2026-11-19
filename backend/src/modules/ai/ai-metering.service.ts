@@ -4,19 +4,21 @@ import { PlatformSettingService } from '../../common/services/platform-setting.s
 import {
   AI_DEFAULT_CAP_DEFAULT,
   AI_DEFAULT_CAP_KEY,
+  AI_KILL_SWITCH_KEY,
+  AI_MODEL_KEY,
   AI_PRICE_MULTIPLIER_DEFAULT,
   AI_PRICE_MULTIPLIER_KEY,
   AI_PROVIDER_DEFAULT,
   AI_PROVIDER_KEY,
   AiFeature,
   AiProviderName,
-  CACHE_READ_MULTIPLIER,
   CACHE_WRITE_MULTIPLIER,
+  DEFAULT_TIER_MODELS,
   EST_IMAGE_TOKENS,
   EST_REPLY_IN_TOKENS,
   EST_REPLY_OUT_TOKENS,
-  PROVIDER_MODELS,
   ModelTier,
+  modelSpec,
 } from './ai.constants';
 import { WHISPER_MICROS_PER_SEC } from './audio-transcription.service';
 import { NormalizedUsage } from './providers/llm-provider.interface';
@@ -29,6 +31,25 @@ export interface AiCostEstimates {
   visionPer100PhotosUsd: number;
   voicePerMinuteUsd: number;
 }
+
+/** Optional per-call context written on the ledger row (v2). */
+export interface UsageContext {
+  /** Exact model id used (falls back to the tier default). */
+  modelId?: string;
+  conversationId?: number | null;
+  latencyMs?: number;
+  promptVersion?: string;
+  success?: boolean;
+}
+
+/** Why AI is currently unavailable for a tenant (null = available). */
+export type AiBlockReason =
+  | 'platform_off'
+  | 'plan'
+  | 'admin_disabled'
+  | 'tenant_disabled'
+  | 'cap_reached'
+  | null;
 
 export interface AiMonthlyUsage {
   period: string;
@@ -44,11 +65,20 @@ export interface AiMonthlyUsage {
   multiplier: number;
 }
 
+const BLOCK_MESSAGES: Record<Exclude<AiBlockReason, null>, string> = {
+  platform_off: 'AI is temporarily paused by the platform.',
+  plan: 'AI is not included in your plan.',
+  admin_disabled: 'AI has been disabled for your account by the platform.',
+  tenant_disabled: 'AI is disabled for your account.',
+  cap_reached: 'Monthly AI usage limit reached. Contact your administrator.',
+};
+
 /**
  * AI usage metering + billing/gating. Writes the authoritative per-call
  * ledger (ai_usage_log) AND a fast monthly rollup (usage_metering). Enforces
- * the plan/company AI gate and the monthly spend cap. Cost is stored RAW
- * (micro-dollars); the markup multiplier is applied at billing/display.
+ * the platform kill switch, the plan/company/super-admin gates and the monthly
+ * spend cap. Cost is stored RAW (micro-dollars); the markup multiplier is
+ * applied at billing/display and snapshotted on every ledger row.
  */
 @Injectable()
 export class AiMeteringService {
@@ -63,22 +93,27 @@ export class AiMeteringService {
     return new Date().toISOString().slice(0, 7);
   }
 
-  /** Raw provider cost (micro-dollars) for a usage record on a model tier. */
+  /** Raw provider cost (micro-dollars) for a usage record. */
   computeCostMicros(
     provider: AiProviderName,
     tier: ModelTier,
     usage: NormalizedUsage,
+    modelId?: string,
   ): number {
-    const m = PROVIDER_MODELS[provider][tier];
+    const m = modelSpec(
+      modelId ?? DEFAULT_TIER_MODELS[provider][tier],
+      provider,
+      tier,
+    );
     const cost =
       usage.inputTokens * m.inMicros +
       usage.outputTokens * m.outMicros +
-      usage.cacheReadTokens * m.inMicros * CACHE_READ_MULTIPLIER +
+      usage.cacheReadTokens * m.cacheReadMicros +
       usage.cacheWriteTokens * m.inMicros * CACHE_WRITE_MULTIPLIER;
     return Math.round(cost);
   }
 
-  private async getMultiplier(): Promise<number> {
+  async getMultiplier(): Promise<number> {
     const v = await this.platformSetting.get(
       AI_PRICE_MULTIPLIER_KEY,
       AI_PRICE_MULTIPLIER_DEFAULT,
@@ -92,11 +127,8 @@ export class AiMeteringService {
     return Math.ceil((costMicros * multiplier) / 10000);
   }
 
-  /** Effective monthly cap (cents): company override ?? platform default. */
-  private async getCapCents(companyOverride: number | null): Promise<number> {
-    if (companyOverride !== null && companyOverride !== undefined) {
-      return companyOverride;
-    }
+  /** Platform default monthly cap (billed cents; 0 = unlimited). */
+  async getDefaultCapCents(): Promise<number> {
     const v = await this.platformSetting.get(
       AI_DEFAULT_CAP_KEY,
       AI_DEFAULT_CAP_DEFAULT,
@@ -106,39 +138,141 @@ export class AiMeteringService {
   }
 
   /**
-   * Gate check before any AI call. Throws 403 when AI is not in the plan,
-   * disabled for the company, or the monthly spend cap is reached.
+   * Effective monthly cap (billed cents, 0 = unlimited). The super-admin
+   * ceiling (per-tenant `ai_admin_cap_cents` ?? platform default) is HARD; the
+   * tenant's own `ai_monthly_cap_cents` can only LOWER it. A tenant value of
+   * 0/NULL means "use the ceiling" — it can no longer mean unlimited (that was
+   * the cap-bypass bug).
    */
-  async assertAllowed(companyId: number): Promise<void> {
+  async effectiveCapCents(c: {
+    ai_monthly_cap_cents: number | null;
+    ai_admin_cap_cents?: number | null;
+  }): Promise<number> {
+    const ceiling =
+      c.ai_admin_cap_cents !== null && c.ai_admin_cap_cents !== undefined
+        ? Math.max(0, c.ai_admin_cap_cents)
+        : await this.getDefaultCapCents();
+    const own =
+      c.ai_monthly_cap_cents && c.ai_monthly_cap_cents > 0
+        ? c.ai_monthly_cap_cents
+        : 0;
+    if (!own) return ceiling;
+    if (ceiling === 0) return own;
+    return Math.min(own, ceiling);
+  }
+
+  /** Is the platform-wide AI kill switch on (AI allowed)? */
+  async platformEnabled(): Promise<boolean> {
+    return (await this.platformSetting.get(AI_KILL_SWITCH_KEY, 'on')) !== 'off';
+  }
+
+  /**
+   * Why AI is unavailable for a tenant right now (null = available). Never
+   * throws — powers the inbox "AI paused" badge and the settings banner.
+   */
+  async blockReason(companyId: number): Promise<AiBlockReason> {
+    if (!(await this.platformEnabled())) return 'platform_off';
     const company = await this.prisma.company.findUnique({
       where: { id: companyId },
       select: {
         ai_enabled: true,
+        ai_admin_disabled: true,
         ai_monthly_cap_cents: true,
+        ai_admin_cap_cents: true,
         subscription: { select: { ai_enabled: true } },
       },
     });
-    if (!company) throw new ForbiddenException('Company not found.');
-    if (!company.subscription?.ai_enabled) {
-      throw new ForbiddenException('AI is not included in your plan.');
-    }
-    if (!company.ai_enabled) {
-      throw new ForbiddenException('AI is disabled for your account.');
-    }
-
-    const cap = await this.getCapCents(company.ai_monthly_cap_cents);
+    if (!company || !company.subscription?.ai_enabled) return 'plan';
+    if (company.ai_admin_disabled) return 'admin_disabled';
+    if (!company.ai_enabled) return 'tenant_disabled';
+    const cap = await this.effectiveCapCents(company);
     if (cap > 0) {
-      const usage = await this.getMonthlyUsage(companyId, company.ai_monthly_cap_cents);
-      if (usage.billedCents >= cap) {
-        throw new ForbiddenException(
-          'Monthly AI usage limit reached. Contact your administrator.',
-        );
-      }
+      const usage = await this.getMonthlyUsage(companyId, cap);
+      if (usage.billedCents >= cap) return 'cap_reached';
     }
+    return null;
   }
 
   /**
-   * Record one AI call: append to the ledger and bump the monthly rollup.
+   * Gate check before ANY AI spend (model call, transcription, embedding).
+   * Throws 403 with a tenant-readable message when blocked.
+   */
+  async assertAllowed(companyId: number): Promise<void> {
+    const reason = await this.blockReason(companyId);
+    if (reason) throw new ForbiddenException(BLOCK_MESSAGES[reason]);
+  }
+
+  /**
+   * Shared monthly-rollup upsert. `countRequest` = true only for model
+   * (chat/agent) calls — embeddings and transcriptions add cost/tokens but are
+   * not "AI requests" (they inflated the Requests tile before).
+   */
+  private async bumpRollup(
+    companyId: number,
+    period: string,
+    inputTokens: number,
+    outputTokens: number,
+    costMicros: number,
+    countRequest: boolean,
+  ): Promise<void> {
+    const req = countRequest ? 1 : 0;
+    await this.prisma.$executeRawUnsafe(
+      `INSERT INTO usage_metering
+         (company_id, period, ai_requests, ai_input_tokens, ai_output_tokens, ai_cost_micros, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE
+         ai_requests = ai_requests + ?,
+         ai_input_tokens = ai_input_tokens + ?,
+         ai_output_tokens = ai_output_tokens + ?,
+         ai_cost_micros = ai_cost_micros + ?,
+         updated_at = NOW()`,
+      companyId,
+      period,
+      req,
+      inputTokens,
+      outputTokens,
+      costMicros,
+      req,
+      inputTokens,
+      outputTokens,
+      costMicros,
+    );
+  }
+
+  private async ledger(
+    companyId: number,
+    data: {
+      userId?: number | null;
+      feature: AiFeature;
+      model: string;
+      inputTokens: number;
+      outputTokens: number;
+      costMicros: number;
+      ctx?: UsageContext;
+    },
+  ): Promise<void> {
+    const multiplier = await this.getMultiplier();
+    await this.prisma.aiUsageLog.create({
+      data: {
+        company_id: companyId,
+        user_id: data.userId ?? undefined,
+        period: this.currentPeriod(),
+        feature: data.feature,
+        model: data.model.slice(0, 64),
+        input_tokens: data.inputTokens,
+        output_tokens: data.outputTokens,
+        cost_micros: BigInt(data.costMicros),
+        conversation_id: data.ctx?.conversationId ?? undefined,
+        latency_ms: data.ctx?.latencyMs ?? undefined,
+        prompt_version: data.ctx?.promptVersion?.slice(0, 64),
+        success: data.ctx?.success ?? true,
+        multiplier_x1000: Math.round(multiplier * 1000),
+      },
+    });
+  }
+
+  /**
+   * Record one model call: append to the ledger and bump the monthly rollup.
    * Best-effort — a metering write failure must not fail the user request
    * (the model call already succeeded), but it is logged loudly since it
    * affects billing accuracy.
@@ -150,45 +284,29 @@ export class AiMeteringService {
     provider: AiProviderName,
     tier: ModelTier,
     usage: NormalizedUsage,
+    ctx: UsageContext = {},
   ): Promise<void> {
-    const period = this.currentPeriod();
-    const modelId = PROVIDER_MODELS[provider][tier].id;
-    const costMicros = this.computeCostMicros(provider, tier, usage);
+    const modelId = ctx.modelId ?? DEFAULT_TIER_MODELS[provider][tier];
+    const costMicros = this.computeCostMicros(provider, tier, usage, modelId);
     const totalInput =
       usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
-
     try {
-      await this.prisma.aiUsageLog.create({
-        data: {
-          company_id: companyId,
-          user_id: userId ?? undefined,
-          period,
-          feature,
-          model: modelId,
-          input_tokens: totalInput,
-          output_tokens: usage.outputTokens,
-          cost_micros: BigInt(costMicros),
-        },
+      await this.ledger(companyId, {
+        userId,
+        feature,
+        model: modelId,
+        inputTokens: totalInput,
+        outputTokens: usage.outputTokens,
+        costMicros,
+        ctx,
       });
-
-      await this.prisma.$executeRawUnsafe(
-        `INSERT INTO usage_metering
-           (company_id, period, ai_requests, ai_input_tokens, ai_output_tokens, ai_cost_micros, updated_at)
-         VALUES (?, ?, 1, ?, ?, ?, NOW())
-         ON DUPLICATE KEY UPDATE
-           ai_requests = ai_requests + 1,
-           ai_input_tokens = ai_input_tokens + ?,
-           ai_output_tokens = ai_output_tokens + ?,
-           ai_cost_micros = ai_cost_micros + ?,
-           updated_at = NOW()`,
+      await this.bumpRollup(
         companyId,
-        period,
+        this.currentPeriod(),
         totalInput,
         usage.outputTokens,
         costMicros,
-        totalInput,
-        usage.outputTokens,
-        costMicros,
+        true,
       );
     } catch (e) {
       this.logger.error(
@@ -200,41 +318,25 @@ export class AiMeteringService {
   }
 
   /**
-   * Record a Whisper transcription cost (not token-based). Writes a ledger row
-   * (feature 'transcription', model 'whisper-1', 0 tokens) and bumps the
-   * monthly cost rollup so it folds into the AI bill. Best-effort.
+   * Record a Whisper transcription cost (not token-based). Folds into the AI
+   * bill but does not count as an AI request. Best-effort.
    */
   async recordTranscription(
     companyId: number,
     costMicros: number,
+    conversationId?: number | null,
   ): Promise<void> {
-    const period = this.currentPeriod();
     const micros = Math.max(0, Math.round(costMicros));
     try {
-      await this.prisma.aiUsageLog.create({
-        data: {
-          company_id: companyId,
-          period,
-          feature: 'transcription',
-          model: 'whisper-1',
-          input_tokens: 0,
-          output_tokens: 0,
-          cost_micros: BigInt(micros),
-        },
+      await this.ledger(companyId, {
+        feature: 'transcription',
+        model: 'whisper-1',
+        inputTokens: 0,
+        outputTokens: 0,
+        costMicros: micros,
+        ctx: { conversationId },
       });
-      await this.prisma.$executeRawUnsafe(
-        `INSERT INTO usage_metering
-           (company_id, period, ai_requests, ai_input_tokens, ai_output_tokens, ai_cost_micros, updated_at)
-         VALUES (?, ?, 1, 0, 0, ?, NOW())
-         ON DUPLICATE KEY UPDATE
-           ai_requests = ai_requests + 1,
-           ai_cost_micros = ai_cost_micros + ?,
-           updated_at = NOW()`,
-        companyId,
-        period,
-        micros,
-        micros,
-      );
+      await this.bumpRollup(companyId, this.currentPeriod(), 0, 0, micros, false);
     } catch (e) {
       this.logger.error(
         `AI transcription metering failed for company ${companyId}: ${
@@ -245,45 +347,25 @@ export class AiMeteringService {
   }
 
   /**
-   * Record an embedding (RAG indexing) cost. Token-based; model
-   * 'text-embedding-3-small'. Best-effort, folds into the monthly AI bill.
+   * Record an embedding cost (indexing OR a retrieval query). Token-based;
+   * folds into the monthly AI bill, not a request. Best-effort.
    */
   async recordEmbedding(
     companyId: number,
     tokens: number,
     costMicros: number,
   ): Promise<void> {
-    const period = this.currentPeriod();
     const micros = Math.max(0, Math.round(costMicros));
     const tok = Math.max(0, Math.round(tokens));
     try {
-      await this.prisma.aiUsageLog.create({
-        data: {
-          company_id: companyId,
-          period,
-          feature: 'embedding',
-          model: 'text-embedding-3-small',
-          input_tokens: tok,
-          output_tokens: 0,
-          cost_micros: BigInt(micros),
-        },
+      await this.ledger(companyId, {
+        feature: 'embedding',
+        model: 'text-embedding-3-small',
+        inputTokens: tok,
+        outputTokens: 0,
+        costMicros: micros,
       });
-      await this.prisma.$executeRawUnsafe(
-        `INSERT INTO usage_metering
-           (company_id, period, ai_requests, ai_input_tokens, ai_output_tokens, ai_cost_micros, updated_at)
-         VALUES (?, ?, 1, ?, 0, ?, NOW())
-         ON DUPLICATE KEY UPDATE
-           ai_requests = ai_requests + 1,
-           ai_input_tokens = ai_input_tokens + ?,
-           ai_cost_micros = ai_cost_micros + ?,
-           updated_at = NOW()`,
-        companyId,
-        period,
-        tok,
-        micros,
-        tok,
-        micros,
-      );
+      await this.bumpRollup(companyId, this.currentPeriod(), tok, 0, micros, false);
     } catch (e) {
       this.logger.error(
         `AI embedding metering failed for company ${companyId}: ${
@@ -296,7 +378,7 @@ export class AiMeteringService {
   /** Current-month AI usage for a company (billed amount + cap). */
   async getMonthlyUsage(
     companyId: number,
-    capOverride?: number | null,
+    resolvedCap?: number,
   ): Promise<AiMonthlyUsage> {
     const period = this.currentPeriod();
     const [row, multiplier] = await Promise.all([
@@ -314,8 +396,8 @@ export class AiMeteringService {
 
     const costMicros = Number(row?.ai_cost_micros ?? 0n);
     const cap =
-      capOverride !== undefined
-        ? await this.getCapCents(capOverride)
+      resolvedCap !== undefined
+        ? resolvedCap
         : await this.resolveCapForCompany(companyId);
 
     return {
@@ -330,12 +412,15 @@ export class AiMeteringService {
     };
   }
 
-  private async resolveCapForCompany(companyId: number): Promise<number> {
+  async resolveCapForCompany(companyId: number): Promise<number> {
     const c = await this.prisma.company.findUnique({
       where: { id: companyId },
-      select: { ai_monthly_cap_cents: true },
+      select: { ai_monthly_cap_cents: true, ai_admin_cap_cents: true },
     });
-    return this.getCapCents(c?.ai_monthly_cap_cents ?? null);
+    return this.effectiveCapCents({
+      ai_monthly_cap_cents: c?.ai_monthly_cap_cents ?? null,
+      ai_admin_cap_cents: c?.ai_admin_cap_cents ?? null,
+    });
   }
 
   /**
@@ -362,9 +447,8 @@ export class AiMeteringService {
 
   /**
    * Tenant-facing cost estimates (USD, billed) for the AI quality / vision /
-   * voice selectors. Priced against the ACTIVE provider's models and the current
-   * markup so the numbers stay honest if the platform provider changes. These
-   * are DISPLAY estimates (representative token counts), never billed.
+   * voice selectors. Priced against the ACTIVE provider's LIVE tier models and
+   * the current markup. DISPLAY estimates only, never billed.
    */
   async getCostEstimates(): Promise<AiCostEstimates> {
     const [providerRaw, multiplier] = await Promise.all([
@@ -373,7 +457,16 @@ export class AiMeteringService {
     ]);
     const provider: AiProviderName =
       providerRaw === 'openai' ? 'openai' : 'anthropic';
-    const models = PROVIDER_MODELS[provider];
+    const live = async (t: ModelTier) =>
+      modelSpec(
+        await this.platformSetting.get(
+          AI_MODEL_KEY(provider, t),
+          DEFAULT_TIER_MODELS[provider][t],
+        ),
+        provider,
+        t,
+      );
+    const models = { fast: await live('fast'), smart: await live('smart') };
 
     const replyMicros = (m: { inMicros: number; outMicros: number }): number =>
       EST_REPLY_IN_TOKENS * m.inMicros + EST_REPLY_OUT_TOKENS * m.outMicros;

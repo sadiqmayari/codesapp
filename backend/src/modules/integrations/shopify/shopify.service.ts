@@ -208,7 +208,7 @@ type ShopifyJob =
     }
   | { kind: 'pendingTag'; companyId: number; orderMessageId: number }
   | { kind: 'noWhatsapp'; companyId: number; orderMessageId: number }
-  | { kind: 'syncKnowledge'; companyId: number }
+  | { kind: 'syncKnowledge'; companyId: number; storeId?: number }
   | { kind: 'syncCancellations'; companyId: number }
   | { kind: 'syncOrderSources'; companyId: number }
   | { kind: 'backfillPrepaidTags'; companyId: number }
@@ -488,9 +488,9 @@ export class ShopifyService implements OnModuleInit {
     } else if (job.kind === 'noWhatsapp') {
       await this.processNoWhatsappTag(job.companyId, job.orderMessageId);
     } else if (job.kind === 'syncKnowledge') {
-      const res = await this.syncKnowledge(job.companyId);
+      const res = await this.syncKnowledge(job.companyId, job.storeId);
       this.logger.log(
-        `KB sync (company ${job.companyId}): ${res.products} products, ${res.policies} policies, mode=${res.mode}`,
+        `KB sync (company ${job.companyId}, store ${job.storeId ?? 'primary'}): ${res.products} products, ${res.policies} policies, mode=${res.mode}`,
       );
     } else if (job.kind === 'syncCancellations') {
       await this.syncOrderCancellations(job.companyId);
@@ -4724,7 +4724,9 @@ export class ShopifyService implements OnModuleInit {
       });
     }
     const stores = await this.prisma.shopifyStore.findMany({
-      where: { company_id: companyId, status: 'active' },
+      // Shopify-only: a WooCommerce primary must never be returned for a
+      // Shopify Admin API call (it has no Shopify token → silent failures).
+      where: { company_id: companyId, status: 'active', provider: 'shopify' },
       orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
       select: {
         id: true,
@@ -5562,10 +5564,22 @@ export class ShopifyService implements OnModuleInit {
    */
   async requestKnowledgeSync(
     companyId: number,
-  ): Promise<{ started: boolean }> {
-    await this.requireAdminApi(companyId); // throws a clean 4xx if not connected
-    await this.jobQueue.enqueue('shopify', { kind: 'syncKnowledge', companyId });
-    return { started: true };
+    storeId?: number,
+    opts: { delayMs?: number } = {},
+  ): Promise<{ started: boolean; storeId: number | null }> {
+    // Throws a clean 4xx if not connected; resolves the concrete store.
+    const api = await this.requireAdminApi(companyId, storeId);
+    const sid = api.storeId ?? undefined;
+    // Make sure product-change webhooks exist so this store stays fresh.
+    if (sid && !opts.delayMs) void this.ensureInventoryWebhook(companyId, sid);
+    await this.jobQueue.enqueue(
+      'shopify',
+      { kind: 'syncKnowledge', companyId, storeId: sid },
+      // One pending sync per store: product webhooks / nightly / manual all
+      // fold into it (a debounced webhook sync waits `delayMs`).
+      { dedupKey: `kb-sync:${companyId}:${sid ?? 0}`, delayMs: opts.delayMs },
+    );
+    return { started: true, storeId: api.storeId ?? null };
   }
 
   /**
@@ -5784,12 +5798,15 @@ export class ShopifyService implements OnModuleInit {
     return this.rag.status(companyId);
   }
 
-  async syncKnowledge(companyId: number): Promise<{
+  async syncKnowledge(companyId: number, storeId?: number): Promise<{
     products: number;
     policies: number;
     mode: 'rag' | 'keyword';
   }> {
-    const api = await this.requireAdminApi(companyId);
+    const api = await this.requireAdminApi(companyId, storeId);
+    // v2: every chunk is scoped to its store, so syncing store B never wipes
+    // store A (0 = legacy single-store company without a store row).
+    const sid = api.storeId ?? 0;
     // Page size kept modest (50) because each product also pulls variants +
     // metafields — a larger page can exceed Shopify's GraphQL query-cost limit
     // (which surfaces as a throttle error).
@@ -5854,8 +5871,10 @@ export class ShopifyService implements OnModuleInit {
     let currency = '';
     const nodes: ProdNode[] = [];
     let cursor: string | null = null;
-    // Safety cap: at most 10 pages (500 products) per sync.
-    for (let page = 0; page < 10; page++) {
+    // Safety cap: at most 20 pages (1,000 products) per sync — logged when hit.
+    let truncated = false;
+    for (let page = 0; page < 20; page++) {
+      if (page === 19) truncated = true;
       let res: {
         data?: {
           shop?: { name: string; currencyCode: string };
@@ -5903,8 +5922,16 @@ export class ShopifyService implements OnModuleInit {
       for (const e of conn?.edges ?? []) {
         if (e.node.onlineStoreUrl) nodes.push(e.node);
       }
-      if (!conn?.pageInfo.hasNextPage) break;
+      if (!conn?.pageInfo.hasNextPage) {
+        truncated = false;
+        break;
+      }
       cursor = conn.pageInfo.endCursor;
+    }
+    if (truncated) {
+      this.logger.warn(
+        `Shopify KB sync (company ${companyId}, store ${sid}): catalogue capped at ${nodes.length} products`,
+      );
     }
 
     const stripHtml = (s: string | null | undefined): string =>
@@ -6073,6 +6100,7 @@ export class ShopifyService implements OnModuleInit {
       // Store policies — best-effort, in a SEPARATE query so a missing field /
       // scope never breaks product indexing.
       const policyItems: RagItem[] = [];
+      let policiesFetched = false;
       try {
         const polRaw = await this.shopifyGraphql<{
           data?: {
@@ -6091,6 +6119,7 @@ export class ShopifyService implements OnModuleInit {
           `query { shop { shopPolicies { type title body } } }`,
           {},
         );
+        policiesFetched = Array.isArray(polRaw?.data?.shop?.shopPolicies);
         for (const pol of polRaw?.data?.shop?.shopPolicies ?? []) {
           const text = stripHtml(pol.body).slice(0, 4000);
           if (text.length <= 20) continue;
@@ -6106,6 +6135,7 @@ export class ShopifyService implements OnModuleInit {
           });
         }
       } catch (err) {
+        policiesFetched = false;
         this.logger.warn(
           `Shopify policy fetch skipped (company ${companyId}): ${
             err instanceof Error ? err.message : String(err)
@@ -6117,12 +6147,13 @@ export class ShopifyService implements OnModuleInit {
         companyId,
         'product',
         productItems,
+        sid,
       );
-      const polRes = await this.rag.indexSource(
-        companyId,
-        'policy',
-        policyItems,
-      );
+      // Only replace policies when the policy query actually succeeded — a
+      // failed/denied fetch must not wipe the existing policy chunks.
+      const polRes = policiesFetched
+        ? await this.rag.indexSource(companyId, 'policy', policyItems, sid)
+        : { embedded: false, indexed: 0 };
 
       // Embeddings worked → remove the legacy giant catalogue KB entry so it
       // isn't injected on top of retrieval.
@@ -10081,6 +10112,11 @@ export class ShopifyService implements OnModuleInit {
       })
       .catch(() => undefined);
     await this.prisma.shopifyStore.delete({ where: { id: store.id } });
+    // v2: the removed store's products/policies must not stay retrievable.
+    await this.rag.clear(companyId, undefined, store.id).catch(() => undefined);
+    await this.prisma.whatsAppNumber
+      .updateMany({ where: { company_id: companyId, default_store_id: store.id }, data: { default_store_id: null } })
+      .catch(() => undefined);
     // Promote another store to primary if we removed the primary one.
     if (store.is_primary) {
       const next = await this.prisma.shopifyStore.findFirst({
@@ -10307,13 +10343,22 @@ export class ShopifyService implements OnModuleInit {
           userErrors { field message }
         }
       }`;
-      await this.shopifyGraphql(
-        api.shopDomain,
-        api.apiVersion,
-        api.token,
-        mutation,
-        { topic: 'INVENTORY_LEVELS_UPDATE', sub: { callbackUrl: url, format: 'JSON' } },
-      );
+      // v2: product changes keep the AI's catalogue knowledge fresh (each
+      // fires a debounced per-store re-sync). "Already taken" = success.
+      for (const topic of [
+        'INVENTORY_LEVELS_UPDATE',
+        'PRODUCTS_CREATE',
+        'PRODUCTS_UPDATE',
+        'PRODUCTS_DELETE',
+      ]) {
+        await this.shopifyGraphql(
+          api.shopDomain,
+          api.apiVersion,
+          api.token,
+          mutation,
+          { topic, sub: { callbackUrl: url, format: 'JSON' } },
+        ).catch(() => undefined);
+      }
     } catch (e) {
       this.logger.warn(
         `ensureInventoryWebhook (store ${storeId}) failed: ${
@@ -10501,6 +10546,17 @@ export class ShopifyService implements OnModuleInit {
     // it + schedules a delayed recovery template (gated; dark unless enabled).
     if (topic === 'checkouts/create' || topic === 'checkouts/update') {
       return this.handleAbandonedCheckout(company.id, rawBody, storeId);
+    }
+
+    // v2: a product was created/changed/deleted → refresh THIS store's AI
+    // knowledge after a 10-min debounce (one pending sync per store).
+    if (topic === 'products/create' || topic === 'products/update' || topic === 'products/delete') {
+      if (storeId != null) {
+        await this.requestKnowledgeSync(company.id, storeId, { delayMs: 10 * 60_000 }).catch(
+          () => undefined,
+        );
+      }
+      return { received: true };
     }
 
     // Inventory module — mirror a stock-level change (the two-way sync pull).

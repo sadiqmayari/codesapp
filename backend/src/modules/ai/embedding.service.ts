@@ -68,4 +68,32 @@ export class EmbeddingService {
     const res = await this.embed([text]);
     return res && res[0] ? res[0] : null;
   }
+
+  /** Small in-process LRU of recent QUERY vectors (10 min) — the same
+   *  question in a chat (or across retries) is embedded + billed once. */
+  private readonly queryCache = new Map<string, { at: number; vec: Float32Array }>();
+
+  /**
+   * Embed a retrieval query with caching. `fresh` = true when an API call was
+   * made (the caller meters it); false on a cache hit.
+   */
+  async embedQuery(
+    text: string,
+  ): Promise<{ vec: Float32Array; fresh: boolean } | null> {
+    const key = text.trim().toLowerCase().slice(0, 2000);
+    const hit = this.queryCache.get(key);
+    if (hit && Date.now() - hit.at < 600_000) {
+      this.queryCache.delete(key);
+      this.queryCache.set(key, hit); // refresh LRU order
+      return { vec: hit.vec, fresh: false };
+    }
+    const vec = await this.embedOne(text);
+    if (!vec) return null;
+    this.queryCache.set(key, { at: Date.now(), vec });
+    if (this.queryCache.size > 500) {
+      const oldest = this.queryCache.keys().next().value;
+      if (oldest !== undefined) this.queryCache.delete(oldest);
+    }
+    return { vec, fresh: true };
+  }
 }

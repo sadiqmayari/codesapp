@@ -274,7 +274,11 @@ export class SuperAdminController {
     },
   ) {
     const action =
-      body?.usageLimitAction === 'warn_only' ? 'warn_only' : 'block';
+      body?.usageLimitAction === 'warn_only'
+        ? 'warn_only'
+        : body?.usageLimitAction === 'block'
+          ? 'block'
+          : undefined;
     const aiProvider =
       body?.aiProvider === 'openai'
         ? 'openai'

@@ -45,3 +45,19 @@ export function resolveAiCapabilities(
     voice: company.ai_voice_enabled === true,
   };
 }
+
+/**
+ * Is the AI allowed to auto-reply in this chat? The SINGLE resolver (was
+ * copied in BotEngine, the auto-reply gate and the agent).
+ *  - explicit per-chat FALSE (agent mute / handoff) ALWAYS wins
+ *  - otherwise on when the workspace answers all chats, the chat is
+ *    auto-piloted (TRUE), or a bot `ai_reply` action forces it
+ */
+export function resolveAutoReply(
+  perChat: boolean | null | undefined,
+  workspaceAllChats: boolean | null | undefined,
+  force = false,
+): boolean {
+  if (perChat === false) return false;
+  return workspaceAllChats === true || perChat === true || force;
+}

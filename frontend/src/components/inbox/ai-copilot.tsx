@@ -30,7 +30,7 @@ const REWRITE_OPTS: { mode: RewriteMode; label: string }[] = [
   { mode: 'fix', label: 'Fix grammar' },
 ];
 
-const LANGS = ['English', 'Urdu', 'Roman Urdu'];
+const LANGS = ['English', 'Urdu', 'Roman Urdu', 'Arabic', 'Hindi', 'Bengali', 'Turkish', 'French', 'Spanish'];
 
 /**
  * AI Copilot composer affordance. Suggest-only — every result lands in the

@@ -90,10 +90,18 @@ export class WooCommerceService implements CommerceProvider, OnModuleInit {
   }
 
   /** Enqueue a background knowledge sync (validates the connection first). */
-  async requestKnowledgeSync(companyId: number, storeId?: number): Promise<{ started: boolean }> {
-    await this.requireApi(companyId, storeId); // clean 4xx if unconfigured
-    await this.jobQueue.enqueue('woocommerce', { kind: 'syncKnowledge', companyId, storeId });
-    return { started: true };
+  async requestKnowledgeSync(
+    companyId: number,
+    storeId?: number,
+    opts: { delayMs?: number } = {},
+  ): Promise<{ started: boolean; storeId: number }> {
+    const api = await this.requireApi(companyId, storeId); // clean 4xx if unconfigured
+    await this.jobQueue.enqueue(
+      'woocommerce',
+      { kind: 'syncKnowledge', companyId, storeId: api.storeId },
+      { dedupKey: `kb-sync:${companyId}:${api.storeId}`, delayMs: opts.delayMs },
+    );
+    return { started: true, storeId: api.storeId };
   }
 
   // ── Inbound webhook handling ───────────────────────────────────────────────
@@ -797,7 +805,7 @@ export class WooCommerceService implements CommerceProvider, OnModuleInit {
     const api = await this.requireApi(companyId, storeId);
     const productItems: { sourceId: string; title: string; content: string }[] = [];
     let page = 1;
-    const maxPages = 15;
+    const maxPages = 20;
     while (page <= maxPages) {
       let batch: any[] = [];
       try {
@@ -820,8 +828,13 @@ export class WooCommerceService implements CommerceProvider, OnModuleInit {
     // via the store settings if present (best-effort, non-fatal).
     const policyItems: { sourceId: string; title: string; content: string }[] = [];
 
-    const pr = await this.rag.indexSource(companyId, 'product', productItems);
-    const po = await this.rag.indexSource(companyId, 'policy', policyItems);
+    // v2: chunks are scoped to THIS store; Woo has no policy API, so policies
+    // are never replaced from here (an empty list used to wipe every store's
+    // policies — Shopify's included).
+    const pr = await this.rag.indexSource(companyId, 'product', productItems, api.storeId);
+    const po = policyItems.length
+      ? await this.rag.indexSource(companyId, 'policy', policyItems, api.storeId)
+      : { embedded: false, indexed: 0 };
     return {
       products: productItems.length,
       policies: policyItems.length,

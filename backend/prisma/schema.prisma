@@ -269,70 +269,70 @@ model Subscription {
 }
 
 model Company {
-  id                               Int               @id @default(autoincrement())
-  company_name                     String
-  address                          String?
-  subscription_id                  Int
-  activation_status                ActivationStatus  @default(pending)
-  waba_id                          String?
-  phone_number_id                  String?
-  onboarding_status                Json              @default("{}")
+  id                                Int               @id @default(autoincrement())
+  company_name                      String
+  address                           String?
+  subscription_id                   Int
+  activation_status                 ActivationStatus  @default(pending)
+  waba_id                           String?
+  phone_number_id                   String?
+  onboarding_status                 Json              @default("{}")
   // Option B (per-tenant own Meta app): each company configures its own
   // Meta app secret + webhook verify token and gets a unique callback URL
   // /webhooks/meta/{webhook_key}. NULL → fall back to platform META_* env
   // (the future Tech-Provider / Embedded-Signup path).
-  webhook_key                      String?           @unique @db.VarChar(160)
-  webhook_app_secret_encrypted     String?           @db.Text
-  webhook_verify_token             String?           @db.VarChar(255)
+  webhook_key                       String?           @unique @db.VarChar(160)
+  webhook_app_secret_encrypted      String?           @db.Text
+  webhook_verify_token              String?           @db.VarChar(255)
   // Per-tenant Shopify webhook (client's own custom Shopify app): unique
   // callback URL /webhooks/shopify/{shopify_webhook_key}; the client's
   // Shopify webhook signing secret is stored encrypted for HMAC verify.
-  shopify_webhook_key              String?           @unique @db.VarChar(160)
-  shopify_webhook_secret_encrypted String?           @db.Text
+  shopify_webhook_key               String?           @unique @db.VarChar(160)
+  shopify_webhook_secret_encrypted  String?           @db.Text
   // Client's Shopify custom-app Admin API access token (AES-GCM) — used to
   // tag the order back when the customer taps Confirm/Cancel (write_orders).
-  shopify_admin_token_encrypted    String?           @db.Text
+  shopify_admin_token_encrypted     String?           @db.Text
   // Multi-Store: when set, ALL orders created from chats (manual modal + AI
   // auto-order) are forced into this one store, overriding the per-chat picker
   // / last-used resolution. NULL = agents choose per order (default).
-  order_fixed_store_id             Int?
+  order_fixed_store_id              Int?
   // Default country code for normalizing inbound/Shopify phone numbers
   // (e.g. "92"); NULL → code falls back to "92".
-  default_country_code             String?           @db.VarChar(8)
+  default_country_code              String?           @db.VarChar(8)
   // Shell-Polish-A: company branding logo. Web path /storage/branding/{id}/logo.{ext}
-  logo_url                         String?           @db.VarChar(500)
+  logo_url                          String?           @db.VarChar(500)
   // Billing-Lifecycle: 30-day billing cycle anchor. Set once on FIRST
   // super-admin activation; never overwritten on reactivation so the
   // cycle never drifts. NULL → not yet activated (no invoicing).
-  activated_at                     DateTime?
+  activated_at                      DateTime?
   // Set when the auto-suspend cron deactivates for non-payment (audit/trace).
-  suspended_at                     DateTime?
+  suspended_at                      DateTime?
   // Super-admin "extra time" override. While in the future, the
   // auto-suspend cron skips this company even with an overdue invoice.
-  grace_until                      DateTime?
+  grace_until                       DateTime?
   // Per-company override for behavior when a plan usage limit is hit.
   // NULL → fall back to the platform-wide default (PlatformSetting).
-  usage_limit_action               UsageLimitAction?
+  usage_limit_action                UsageLimitAction?
   // IANA timezone name (e.g. "Asia/Karachi", "Europe/London"). Frontend
   // date/time helpers read this so timestamps render in the tenant's own
   // clock rather than the agent/admin's browser clock. NULL = browser default.
-  timezone                         String?           @db.VarChar(64)
+  timezone                          String?           @db.VarChar(64)
   // Phase 4: per-client editable limit overrides — beat the plan defaults.
   // NULL on any of these = use the subscription's value for that dimension.
   // The Enterprise plan can ship with placeholder defaults and be tuned
   // per-client via these overrides (override ?? subscription.<field>).
-  contact_limit_override           Int?
-  template_limit_override          Int?
-  user_limit_override              Int?
+  contact_limit_override            Int?
+  template_limit_override           Int?
+  user_limit_override               Int?
   // Multi-Store update: per-company allowance overrides (NULL = plan default).
-  shopify_store_limit_override     Int?
-  whatsapp_number_limit_override   Int?
+  shopify_store_limit_override      Int?
+  whatsapp_number_limit_override    Int?
   // Invoice import (super-admin gated, per-tenant file format). enabled = the
   // tenant sees the option in Settings; format = the coded parser id
   // (null while enabled = "contact CodesApp to configure your format"). Set by
   // super-admin. Sois uses format 'courier_account_statement'.
-  invoice_import_enabled           Boolean           @default(false)
-  invoice_import_format            String?           @db.VarChar(64)
+  invoice_import_enabled            Boolean           @default(false)
+  invoice_import_format             String?           @db.VarChar(64)
   // Per-tenant cadence (minutes) for the background courier status sync, which
   // re-polls every non-terminal parcel from the courier APIs AND detects
   // shipper-advice-required parcels. NULL → platform default (240 = 4h). The
@@ -340,115 +340,121 @@ model Company {
   // now - courier_sync_last_at >= this interval. Owner/admin-editable in
   // Settings → Courier. A finer cadence = faster shipper-advice/delivery
   // detection at the cost of more courier API calls.
-  courier_sync_interval_minutes    Int?
+  courier_sync_interval_minutes     Int?
   // Last time a courier status sync was enqueued for this tenant (the scheduler
   // gates the next run off this + the interval). NULL = never run yet (due now).
-  courier_sync_last_at             DateTime?
+  courier_sync_last_at              DateTime?
   // AI Copilot per-company settings. ai_enabled is the tenant's own on/off
   // toggle (effective access also requires the plan's ai_enabled). brand_tone
   // shapes the assistant's voice; default_language drives translate/replies.
   // ai_monthly_cap_cents = owner/super-admin spend cap for the month
   // (billed amount, post-markup); NULL → platform default (0 = unlimited).
-  ai_enabled                       Boolean           @default(true)
-  ai_brand_tone                    String?           @db.VarChar(2000)
-  ai_default_language              String?           @db.VarChar(32)
-  ai_monthly_cap_cents             Int?
+  ai_enabled                        Boolean           @default(true)
+  ai_brand_tone                     String?           @db.VarChar(2000)
+  ai_default_language               String?           @db.VarChar(32)
+  ai_monthly_cap_cents              Int?
   // Phase 2: fully-automated AI auto-responder. When true, an inbound message
   // that no keyword bot handled (and where no human is assigned) is answered
   // by the AI inside the 24h window — confidence-gated (hands off to a human
   // when unsure). Default false (opt-in).
-  ai_autoreply_enabled             Boolean           @default(false)
+  ai_autoreply_enabled              Boolean           @default(false)
   // Phase 3: fully-automated AI ORDER creation (Shopify). When true, an
   // autopilot conversation where the customer clearly CONFIRMS a complete order
   // (items + name + phone + address) has the order created automatically; if
   // the order is confirmed but incomplete the AI hands off to a human instead
   // of creating a wrong order. Default false (opt-in, requires Shopify + AI).
-  ai_auto_order_enabled            Boolean           @default(false)
+  ai_auto_order_enabled             Boolean           @default(false)
   // June-2026 AI batch: broadens auto-order scope. When true (and workspace
   // ai_autoreply_enabled is on), EVERY chat the AI auto-replies to also
   // auto-creates orders on customer request — not just per-chat auto-piloted
   // chats. ai_auto_order_enabled remains the master switch. Default false.
-  ai_auto_order_all_enabled        Boolean           @default(false)
+  ai_auto_order_all_enabled         Boolean           @default(false)
   // Multimodal AI (now TENANT-controlled in Settings → AI, owner/admin only —
   // they pay for it). ai_vision_enabled = let the AI read inbound product images.
   // ai_voice_enabled = transcribe inbound voice notes (Whisper) into the AI
   // context. Both off by default. The super-admin kill-switch ai_premium_locked
   // (below) overrides BOTH back to off regardless of the tenant's choice.
-  ai_vision_enabled                Boolean           @default(false)
-  ai_voice_enabled                 Boolean           @default(false)
+  ai_vision_enabled                 Boolean           @default(false)
+  ai_voice_enabled                  Boolean           @default(false)
   // Tenant-selectable autonomous AI model tier ('fast' = Standard, 'smart' =
   // High-accuracy). NULL = follow the platform default (platform_settings
   // ai_autonomous_tier). Governs ONLY the autonomous auto-reply + auto-order
   // draft (the cost driver); interactive features keep fixed tiers. Resolved via
   // common/utils/ai-capabilities.ts.
-  ai_autonomous_tier               String?           @db.VarChar(16)
+  ai_autonomous_tier                String?           @db.VarChar(16)
   // Super-admin per-tenant kill-switch. When true, forces the tenant back to
   // baseline (Standard tier, no vision, no voice) regardless of their choices —
   // the surgical valve for abuse / non-payment. Default false.
-  ai_premium_locked                Boolean           @default(false)
+  ai_premium_locked                 Boolean           @default(false)
+  // AI Agent v2 (Nov-2026): super-admin per-tenant AI hard-off + spend-cap
+  // override. ai_admin_disabled=true stops every AI feature for the tenant
+  // regardless of their own toggle. ai_admin_cap_cents is a HARD ceiling the
+  // tenant's own ai_monthly_cap_cents can only lower (NULL = platform default).
+  ai_admin_disabled                 Boolean           @default(false)
+  ai_admin_cap_cents                Int?
   // ── Feature Governance Framework (2026-06) ────────────────────────────────
   // Super-admin per-tenant force-on/off map { "<feature>": "on" | "off" },
   // resolved by FeatureService ABOVE the tenant flag (the authority layer).
   // NULL = no overrides → normal plan+tenant resolution. See
   // common/services/feature.service.ts + common/features/feature.constants.ts.
-  feature_overrides                Json?
+  feature_overrides                 Json?
   // Tenant toggle for proactive Shopify->WhatsApp notifications. Effective also
   // requires the plan's proactive_notifications (and no super-admin force-off).
   // Default false (opt-in).
-  proactive_notifications_enabled  Boolean           @default(false)
+  proactive_notifications_enabled   Boolean           @default(false)
   // Public-tracking: URL-safe tenant handle used in the branded per-order
   // tracking page path (track.codentra.pk/<public_slug>/<orderId>). Backfilled
   // from a slugified company_name; unique across tenants.
-  public_slug                      String?           @unique @db.VarChar(80)
+  public_slug                       String?           @unique @db.VarChar(80)
   // ── Content module (tenant toggles + Google Drive connection) ─────────────
   // Merchant's own on/off for the two Content sub-modules. Effective access
   // also requires the plan flag (subscriptions.content_enabled / pr_enabled)
   // and no super-admin force-off. Default false (opt-in).
-  content_enabled                  Boolean           @default(false)
-  pr_enabled                       Boolean           @default(false)
+  content_enabled                   Boolean           @default(false)
+  pr_enabled                        Boolean           @default(false)
   // ── Inventory module (per-tenant, super-admin granted like Content/PR) ─────
   // inventory_enabled = the merchant sees the Inventory nav + endpoints. Resolved
   // by FeatureService (override ?? companies.inventory_enabled). Default false.
   // inventory_restock_returns = auto add stock back + push to Shopify when an RTO
   // parcel is physically received (processReturn). Idempotent per shipment.
-  inventory_enabled                Boolean           @default(false)
-  inventory_restock_returns        Boolean           @default(true)
+  inventory_enabled                 Boolean           @default(false)
+  inventory_restock_returns         Boolean           @default(true)
   // Per-tenant Google Drive OAuth connection (drive.file scope). The refresh
   // token is AES-GCM encrypted at rest (base64(iv||tag||ciphertext)); content
   // media lives in THEIR Drive under gdrive_folder_id. NULL = not connected.
-  gdrive_refresh_token_encrypted   String?           @db.Text
-  gdrive_email                     String?           @db.VarChar(255)
-  gdrive_folder_id                 String?           @db.VarChar(128)
-  gdrive_connected_at              DateTime?
+  gdrive_refresh_token_encrypted    String?           @db.Text
+  gdrive_email                      String?           @db.VarChar(255)
+  gdrive_folder_id                  String?           @db.VarChar(128)
+  gdrive_connected_at               DateTime?
   // Team attendance: tenant work-start time "HH:MM" (24h, tenant-local clock via
   // `timezone`). A self check-in later than this marks the day Late. NULL →
   // app default "09:30". work_end_time = general shift end (early-leave +
   // overtime). attendance_office_ips = comma-separated IPs/CIDRs of the office
   // network; enforced per-user via users.attendance_require_office_ip.
-  work_start_time                  String?           @db.VarChar(5)
-  work_end_time                    String?           @db.VarChar(5)
+  work_start_time                   String?           @db.VarChar(5)
+  work_end_time                     String?           @db.VarChar(5)
   // Grace minutes after shift start before a check-in counts as Late (default 0).
-  attendance_grace_minutes         Int?
-  attendance_office_ips            String?           @db.Text
+  attendance_grace_minutes          Int?
+  attendance_office_ips             String?           @db.Text
   // Payroll v3: tenant-configurable payroll policy (one JSON blob). Shape:
   // { lateMethod: none|n_lates_absent|fixed_per_late|per_minute|half_day,
   //   latesPerAbsent, lateFixedAmount, halfDayAfterMin,
   //   overtimeMethod: off|hourly_multiplier|flat_per_hour|per_minute,
   //   overtimeMultiplier, overtimeFlatRate, minOvertimeMinutes,
   //   workingDaysPerMonth }. NULL = all defaults (lateMethod/overtimeMethod off).
-  attendance_payroll_policy        Json?
+  attendance_payroll_policy         Json?
   // Check-in announcement bar: self check-in CTA is only offered until this
   // tenant-local time (default "12:00"). SUPERSEDED by the per-user relative
   // window below (dormant; kept to avoid a destructive migration).
-  attendance_checkin_cutoff        String?           @db.VarChar(5)
+  attendance_checkin_cutoff         String?           @db.VarChar(5)
   // Check-in window: minutes AFTER each user's own shift start during which the
   // self check-in CTA is offered (default 150 = 2.5h → a 09:30 shift closes at
   // 12:00). Computed per user from their effective shift start, so staff on
   // different shifts get their own cutoff. Flexible/exempt staff have NO cutoff.
   attendance_checkin_window_minutes Int?
-  created_at                       DateTime          @default(now())
+  created_at                        DateTime          @default(now())
 
-  subscription         Subscription         @relation(fields: [subscription_id], references: [id])
+  subscription         Subscription             @relation(fields: [subscription_id], references: [id])
   users                User[]
   contacts             Contact[]
   conversations        Conversation[]
@@ -487,46 +493,43 @@ model Company {
   @@map("companies")
 }
 
-
-
-
 model User {
-  id            Int        @id @default(autoincrement())
-  company_id    Int?
-  name          String
-  email         String     @unique
-  password_hash String
-  role          UserRole
-  status        UserStatus @default(pending)
-  totp_secret   String?
-  last_seen_at  DateTime?
+  id                           Int        @id @default(autoincrement())
+  company_id                   Int?
+  name                         String
+  email                        String     @unique
+  password_hash                String
+  role                         UserRole
+  status                       UserStatus @default(pending)
+  totp_secret                  String?
+  last_seen_at                 DateTime?
   // Attendance: per-user schedule overrides ("HH:MM", null = use company default)
   // + per-user grace minutes override + per-user office-network enforcement toggle.
-  attendance_work_start        String? @db.VarChar(5)
-  attendance_work_end          String? @db.VarChar(5)
+  attendance_work_start        String?    @db.VarChar(5)
+  attendance_work_end          String?    @db.VarChar(5)
   attendance_grace_minutes     Int?
-  attendance_require_office_ip Boolean @default(false)
+  attendance_require_office_ip Boolean    @default(false)
   // Payroll v3: "Flexible timing" staff — still check in/out and record hours,
   // but are NEVER marked late / early-leave and are excluded from every late or
   // absence-conversion penalty (relaxed by management).
-  attendance_exempt_late       Boolean @default(false)
+  attendance_exempt_late       Boolean    @default(false)
   // Monthly gross base salary (tenant currency). NULL = no salary set (payroll
   // row shows blanks). salary_allowances = JSON array of {label, amount} lines
   // (fuel, food, etc.) added to gross. salary_overtime_rate = optional per-user
   // flat Rs/hour OT rate override (used by the flat_per_hour overtime method).
-  salary_amount                Decimal? @db.Decimal(14, 2)
+  salary_amount                Decimal?   @db.Decimal(14, 2)
   salary_allowances            Json?
-  salary_overtime_rate         Decimal? @db.Decimal(14, 2)
-  created_at    DateTime   @default(now())
-  updated_at    DateTime   @updatedAt
+  salary_overtime_rate         Decimal?   @db.Decimal(14, 2)
+  created_at                   DateTime   @default(now())
+  updated_at                   DateTime   @updatedAt
 
-  company                Company?        @relation(fields: [company_id], references: [id])
-  assigned_conversations Conversation[]  @relation("AssignedUser")
-  assigned_tickets       SupportTicket[] @relation("AssignedTicketUser")
+  company                Company?                 @relation(fields: [company_id], references: [id])
+  assigned_conversations Conversation[]           @relation("AssignedUser")
+  assigned_tickets       SupportTicket[]          @relation("AssignedTicketUser")
   audit_logs             AuditLog[]
-  sent_messages          Message[]       @relation("MessageSender")
+  sent_messages          Message[]                @relation("MessageSender")
   call_logs              CallLog[]
-  attendance_records     AttendanceRecord[]      @relation("AttendanceUser")
+  attendance_records     AttendanceRecord[]       @relation("AttendanceUser")
   attendance_leaves      AttendanceLeaveRequest[] @relation("AttendanceLeaveUser")
 
   @@map("users")
@@ -626,7 +629,7 @@ model InternalThread {
 }
 
 model InternalThreadMember {
-  id           Int       @id @default(autoincrement())
+  id                Int       @id @default(autoincrement())
   thread_id         Int
   company_id        Int
   user_id           Int
@@ -800,6 +803,16 @@ model Conversation {
   // The Shopify order name/id this episode is about (e.g. for a tracking session
   // or a repeat-order seed). Cleared when the topic moves off ORDER_TRACKING.
   ai_linked_order_id      String?            @db.VarChar(64)
+  // AI Agent v2 working memory (goal, collected form fields, cart of resolved
+  // variants, stage, awaiting). Written ONLY by the v2 runtime. NULL = fresh.
+  ai_memory               Json?
+  // v2: AI paused for this chat until this instant (a human just replied).
+  ai_paused_until         DateTime?
+  // v2: when the AI last handed this chat to a human (drives auto-resume).
+  ai_handoff_at           DateTime?
+  // v2: commerce store this chat resolved to (number→store, last order, or
+  // the customer's choice between brands). NULL = unresolved → primary.
+  ai_store_id             Int?
   // Click-to-WhatsApp attribution. When a chat starts from a Meta ad or a
   // FB/IG post link, the FIRST inbound message carries a `referral` object.
   // We store it FIRST-TOUCH (never overwritten) so the origin ad/post is
@@ -991,43 +1004,43 @@ model CannedReply {
 // stores only metadata + pipeline state. Thumbnails/playback stream straight
 // from Google to the viewer's browser (never through our VPS).
 model ContentItem {
-  id                  Int       @id @default(autoincrement())
-  company_id          Int
-  created_by_user_id  Int?
+  id                      Int       @id @default(autoincrement())
+  company_id              Int
+  created_by_user_id      Int?
   // Uploader the task is assigned to (videographer/graphic_designer/exec).
   // NULL = unassigned. Plain column (no User relation, like created_by_user_id).
-  assignee_user_id    Int?
-  title               String    @db.VarChar(200)
-  caption             String?   @db.Text
+  assignee_user_id        Int?
+  title                   String    @db.VarChar(200)
+  caption                 String?   @db.Text
   // 'image' | 'video' | null (null = a plan with no media attached yet)
-  media_type          String?   @db.VarChar(16)
+  media_type              String?   @db.VarChar(16)
   // Expected format chosen at plan time ('image' | 'video' | null). Distinct
   // from media_type, which records the ACTUAL uploaded file's type on upload.
-  planned_media_type  String?   @db.VarChar(16)
+  planned_media_type      String?   @db.VarChar(16)
   // Target platform for a planned post (e.g. 'instagram', 'tiktok'); free text.
-  platform            String?   @db.VarChar(32)
+  platform                String?   @db.VarChar(32)
   // Optional campaign/folder this item belongs to (ContentCollection). NULL =
   // standalone, filed in the tenant's Drive root. Drives the board grouping.
-  collection_id       Int?
+  collection_id           Int?
   // Optional reference image/video attached at plan time (the brief visual).
   // Stored in the tenant's Google Drive, same as the main media.
-  reference_drive_file_id String? @db.VarChar(128)
-  reference_media_type    String? @db.VarChar(16) // 'image' | 'video'
-  drive_file_id       String?   @db.VarChar(128)
-  mime                String?   @db.VarChar(100)
-  size_bytes          Int?
+  reference_drive_file_id String?   @db.VarChar(128)
+  reference_media_type    String?   @db.VarChar(16) // 'image' | 'video'
+  drive_file_id           String?   @db.VarChar(128)
+  mime                    String?   @db.VarChar(100)
+  size_bytes              Int?
   // planned | uploaded | in_review | approved | needs_changes | rejected | published
-  status              String    @default("uploaded") @db.VarChar(20)
-  review_feedback     String?   @db.Text
-  reviewed_by_user_id Int?
-  reviewed_at         DateTime?
-  scheduled_publish_at DateTime?
+  status                  String    @default("uploaded") @db.VarChar(20)
+  review_feedback         String?   @db.Text
+  reviewed_by_user_id     Int?
+  reviewed_at             DateTime?
+  scheduled_publish_at    DateTime?
   // Task deadline for the content manager to complete the item (distinct from
   // scheduled_publish_at, which is the planned go-live date).
-  deadline            DateTime?
-  published_at        DateTime?
-  created_at          DateTime  @default(now())
-  updated_at          DateTime  @updatedAt
+  deadline                DateTime?
+  published_at            DateTime?
+  created_at              DateTime  @default(now())
+  updated_at              DateTime  @updatedAt
 
   company Company @relation(fields: [company_id], references: [id])
 
@@ -1099,21 +1112,21 @@ model ContentEvent {
 // A re-sync refreshes ONLY the Shopify-owned columns — the custom fields
 // (item_code/alias/etc.) and local_qty survive every sync.
 model InventoryProduct {
-  id                 Int       @id @default(autoincrement())
-  company_id         Int
-  shopify_store_id   Int
+  id                  Int       @id @default(autoincrement())
+  company_id          Int
+  shopify_store_id    Int
   // gid://shopify/Product/..
-  shopify_product_gid String   @db.VarChar(120)
-  title              String    @db.VarChar(400)
-  handle             String?   @db.VarChar(255)
-  product_type       String?   @db.VarChar(160)
-  vendor             String?   @db.VarChar(160)
-  image_url          String?   @db.VarChar(1000)
+  shopify_product_gid String    @db.VarChar(120)
+  title               String    @db.VarChar(400)
+  handle              String?   @db.VarChar(255)
+  product_type        String?   @db.VarChar(160)
+  vendor              String?   @db.VarChar(160)
+  image_url           String?   @db.VarChar(1000)
   // active | draft | archived (Shopify status, lowercased)
-  status             String?   @db.VarChar(16)
-  synced_at          DateTime?
-  created_at         DateTime  @default(now())
-  updated_at         DateTime  @updatedAt
+  status              String?   @db.VarChar(16)
+  synced_at           DateTime?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
 
   company  Company            @relation(fields: [company_id], references: [id])
   variants InventoryVariant[]
@@ -1126,64 +1139,64 @@ model InventoryProduct {
 // One row per variant. Shopify-owned columns are refreshed on sync; the custom
 // fields + local_qty are CodesApp's and never overwritten by a sync.
 model InventoryVariant {
-  id                       Int       @id @default(autoincrement())
-  company_id               Int
-  shopify_store_id         Int
-  product_id               Int
+  id                         Int       @id @default(autoincrement())
+  company_id                 Int
+  shopify_store_id           Int
+  product_id                 Int
   // gid://shopify/ProductVariant/..
-  shopify_variant_gid      String    @db.VarChar(120)
+  shopify_variant_gid        String    @db.VarChar(120)
   // gid://shopify/InventoryItem/.. (needed for inventorySetQuantities)
-  shopify_inventory_item_gid String? @db.VarChar(120)
+  shopify_inventory_item_gid String?   @db.VarChar(120)
   // numeric inventory_item_id — the inventory_levels/update webhook payload
   // carries the REST numeric id, matched against this.
-  shopify_inventory_item_id BigInt?
-  sku                      String?   @db.VarChar(160)
-  barcode                  String?   @db.VarChar(160)
-  variant_title            String?   @db.VarChar(255)
+  shopify_inventory_item_id  BigInt?
+  sku                        String?   @db.VarChar(160)
+  barcode                    String?   @db.VarChar(160)
+  variant_title              String?   @db.VarChar(255)
   // Sale price + compare-at ("was" price). Synced from Shopify AND editable in
   // CodesApp → pushed back via productVariantsBulkUpdate (needs write_products).
-  price                    Decimal?  @db.Decimal(12, 2)
-  compare_at_price         Decimal?  @db.Decimal(12, 2)
+  price                      Decimal?  @db.Decimal(12, 2)
+  compare_at_price           Decimal?  @db.Decimal(12, 2)
   // Shopify "available" at the primary location, last mirrored.
-  shopify_qty              Int       @default(0)
+  shopify_qty                Int       @default(0)
   // CodesApp-managed figure (what we push to Shopify). Seeded from shopify_qty
   // on first sync; edited by the board / return-restock.
-  local_qty                Int       @default(0)
+  local_qty                  Int       @default(0)
   // Native Shopify bundle (variant.requiresComponents). A bundle has NO own
   // stock — Shopify derives availability from its components and decrements
   // THEM on sale. We never push a bundle qty; the board shows a derived
   // "buildable" count. bundle_components = [{ gid, quantity }] of the component
   // variants (replaced each sync). NULL/empty for a normal variant.
-  is_bundle                Boolean   @default(false)
-  bundle_components        Json?
+  is_bundle                  Boolean   @default(false)
+  bundle_components          Json?
   // Loop guard: the value we last pushed, so the echo webhook is ignored.
-  last_pushed_qty          Int?
-  last_pushed_at           DateTime?
-  qty_synced_at            DateTime?
+  last_pushed_qty            Int?
+  last_pushed_at             DateTime?
+  qty_synced_at              DateTime?
   // Per-variant Shopify push outcome, surfaced on the board. status =
   // pending|ok|error|skipped; error holds the last failure message (e.g. a
   // missing write_inventory scope). qty_* = inventorySetQuantities,
   // cost_* = inventoryItemUpdate (cost-per-item).
-  qty_push_status          String?   @db.VarChar(12)
-  qty_push_error           String?   @db.VarChar(500)
-  cost_push_status         String?   @db.VarChar(12)
-  cost_push_error          String?   @db.VarChar(500)
-  price_push_status        String?   @db.VarChar(12)
-  price_push_error         String?   @db.VarChar(500)
+  qty_push_status            String?   @db.VarChar(12)
+  qty_push_error             String?   @db.VarChar(500)
+  cost_push_status           String?   @db.VarChar(12)
+  cost_push_error            String?   @db.VarChar(500)
+  price_push_status          String?   @db.VarChar(12)
+  price_push_error           String?   @db.VarChar(500)
   // ── CodesApp-only fields (never sent to Shopify, survive every sync) ──
-  item_code                String?   @db.VarChar(80)
-  alias                    String?   @db.VarChar(120)
-  reorder_level            Int       @default(0)
-  cost_price               Decimal?  @db.Decimal(12, 2)
+  item_code                  String?   @db.VarChar(80)
+  alias                      String?   @db.VarChar(120)
+  reorder_level              Int       @default(0)
+  cost_price                 Decimal?  @db.Decimal(12, 2)
   // Shopify's own per-unit cost (inventoryItem.unitCost), synced read-only for
   // the Ad Report profit waterfall. COGS = cost_price ?? shopify_unit_cost, so a
   // manual cost_price always wins; this is the automatic fallback.
-  shopify_unit_cost        Decimal?  @db.Decimal(12, 2)
-  shelf_location           String?   @db.VarChar(120)
-  category                 String?   @db.VarChar(120)
-  notes                    String?   @db.Text
-  created_at               DateTime  @default(now())
-  updated_at               DateTime  @updatedAt
+  shopify_unit_cost          Decimal?  @db.Decimal(12, 2)
+  shelf_location             String?   @db.VarChar(120)
+  category                   String?   @db.VarChar(120)
+  notes                      String?   @db.Text
+  created_at                 DateTime  @default(now())
+  updated_at                 DateTime  @updatedAt
 
   company   Company             @relation(fields: [company_id], references: [id])
   product   InventoryProduct    @relation(fields: [product_id], references: [id], onDelete: Cascade)
@@ -1277,8 +1290,8 @@ model PrSubmission {
   posted_at          DateTime?
   created_at         DateTime  @default(now())
 
-  company    Company      @relation(fields: [company_id], references: [id])
-  campaign   PrCampaign   @relation(fields: [campaign_id], references: [id])
+  company    Company       @relation(fields: [company_id], references: [id])
+  campaign   PrCampaign    @relation(fields: [campaign_id], references: [id])
   influencer PrInfluencer? @relation(fields: [influencer_id], references: [id])
   videos     PrVideo[]
 
@@ -1292,28 +1305,28 @@ model PrSubmission {
 // Instagram (dedup_key). Every public submission creates-or-links one; the
 // package history + notes + status live here.
 model PrInfluencer {
-  id             Int       @id @default(autoincrement())
-  company_id     Int
-  dedup_key      String    @db.VarChar(190)
-  name           String    @db.VarChar(160)
-  phone          String?   @db.VarChar(40)
-  email          String?   @db.VarChar(255)
-  city           String?   @db.VarChar(120)
-  address        String?   @db.Text
-  instagram      String?   @db.VarChar(160)
-  tiktok         String?   @db.VarChar(160)
-  other_social   String?   @db.VarChar(255)
-  follower_count Int?
-  niche          String?   @db.VarChar(120)
+  id              Int       @id @default(autoincrement())
+  company_id      Int
+  dedup_key       String    @db.VarChar(190)
+  name            String    @db.VarChar(160)
+  phone           String?   @db.VarChar(40)
+  email           String?   @db.VarChar(255)
+  city            String?   @db.VarChar(120)
+  address         String?   @db.Text
+  instagram       String?   @db.VarChar(160)
+  tiktok          String?   @db.VarChar(160)
+  other_social    String?   @db.VarChar(255)
+  follower_count  Int?
+  niche           String?   @db.VarChar(120)
   // active | vip | blacklisted
-  status         String    @default("active") @db.VarChar(16)
-  notes          String?   @db.Text
-  tags           Json?
-  packages_count Int       @default(0)
-  first_seen_at  DateTime  @default(now())
+  status          String    @default("active") @db.VarChar(16)
+  notes           String?   @db.Text
+  tags            Json?
+  packages_count  Int       @default(0)
+  first_seen_at   DateTime  @default(now())
   last_package_at DateTime?
-  created_at     DateTime  @default(now())
-  updated_at     DateTime  @updatedAt
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
 
   company     Company        @relation(fields: [company_id], references: [id])
   submissions PrSubmission[]
@@ -1468,7 +1481,10 @@ model AiKnowledgeBase {
 model AiKnowledgeChunk {
   id          Int      @id @default(autoincrement())
   company_id  Int
-  source_type String   @db.VarChar(32) // 'product' | 'policy'
+  // v2: 0 = company-wide (manual/FAQ/website/document); >0 = the commerce
+  // store (shopify_stores.id) a product/policy chunk belongs to.
+  store_id    Int      @default(0)
+  source_type String   @db.VarChar(32) // product|policy|manual|faq|web|doc
   source_id   String   @db.VarChar(191) // shopify gid / policy key
   title       String   @db.VarChar(255)
   content     String   @db.Text
@@ -1481,7 +1497,7 @@ model AiKnowledgeChunk {
 
   company Company @relation(fields: [company_id], references: [id])
 
-  @@unique([company_id, source_type, source_id])
+  @@unique([company_id, store_id, source_type, source_id])
   @@index([company_id])
   @@map("ai_knowledge_chunks")
 }
@@ -1491,20 +1507,28 @@ model AiKnowledgeChunk {
 // window) and the per-tenant usage breakdown. cost_micros = RAW provider
 // cost in millionths of USD; markup applied at billing/display.
 model AiUsageLog {
-  id            Int      @id @default(autoincrement())
-  company_id    Int
-  user_id       Int?
-  period        String   @db.VarChar(7)
-  feature       String   @db.VarChar(32)
-  model         String   @db.VarChar(64)
-  input_tokens  Int      @default(0)
-  output_tokens Int      @default(0)
-  cost_micros   BigInt   @default(0)
-  created_at    DateTime @default(now())
+  id               Int      @id @default(autoincrement())
+  company_id       Int
+  user_id          Int?
+  period           String   @db.VarChar(7)
+  feature          String   @db.VarChar(32)
+  model            String   @db.VarChar(64)
+  input_tokens     Int      @default(0)
+  output_tokens    Int      @default(0)
+  cost_micros      BigInt   @default(0)
+  // v2: per-call context (cost per conversation, latency, prompt version).
+  // multiplier_x1000 snapshots the billing markup so history never shifts.
+  conversation_id  Int?
+  latency_ms       Int?
+  prompt_version   String?  @db.VarChar(64)
+  success          Boolean  @default(true)
+  multiplier_x1000 Int?
+  created_at       DateTime @default(now())
 
   company Company @relation(fields: [company_id], references: [id])
 
   @@index([company_id, created_at])
+  @@index([company_id, conversation_id])
   @@map("ai_usage_log")
 }
 
@@ -1553,6 +1577,9 @@ model Message {
   // Multi-Number: which WhatsApp number this message was received on / sent
   // from (null = legacy / single-number). The merged thread is unchanged.
   whatsapp_number_id Int?
+  // v2: true when this outbound message was written by the AI agent (labels
+  // the bubble + enables thumbs feedback).
+  sent_by_ai         Boolean          @default(false)
   timestamp          DateTime
   created_at         DateTime         @default(now())
 
@@ -1794,17 +1821,17 @@ model ShopifyIntegration {
 // table/column names keep the `shopify_` prefix as the generic "commerce store"
 // identity so the mirror/couriers/finance stamps (shopify_store_id) stay intact.
 model ShopifyStore {
-  id                       Int           @id @default(autoincrement())
-  company_id               Int
-  provider                 String        @default("shopify") @db.VarChar(16)
-  label                    String?       @db.VarChar(120)
+  id                           Int           @id @default(autoincrement())
+  company_id                   Int
+  provider                     String        @default("shopify") @db.VarChar(16)
+  label                        String?       @db.VarChar(120)
   // Shopify: the myshopify.com domain. For a Woo store this is left blank and
   // base_url carries the storefront URL instead. Kept non-null for schema
   // compatibility (Woo rows store '').
-  shop_domain              String        @db.VarChar(255)
+  shop_domain                  String        @db.VarChar(255)
   // WooCommerce storefront/API base URL, e.g. https://store.example.com
-  base_url                 String?       @db.VarChar(255)
-  api_version              String?       @db.VarChar(16)
+  base_url                     String?       @db.VarChar(255)
+  api_version                  String?       @db.VarChar(16)
   // How this store's Admin API token is obtained:
   //  'legacy'             — a permanent admin custom-app token pasted once and
   //                         stored in admin_token_encrypted (DEFAULT; unchanged
@@ -1814,30 +1841,30 @@ model ShopifyStore {
   //                         and caches it in-process. admin_token_encrypted is
   //                         unused ('' ) for these rows; the minted token is
   //                         NEVER persisted to the DB.
-  auth_mode                String        @default("legacy") @db.VarChar(20)
-  client_id_encrypted      String?       @db.Text
-  client_secret_encrypted  String?       @db.Text
+  auth_mode                    String        @default("legacy") @db.VarChar(20)
+  client_id_encrypted          String?       @db.Text
+  client_secret_encrypted      String?       @db.Text
   // Shopify Admin API token. Kept NOT NULL (unchanged) to avoid rippling
   // nullability through ShopifyService internals; a Woo row stores '' here and
   // uses the wc_* pair instead.
-  admin_token_encrypted    String        @db.Text
-  wc_consumer_key_encrypted    String?   @db.Text
-  wc_consumer_secret_encrypted String?   @db.Text
-  webhook_key              String        @unique @db.VarChar(160)
-  webhook_secret_encrypted String?       @db.Text
-  active_events            Json          @default("[]")
-  status                   ShopifyStatus @default(active)
-  is_primary               Boolean       @default(false)
+  admin_token_encrypted        String        @db.Text
+  wc_consumer_key_encrypted    String?       @db.Text
+  wc_consumer_secret_encrypted String?       @db.Text
+  webhook_key                  String        @unique @db.VarChar(160)
+  webhook_secret_encrypted     String?       @db.Text
+  active_events                Json          @default("[]")
+  status                       ShopifyStatus @default(active)
+  is_primary                   Boolean       @default(false)
   // Set when a Shopify Admin API call for this store is rejected 401 (token
   // revoked/invalid at the source); cleared on the next successful call or when
   // the token is re-saved. Drives the "reconnect this store" UI prompt.
-  token_invalid_at         DateTime?
+  token_invalid_at             DateTime?
   // Inventory module: cached primary location GID (gid://shopify/Location/..)
   // used as the target for `inventorySetQuantities` qty pushes. Resolved once
   // via `locations(first:5)` and reused. NULL = not yet resolved.
-  primary_location_gid     String?       @db.VarChar(120)
-  created_at               DateTime      @default(now())
-  updated_at               DateTime      @updatedAt
+  primary_location_gid         String?       @db.VarChar(120)
+  created_at                   DateTime      @default(now())
+  updated_at                   DateTime      @updatedAt
 
   company Company @relation(fields: [company_id], references: [id])
 
@@ -1866,6 +1893,9 @@ model WhatsAppNumber {
   onboarding_status            Json     @default("{}")
   is_primary                   Boolean  @default(false)
   status                       String   @default("active") @db.VarChar(16)
+  // v2: the commerce store chats on this number belong to. NULL = ask the
+  // customer (several brands) / primary store.
+  default_store_id             Int?
   created_at                   DateTime @default(now())
   updated_at                   DateTime @updatedAt
 
@@ -2273,35 +2303,35 @@ model PaymentSettlement {
 }
 
 model Shipment {
-  id                        Int            @id @default(autoincrement())
-  company_id                Int
-  shopify_store_id          Int?
-  shopify_order_gid         String         @db.VarChar(255)
-  shopify_order_name        String?        @db.VarChar(64)
-  shopify_fulfillment_gid   String?        @db.VarChar(255)
-  conversation_id           Int?
-  contact_id                Int?
-  courier_type              CourierType
-  courier_credential_id     Int?
-  courier_tracking_number   String?        @db.VarChar(128)
-  courier_city_code         String?        @db.VarChar(32)
-  destination_city          String?        @db.VarChar(128)
-  destination_address       String?        @db.Text
-  status                    ShipmentStatus @default(booked)
-  address_issue_reason      String?        @db.Text
-  address_issue_notified_at DateTime?
-  address_confirmed_at      DateTime?
-  last_courier_status_raw   String?        @db.VarChar(128)
+  id                          Int            @id @default(autoincrement())
+  company_id                  Int
+  shopify_store_id            Int?
+  shopify_order_gid           String         @db.VarChar(255)
+  shopify_order_name          String?        @db.VarChar(64)
+  shopify_fulfillment_gid     String?        @db.VarChar(255)
+  conversation_id             Int?
+  contact_id                  Int?
+  courier_type                CourierType
+  courier_credential_id       Int?
+  courier_tracking_number     String?        @db.VarChar(128)
+  courier_city_code           String?        @db.VarChar(32)
+  destination_city            String?        @db.VarChar(128)
+  destination_address         String?        @db.Text
+  status                      ShipmentStatus @default(booked)
+  address_issue_reason        String?        @db.Text
+  address_issue_notified_at   DateTime?
+  address_confirmed_at        DateTime?
+  last_courier_status_raw     String?        @db.VarChar(128)
   // Human-readable reason for the latest attempted/failed status (courier's
   // status_reason / "Attempt Made: <reason>" / webhook reason). Shown on the
   // Attempted + Failed rows so agents see WHY without opening the courier app.
-  last_status_reason        String?        @db.VarChar(255)
+  last_status_reason          String?        @db.VarChar(255)
   // Per-parcel label URL the courier hands back at booking (Leopards slip_link).
-  courier_slip_link         String?        @db.VarChar(500)
+  courier_slip_link           String?        @db.VarChar(500)
   // Shipper advice the tenant sent on an attempted parcel: 'return' | 'reattempt'.
-  shipper_advice_status     String?        @db.VarChar(24)
-  shipper_advice_remarks    String?        @db.VarChar(500)
-  shipper_advice_at         DateTime?
+  shipper_advice_status       String?        @db.VarChar(24)
+  shipper_advice_remarks      String?        @db.VarChar(500)
+  shipper_advice_at           DateTime?
   // Set when the COURIER is detected to be awaiting shipper advice on an
   // attempted parcel (explicit courier status like Trax "Shipper Advise
   // Requested" / M&P "Hold for Advice", or an attempt aged >24h with no advice
@@ -2311,12 +2341,12 @@ model Shipment {
   shipper_advice_required_at  DateTime?
   // The raw courier status text that triggered the advice-required flag, shown on
   // the row so the operator sees WHY (e.g. "Shipper Advise Requested").
-  shipper_advice_required_raw String?      @db.VarChar(128)
+  shipper_advice_required_raw String?        @db.VarChar(128)
   // Stamped on the first transition INTO 'attempted' (mirrors failed_at/
   // delivered_at). Lets the aged-attempt fallback (>24h) compute elapsed time
   // without using updated_at (which moves on every webhook redelivery).
-  attempted_at              DateTime?
-  loadsheet_batch_id        Int?
+  attempted_at                DateTime?
+  loadsheet_batch_id          Int?
   // Payment classification SNAPSHOT taken at dispatch (when the parcel is pinned
   // to a loadsheet batch): 'Pending' | 'Online' | 'Gateway'. The dispatch list's
   // Payment column reads this frozen value so a reprint stays identical to the
@@ -2325,38 +2355,38 @@ model Shipment {
   // that printed "Pending" to "Online" on a later reprint. NULL on legacy rows /
   // parcels dispatched before this snapshot existed -> buildDispatchList falls
   // back to the live classifier for those.
-  payment_at_dispatch       String?        @db.VarChar(16)
-  booked_at                 DateTime?
-  delivered_at              DateTime?
+  payment_at_dispatch         String?        @db.VarChar(16)
+  booked_at                   DateTime?
+  delivered_at                DateTime?
   // Set the moment the parcel first transitions to a 'failed' delivery status
   // (courier webhook or status-sync). Lets orders-analytics bucket "failed
   // deliveries" by WHEN they failed, not by the order's creation date.
-  failed_at                 DateTime?
-  cancelled_at              DateTime?
+  failed_at                   DateTime?
+  cancelled_at                DateTime?
   // Physically confirmed back at the warehouse — set by the RTO receive flow
   // (barcode scan / manual "Mark received" / bulk receive). Distinct from a
   // courier status: this is a human-verified "the parcel is in our hands" fact.
-  received_at               DateTime?
-  received_by_user_id       Int?
+  received_at                 DateTime?
+  received_by_user_id         Int?
   // Set when the tenant reconciles the courier's COD remittance for a delivered
   // shipment. NULL = still receivable (shows in Courier Pending Payments).
-  courier_settled_at        DateTime?
+  courier_settled_at          DateTime?
   // The courier settlement invoice that paid this parcel (set alongside
   // courier_settled_at when a CourierInvoice is applied). Lets a settled parcel
   // name the statement it was paid under.
-  courier_invoice_id        Int?
-  booking_error             String?        @db.Text
-  raw_last_webhook          Json?
-  created_by_user_id        Int?
+  courier_invoice_id          Int?
+  booking_error               String?        @db.Text
+  raw_last_webhook            Json?
+  created_by_user_id          Int?
   // Ticket-driven replacement parcels (Option A). A replacement is a real
   // shipment row so it inherits status-sync / tracking / labels / reconciliation.
   // It's stored under a SUFFIXED shopify_order_gid ("<gid>#R1") so the per-order
   // unique key is untouched; original_order_gid keeps the link to the real order.
-  is_replacement            Boolean        @default(false)
-  original_order_gid        String?        @db.VarChar(255)
-  replacement_of_ticket_id  Int?
-  created_at                DateTime       @default(now())
-  updated_at                DateTime       @updatedAt
+  is_replacement              Boolean        @default(false)
+  original_order_gid          String?        @db.VarChar(255)
+  replacement_of_ticket_id    Int?
+  created_at                  DateTime       @default(now())
+  updated_at                  DateTime       @updatedAt
 
   loadsheet_batch LoadsheetBatch? @relation(fields: [loadsheet_batch_id], references: [id])
   courier_invoice CourierInvoice? @relation(fields: [courier_invoice_id], references: [id])
@@ -2434,21 +2464,21 @@ model Event {
 // Scalar FKs only (no @relation) to avoid back-relation edits on the big
 // Company/Conversation/Contact/User models; always queried with company_id.
 model CallLog {
-  id              Int           @id @default(autoincrement())
-  company_id      Int
-  conversation_id Int?
-  contact_id      Int?
-  user_id         Int? // agent who handled/placed the call
-  direction       CallDirection
-  status          CallStatus    @default(ringing)
-  from_number     String?       @db.VarChar(32)
-  to_number       String?       @db.VarChar(32)
-  provider_call_id String?      @db.VarChar(128) // Asterisk UNIQUEID
-  started_at      DateTime?
-  answered_at     DateTime?
-  ended_at        DateTime?
-  duration_sec    Int?
-  created_at      DateTime      @default(now())
+  id               Int           @id @default(autoincrement())
+  company_id       Int
+  conversation_id  Int?
+  contact_id       Int?
+  user_id          Int? // agent who handled/placed the call
+  direction        CallDirection
+  status           CallStatus    @default(ringing)
+  from_number      String?       @db.VarChar(32)
+  to_number        String?       @db.VarChar(32)
+  provider_call_id String?       @db.VarChar(128) // Asterisk UNIQUEID
+  started_at       DateTime?
+  answered_at      DateTime?
+  ended_at         DateTime?
+  duration_sec     Int?
+  created_at       DateTime      @default(now())
 
   contact      Contact?      @relation(fields: [contact_id], references: [id])
   conversation Conversation? @relation(fields: [conversation_id], references: [id])
@@ -2498,21 +2528,21 @@ model AdAccount {
 
 // Campaign / ad set / ad hierarchy + creative, refreshed on every sync.
 model AdEntity {
-  id                 Int      @id @default(autoincrement())
+  id                 Int       @id @default(autoincrement())
   company_id         Int
   account_id         Int
-  platform           String   @db.VarChar(16)
-  level              String   @db.VarChar(8)
-  external_id        String   @db.VarChar(64)
-  parent_external_id String?  @db.VarChar(64)
-  campaign_id        String?  @db.VarChar(64)
-  name               String?  @db.VarChar(512)
-  status             String?  @db.VarChar(32)
-  objective          String?  @db.VarChar(64)
-  daily_budget       Decimal? @db.Decimal(14, 2)
-  creative_thumb_url String?  @db.Text
-  destination_url    String?  @db.Text
-  advertised_handle  String?  @db.VarChar(255)
+  platform           String    @db.VarChar(16)
+  level              String    @db.VarChar(8)
+  external_id        String    @db.VarChar(64)
+  parent_external_id String?   @db.VarChar(64)
+  campaign_id        String?   @db.VarChar(64)
+  name               String?   @db.VarChar(512)
+  status             String?   @db.VarChar(32)
+  objective          String?   @db.VarChar(64)
+  daily_budget       Decimal?  @db.Decimal(14, 2)
+  creative_thumb_url String?   @db.Text
+  destination_url    String?   @db.Text
+  advertised_handle  String?   @db.VarChar(255)
   // Ad management (Nov-2026): settings mirrored from Meta so CodesApp can edit
   // them. budget_owner = which level holds the budget ('campaign' = CBO, 'adset' = ABO).
   configured_status  String?   @db.VarChar(16)
@@ -2528,7 +2558,7 @@ model AdEntity {
   attribution_spec   Json?
   start_time         DateTime?
   end_time           DateTime?
-  updated_at         DateTime @default(now())
+  updated_at         DateTime  @default(now())
 
   @@unique([account_id, level, external_id])
   @@index([company_id, level])
@@ -2611,41 +2641,41 @@ model OrderTouchpoint {
 // CLICKHOUSE_URL is set; the dashboards read either store with identical SQL.
 model GrowthOrderFact {
   company_id      Int
-  order_gid       String   @db.VarChar(255)
+  order_gid       String    @db.VarChar(255)
   store_id        Int?
-  order_date      DateTime @db.Date
-  order_month     String   @db.VarChar(7)
-  cohort_month    String?  @db.VarChar(7)
+  order_date      DateTime  @db.Date
+  order_month     String    @db.VarChar(7)
+  cohort_month    String?   @db.VarChar(7)
   created_at      DateTime
-  lifecycle       String   @db.VarChar(16)
-  payment         String   @db.VarChar(8)
-  gross           Decimal  @default(0) @db.Decimal(14, 2)
-  net             Decimal  @default(0) @db.Decimal(14, 2)
-  discounts       Decimal  @default(0) @db.Decimal(14, 2)
-  cogs            Decimal  @default(0) @db.Decimal(14, 2)
-  units           Int      @default(0)
-  units_no_cost   Int      @default(0)
-  ship_cost       Decimal  @default(0) @db.Decimal(14, 2)
-  ship_estimated  Boolean  @default(false)
-  fees            Decimal  @default(0) @db.Decimal(14, 2)
-  has_breakdown   Boolean  @default(false)
-  p_deliver       Decimal  @default(0) @db.Decimal(6, 4)
-  city            String?  @db.VarChar(128)
-  courier         String?  @db.VarChar(32)
-  customer_key    String?  @db.VarChar(255)
-  is_new          Boolean  @default(false)
-  ft_channel      String?  @db.VarChar(32)
-  ft_platform     String?  @db.VarChar(16)
-  ft_campaign_id  String?  @db.VarChar(64)
-  lt_channel      String?  @db.VarChar(32)
-  lt_platform     String?  @db.VarChar(16)
-  lt_campaign_id  String?  @db.VarChar(64)
-  touches         Int      @default(0)
+  lifecycle       String    @db.VarChar(16)
+  payment         String    @db.VarChar(8)
+  gross           Decimal   @default(0) @db.Decimal(14, 2)
+  net             Decimal   @default(0) @db.Decimal(14, 2)
+  discounts       Decimal   @default(0) @db.Decimal(14, 2)
+  cogs            Decimal   @default(0) @db.Decimal(14, 2)
+  units           Int       @default(0)
+  units_no_cost   Int       @default(0)
+  ship_cost       Decimal   @default(0) @db.Decimal(14, 2)
+  ship_estimated  Boolean   @default(false)
+  fees            Decimal   @default(0) @db.Decimal(14, 2)
+  has_breakdown   Boolean   @default(false)
+  p_deliver       Decimal   @default(0) @db.Decimal(6, 4)
+  city            String?   @db.VarChar(128)
+  courier         String?   @db.VarChar(32)
+  customer_key    String?   @db.VarChar(255)
+  is_new          Boolean   @default(false)
+  ft_channel      String?   @db.VarChar(32)
+  ft_platform     String?   @db.VarChar(16)
+  ft_campaign_id  String?   @db.VarChar(64)
+  lt_channel      String?   @db.VarChar(32)
+  lt_platform     String?   @db.VarChar(16)
+  lt_campaign_id  String?   @db.VarChar(64)
+  touches         Int       @default(0)
   days_to_convert Int?
-  version         BigInt   @default(0)
+  version         BigInt    @default(0)
   // Set once the delivered-purchase CAPI event was sent (never re-sent).
   capi_sent_at    DateTime?
-  updated_at      DateTime @default(now())
+  updated_at      DateTime  @default(now())
 
   @@id([company_id, order_gid])
   @@index([company_id, order_date])
@@ -2733,4 +2763,130 @@ model SalesTarget {
 
   @@unique([company_id, month, store_id])
   @@map("sales_targets")
+}
+
+// ── AI Agent v2 (Nov-2026) ─────────────────────────────────────────────────
+// One row per company: industry pack, persona, locale, skills, handoff rules,
+// business hours. The JSON blobs are normalised by
+// modules/ai/agent/profile.ts resolveProfile() — the SINGLE resolver; never
+// read these columns raw.
+model AiAgentProfile {
+  id                        Int      @id @default(autoincrement())
+  company_id                Int      @unique
+  industry                  String   @default("ecommerce") @db.VarChar(32)
+  agent_name                String?  @db.VarChar(80)
+  agent_role                String?  @db.VarChar(120)
+  goals                     String?  @db.Text
+  do_rules                  String?  @db.Text
+  dont_rules                String?  @db.Text
+  tone                      String?  @db.Text
+  country_code              String?  @db.VarChar(2)
+  currency_code             String?  @db.VarChar(3)
+  currency_symbol           String?  @db.VarChar(8)
+  languages                 Json?
+  mirror_language           Boolean  @default(true)
+  voice_language            String?  @db.VarChar(8)
+  payment_methods           Json?
+  payment_details_encrypted String?  @db.Text
+  skills                    Json?
+  handoff                   Json?
+  hours                     Json?
+  engine                    String   @default("v2") @db.VarChar(8)
+  created_at                DateTime @default(now())
+  updated_at                DateTime @updatedAt
+
+  @@map("ai_agent_profiles")
+}
+
+// Per-store AI overrides (brand, voice, currency, country, payment details)
+// layered over the company AiAgentProfile for chats resolved to that store.
+model AiStoreProfile {
+  id                        Int      @id @default(autoincrement())
+  company_id                Int
+  store_id                  Int      @unique
+  brand_name                String?  @db.VarChar(120)
+  tone                      String?  @db.Text
+  currency_code             String?  @db.VarChar(3)
+  currency_symbol           String?  @db.VarChar(8)
+  country_code              String?  @db.VarChar(2)
+  payment_details_encrypted String?  @db.Text
+  created_at                DateTime @default(now())
+  updated_at                DateTime @updatedAt
+
+  @@index([company_id])
+  @@map("ai_store_profiles")
+}
+
+// Appointments / reservations booked by the AI or an agent (Appointments skill).
+model AiBooking {
+  id              Int      @id @default(autoincrement())
+  company_id      Int
+  conversation_id Int?
+  contact_id      Int?
+  service         String   @db.VarChar(120)
+  resource        String?  @db.VarChar(120)
+  starts_at       DateTime
+  ends_at         DateTime
+  party_size      Int      @default(1)
+  name            String?  @db.VarChar(160)
+  phone           String?  @db.VarChar(32)
+  notes           String?  @db.Text
+  status          String   @default("booked") @db.VarChar(16)
+  created_by      String   @default("ai") @db.VarChar(16)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@index([company_id, starts_at])
+  @@index([company_id, conversation_id])
+  @@map("ai_bookings")
+}
+
+// Agent thumbs up/down on an AI-written message (the quality loop).
+model AiFeedback {
+  id              Int      @id @default(autoincrement())
+  company_id      Int
+  conversation_id Int
+  message_id      Int
+  user_id         Int
+  rating          Int
+  reason          String?  @db.VarChar(64)
+  comment         String?  @db.Text
+  created_at      DateTime @default(now())
+
+  @@unique([message_id, user_id])
+  @@index([company_id, created_at])
+  @@map("ai_feedback")
+}
+
+// Stored eval runs (golden conversations per industry pack).
+model AiEvalRun {
+  id             Int      @id @default(autoincrement())
+  pack           String   @db.VarChar(32)
+  prompt_version String   @db.VarChar(64)
+  model          String   @db.VarChar(64)
+  cases          Int      @default(0)
+  passed         Int      @default(0)
+  results        Json?
+  cost_micros    BigInt   @default(0)
+  created_at     DateTime @default(now())
+
+  @@index([pack, created_at])
+  @@map("ai_eval_runs")
+}
+
+// Super-admin prompt overrides (draft → live → retired). The code prompt is the
+// default; a `live` override for the same prompt_key replaces it platform-wide.
+model AiPromptOverride {
+  id         Int      @id @default(autoincrement())
+  prompt_key String   @db.VarChar(64)
+  version    String   @db.VarChar(32)
+  body       String   @db.Text
+  status     String   @default("draft") @db.VarChar(16)
+  eval_pass  Float?
+  created_by String?  @db.VarChar(120)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([prompt_key, status])
+  @@map("ai_prompt_overrides")
 }

@@ -1,10 +1,17 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
-import { AiProviderName, PROVIDER_MODELS } from '../ai.constants';
+import {
+  AiProviderName,
+  DEFAULT_TIER_MODELS,
+  LLM_CALL_TIMEOUT_MS,
+  ModelSpec,
+  modelSpec,
+} from '../ai.constants';
 import {
   AgentCompleteOpts,
   AgentCompletionResult,
+  CallTuning,
   CompleteOpts,
   CompletionResult,
   LlmProvider,
@@ -35,13 +42,23 @@ export class OpenAiProvider implements LlmProvider {
         'OpenAI is not configured on this server.',
       );
     }
-    this.client = new OpenAI({ apiKey });
+    this.client = new OpenAI({ apiKey, timeout: LLM_CALL_TIMEOUT_MS, maxRetries: 1 });
     return this.client;
   }
 
+  private spec(opts: CallTuning & { tier: 'fast' | 'smart' }): ModelSpec {
+    return (
+      opts.model ??
+      modelSpec(DEFAULT_TIER_MODELS.openai[opts.tier], 'openai', opts.tier)
+    );
+  }
+
   async complete(opts: CompleteOpts): Promise<CompletionResult> {
-    const model = PROVIDER_MODELS.openai[opts.tier];
+    const model = this.spec(opts);
     const client = this.getClient();
+    if (opts.documents?.length) {
+      throw new ServiceUnavailableException('PDF reading needs the Anthropic provider.');
+    }
 
     const systemText = opts.system.map((b) => b.text).join('\n\n');
 
@@ -62,15 +79,18 @@ export class OpenAiProvider implements LlmProvider {
           ]
         : opts.userText;
 
-    const res = await client.chat.completions.create({
-      model: model.id,
-      max_tokens: opts.maxTokens,
-      temperature: opts.temperature ?? 0.4,
-      messages: [
-        { role: 'system', content: systemText },
-        { role: 'user', content: userContent },
-      ],
-    });
+    const res = await client.chat.completions.create(
+      {
+        model: model.id,
+        max_tokens: opts.maxTokens,
+        ...(model.temperature ? { temperature: opts.temperature ?? 0.4 } : {}),
+        messages: [
+          { role: 'system', content: systemText },
+          { role: 'user', content: userContent },
+        ],
+      },
+      { timeout: opts.timeoutMs ?? LLM_CALL_TIMEOUT_MS },
+    );
 
     const text = (res.choices[0]?.message?.content ?? '').trim();
 
@@ -89,16 +109,32 @@ export class OpenAiProvider implements LlmProvider {
   async completeWithTools(
     opts: AgentCompleteOpts,
   ): Promise<AgentCompletionResult> {
-    const model = PROVIDER_MODELS.openai[opts.tier];
+    const model = this.spec(opts);
     const client = this.getClient();
 
     const systemText = opts.system.map((b) => b.text).join('\n\n');
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemText },
     ];
+    let firstUser = true;
     for (const m of opts.messages) {
       if (m.role === 'user') {
-        messages.push({ role: 'user', content: m.text });
+        const imgs = firstUser ? opts.images ?? [] : [];
+        firstUser = false;
+        messages.push({
+          role: 'user',
+          content: imgs.length
+            ? [
+                { type: 'text', text: m.text },
+                ...imgs.map(
+                  (img): OpenAI.Chat.ChatCompletionContentPartImage => ({
+                    type: 'image_url',
+                    image_url: { url: `data:${img.mime};base64,${img.dataBase64}` },
+                  }),
+                ),
+              ]
+            : m.text,
+        });
       } else if (m.role === 'assistant') {
         const msg: OpenAI.Chat.ChatCompletionAssistantMessageParam = {
           role: 'assistant',
@@ -130,13 +166,18 @@ export class OpenAiProvider implements LlmProvider {
       },
     }));
 
-    const res = await client.chat.completions.create({
-      model: model.id,
-      max_tokens: opts.maxTokens,
-      temperature: opts.temperature ?? 0.4,
-      messages,
-      ...(tools.length ? { tools } : {}),
-    });
+    const res = await client.chat.completions.create(
+      {
+        model: model.id,
+        max_tokens: opts.maxTokens,
+        ...(model.temperature ? { temperature: opts.temperature ?? 0.4 } : {}),
+        messages,
+        ...(tools.length
+          ? { tools, tool_choice: opts.toolChoice === 'none' ? 'none' : 'auto' }
+          : {}),
+      },
+      { timeout: opts.timeoutMs ?? LLM_CALL_TIMEOUT_MS },
+    );
 
     const choice = res.choices[0]?.message;
     const text = (choice?.content ?? '').trim() || null;

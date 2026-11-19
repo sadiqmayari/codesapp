@@ -66,6 +66,7 @@ function build(
     } as unknown as import('../../common/services/company-status.service').CompanyStatusService,
     {} as unknown as import('../ai/audio-transcription.service').AudioTranscriptionService,
     {} as unknown as import('../ai/ai-metering.service').AiMeteringService,
+    {} as unknown as import('../ai/ai-profile.service').AiProfileService,
     {
       enqueue: jest.fn(),
       registerWorker: jest.fn(),
