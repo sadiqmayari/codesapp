@@ -6,6 +6,11 @@
 
 ## Current Status
 
+**Meta Tech Provider — App Review prep (2026-11-20, latest):** NO migration, NO backend change. Runbook: https://claude.ai/artifact/JtbbxNVQ6siUVfnktNiwmV
+- New public page `/data-deletion` (`frontend/src/app/data-deletion/page.tsx`, static, no login) = the "User data deletion → instructions URL" Meta needs: `https://apps.codentra.pk/data-deletion`. Contact `admin@codentra.pk`.
+- Plan (one Meta app `Codentra - CAS` / `1899296380732173` onboards every client): Phase A = WhatsApp App Review (`whatsapp_business_messaging` + `whatsapp_business_management`) using two videos of the EXISTING app (inbox send + template create) — no dummy app. Then build Embedded Signup (v4) after Advanced Access; existing Option-B tenants keep working (NULL-secret fallback). Later rounds on the SAME app: Messenger, FB comments, IG DMs, IG comments, then Ads/Marketing API last.
+- Still to do in the Meta dashboard (user): add App domains `apps.codentra.pk`, paste the data-deletion URL, set Category, record + submit the 2 videos, Publish.
+
 **Settings redesign (2026-11-15, latest):** NO migration. One new read endpoint. Preview: https://claude.ai/artifact/H8poULan4mfykPgS5SHr3r
 - The 5,486-line `settings/page.tsx` is split into `components/settings/*` (one file per section) behind `/settings/[section]` routes: grouped left nav + settings search (desktop), chip bar (mobile), role gating from ONE `components/settings/nav.ts`. `/settings?tab=` links still work.
 - **Duplicates removed:** legacy single-store Shopify credentials (now shown only when a tenant has NO store, as a "Move to Connected stores" card), WhatsApp status grid (folded into the number's Manage sheet), abandoned-cart settings spread over 3 cards (one Abandoned carts page), password in Profile (→ Security), Ad accounts stub tab (→ Integrations tile).
