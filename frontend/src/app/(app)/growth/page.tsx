@@ -17,15 +17,13 @@ import { TargetCoachCard } from '@/components/growth/target-coach';
 import { zonedMonthString } from '@/lib/utils';
 import { money } from '@/lib/format-number';
 
-type Focus = 'net' | 'realized' | 'expected' | 'gross' | 'spend';
+type Focus = 'net' | 'realized' | 'gross' | 'spend';
 
 const TILES: Array<{ id: string; focus: Focus; spark: keyof Overview['series'][number]; color: string }> = [
   { id: 'gross', focus: 'gross', spark: 'gross', color: '#64748b' },
   { id: 'net', focus: 'net', spark: 'net', color: '#16a34a' },
   { id: 'realized', focus: 'realized', spark: 'realized', color: '#15803d' },
-  { id: 'expected', focus: 'expected', spark: 'expected', color: '#7c3aed' },
   { id: 'spend', focus: 'spend', spark: 'spend', color: '#d97706' },
-  { id: 'expRoas', focus: 'expected', spark: 'roas', color: '#7c3aed' },
   { id: 'roas', focus: 'net', spark: 'roas', color: '#16a34a' },
   { id: 'platformRoas', focus: 'net', spark: 'platformValue', color: '#4f46e5' },
   { id: 'mer', focus: 'spend', spark: 'spend', color: '#d97706' },
@@ -103,7 +101,7 @@ export default function GrowthOverviewPage() {
         return (
           <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-200">
             <b>This period is still settling:</b> {inflight.toLocaleString()} orders ({Math.round(share * 100)}%) are on the way, and returns arrive about 2 weeks after shipping.
-            Net sales will drop as they come back. Compare periods on <b>Expected net</b>; the % change on Net sales is not like-for-like yet.
+            Net sales will drop as they come back, so the % change against an older, settled period is not like-for-like yet.
           </div>
         );
       })()}
@@ -154,10 +152,10 @@ export default function GrowthOverviewPage() {
         hint={`${data.range.granularity === 'week' ? 'Weekly' : 'Daily'} · drag the slider to zoom · red pins mark unusual days`}
         action={
           <div role="group" aria-label="Bar metric" className="inline-flex rounded-lg border border-line p-0.5">
-            {(['net', 'realized', 'expected', 'spend'] as Focus[]).map((f) => (
+            {(['gross', 'net', 'realized', 'spend'] as Focus[]).map((f) => (
               <button key={f} type="button" onClick={() => setFocus(f)} aria-pressed={focus === f}
                 className={cn('rounded-md px-2.5 py-1 text-xs font-semibold capitalize', focus === f ? 'bg-ink text-surface' : 'text-muted hover:text-ink')}>
-                {f === 'expected' ? 'Expected' : f}
+                {f}
               </button>
             ))}
           </div>

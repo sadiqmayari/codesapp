@@ -33,7 +33,7 @@ export interface ChartSpec {
 const SYSTEM = `You are CodesApp Growth, an e-commerce growth analyst for a cash-on-delivery store.
 Rules:
 - Use ONLY numbers returned by the tools or given in the facts. Never invent figures, campaigns or causes.
-- "Expected" metrics already subtract predicted cancellations and returns (RTO); prefer them over platform-reported ROAS.
+- Speak in Gross sales (before discounts) and Net sales (after discounts, cancellations and returns). ROAS = net sales ÷ spend; "platform ROAS" is what Meta reports on placed orders. Never use the words "expected net" or "expected ROAS" with the user.
 - Money is in the store currency given in the facts. Round sensibly (e.g. Rs 1.24M, Rs 48.2K).
 - Be direct and specific: name the campaign, the number and the action. No fluff, no disclaimers.`;
 
@@ -76,13 +76,13 @@ export class GrowthAiService {
     return {
       currency: ov.currency,
       range: ov.range,
-      kpis: Object.fromEntries(['net', 'realized', 'expected', 'spend', 'roas', 'expRoas', 'platformRoas', 'breakEvenRoas',
-        'orders', 'aov', 'newCustomers', 'ncac', 'rtoRate', 'netProfit', 'expectedProfit'].map((id) => [id, pick(id)])),
+      kpis: Object.fromEntries(['gross', 'net', 'realized', 'spend', 'roas', 'platformRoas', 'breakEvenRoas',
+        'orders', 'aov', 'newCustomers', 'ncac', 'rtoRate', 'netProfit'].map((id) => [id, pick(id)])),
       topCampaigns: (camps.rows as Array<Record<string, unknown>>).slice(0, 8).map((c) => ({
-        name: c.name, spend: c.spend, expRoas: c.expRoas, platformRoas: c.platformRoas, firstRoas: c.firstRoas,
+        name: c.name, spend: c.spend, roas: c.roas, platformRoas: c.platformRoas, firstRoas: c.firstRoas,
         lastRoas: c.lastRoas, frequency: c.frequency, status: c.status,
       })),
-      channels: ov.channels.slice(0, 6).map((c) => ({ channel: c.label, net: c.net, spend: c.spend, expRoas: c.expRoas })),
+      channels: ov.channels.slice(0, 6).map((c) => ({ channel: c.label, net: c.net, spend: c.spend, roas: c.spend > 0 ? c.net / c.spend : null })),
       opportunities: opps.slice(0, 6).map((o) => ({ title: o.title, detail: o.detail, impact: o.impact, kind: o.kind })),
       anomalies: ov.anomalies.slice(0, 5),
     };
@@ -132,13 +132,13 @@ export class GrowthAiService {
     const cur = f.currency ?? '';
     const net = f.kpis.net as { value: number | null; prev: number | null };
     const spend = f.kpis.spend as { value: number | null; prev: number | null };
-    const er = f.kpis.expRoas as { value: number | null; prev: number | null };
+    const er = f.kpis.roas as { value: number | null; prev: number | null };
     const be = (f.kpis.breakEvenRoas as { value: number | null }).value;
     const ch = pctChange(net.value, net.prev);
     const top = f.opportunities[0];
     const parts = [
       `Net sales ${ch == null ? 'were' : ch >= 0 ? `rose ${ch.toFixed(1)}% to` : `fell ${Math.abs(ch).toFixed(1)}% to`} ${fmt(net.value, cur)} on ${fmt(spend.value, cur)} of ad spend.`,
-      er.value != null ? `Expected ROAS is ${er.value.toFixed(2)}×${be ? ` against a break-even of ${be.toFixed(2)}×` : ''}.` : '',
+      er.value != null ? `ROAS is ${er.value.toFixed(2)}×${be ? ` against a break-even of ${be.toFixed(2)}×` : ''}.` : '',
       top ? `${top.title}.` : '',
     ].filter(Boolean);
     return {

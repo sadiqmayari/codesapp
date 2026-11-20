@@ -4,16 +4,16 @@ import { useMemo, useState } from 'react';
 import { ImageOff, Images, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { fullMoney, money, pct, ratio } from '@/lib/format-number';
-import { growthApi, MODEL_LABEL, type Creative } from '@/lib/growth';
+import { growthApi, type Creative } from '@/lib/growth';
 import { SkeletonCards } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useGrowth } from '@/components/growth/growth-filters';
 import { ErrorNote, Panel, useGrowthData } from '@/components/growth/ui';
 
-type SortKey = 'spend' | 'expRoas' | 'ctr' | 'hookRate' | 'holdRate' | 'cpa';
+type SortKey = 'spend' | 'platformRoas' | 'ctr' | 'hookRate' | 'holdRate' | 'cpa';
 const SORTS: Array<[SortKey, string]> = [
   ['spend', 'Spend'],
-  ['expRoas', 'Expected ROAS'],
+  ['platformRoas', 'ROAS'],
   ['ctr', 'CTR'],
   ['hookRate', 'Hook rate'],
   ['holdRate', 'Hold rate'],
@@ -21,14 +21,15 @@ const SORTS: Array<[SortKey, string]> = [
 ];
 
 export default function GrowthCreativesPage() {
-  const { mode, filters } = useGrowth();
+  const { mode } = useGrowth();
   const [sort, setSort] = useState<SortKey>('spend');
   const [onlyFatigued, setOnlyFatigued] = useState(false);
   const { data, loading, error } = useGrowthData((q, signal) => growthApi.creatives(q, { signal }));
 
   const rows = useMemo(() => {
     const list = (data?.rows ?? []).filter((r) => !onlyFatigued || r.fatigued);
-    const get = (r: Creative) => (r[sort] as number | null) ?? (sort === 'cpa' ? Infinity : -Infinity);
+    const metaCpa = (r: Creative) => (r.platformPurchases > 0 ? r.spend / r.platformPurchases : null);
+    const get = (r: Creative) => (sort === 'cpa' ? metaCpa(r) : (r[sort] as number | null)) ?? (sort === 'cpa' ? Infinity : -Infinity);
     return [...list].sort((a, b) => (sort === 'cpa' ? get(a) - get(b) : get(b) - get(a)));
   }, [data, sort, onlyFatigued]);
 
@@ -82,7 +83,7 @@ export default function GrowthCreativesPage() {
                     ['Hook', pct(r.hookRate, 0), '3-second video views ÷ impressions'],
                     ['Hold', pct(r.holdRate, 0), 'ThruPlays ÷ 3-second views'],
                     ['Link CTR', pct(r.ctr, 2), 'Link clicks ÷ impressions'],
-                    ['Exp. ROAS', ratio(r.expRoas), `Expected net from orders this ad brought in (${MODEL_LABEL[filters.model]}), after predicted cancellations and returns ÷ spend. Meta reports ${ratio(r.platformRoas)} on placed orders.`],
+                    ['ROAS', ratio(r.platformRoas), 'Purchase value ÷ spend, as Meta reports it'],
                   ] as Array<[string, string, string]>).map(([k, v, help]) => (
                     <div key={k} className="rounded-md bg-sunken px-1 py-1.5" title={help}>
                       <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted">{k}</dt>
@@ -91,8 +92,7 @@ export default function GrowthCreativesPage() {
                   ))}
                 </dl>
                 <div className="flex items-center justify-between text-xs text-muted">
-                  <span title={`Spend ÷ orders this ad brought in (${Math.round(r.orders * 10) / 10}). Meta counted ${r.platformPurchases} purchases.`}>CPA <b className="text-ink">{money(r.cpa, cur, mode)}</b></span>
-                  <span title="What Meta reports (placed orders)">Meta <b className="text-ink">{ratio(r.platformRoas)}</b></span>
+                  <span title={`Spend ÷ ${r.platformPurchases} purchases, as Meta reports it`}>CPA <b className="text-ink">{money(r.platformPurchases > 0 ? r.spend / r.platformPurchases : null, cur, mode)}</b></span>
                   <span>Freq <b className="text-ink">{r.frequency?.toFixed(1) ?? '—'}</b></span>
                   {r.ctrTrend && r.ctrTrend.prevCtr > 0 && (
                     <span title="CTR last 7 days vs the 7 days before" className={r.ctrTrend.ctr >= r.ctrTrend.prevCtr ? 'text-emerald-600' : 'text-red-600'}>

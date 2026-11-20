@@ -84,7 +84,7 @@ export function TargetCoachCard({ month, compact = false }: { month: string; com
           <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300"><Target size={16} /></span>
           <div>
             <h3 className="text-sm font-bold text-ink">Net sales target · {month}</h3>
-            <p className="text-xs text-muted">Paced on expected net: orders still on the way are priced for cancellations and returns.</p>
+            <p className="text-xs text-muted">Net sales, counting orders still on the way at the share that usually gets delivered.</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -108,7 +108,7 @@ export function TargetCoachCard({ month, compact = false }: { month: string; com
           {data?.target.netSalesTarget != null && (
             <button type="button" onClick={() => setEditing(false)} className="text-xs font-semibold text-muted hover:text-ink">Cancel</button>
           )}
-          {data?.actual && <span className="text-xs text-muted">Net so far {fmt(data.actual.net)} · expected {fmt(data.actual.expected)}</span>}
+          {data?.actual && <span className="text-xs text-muted">Net so far {fmt(data.actual.expected)}</span>}
         </form>
       )}
 
@@ -131,7 +131,7 @@ export function TargetCoachCard({ month, compact = false }: { month: string; com
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {([
-                ['Expected so far', fmt(p.soFar)],
+                ['Net so far', fmt(p.soFar)],
                 [`Needed / day · ${p.daysLeft}d left`, fmt(p.needPerDay)],
                 ['Recent pace / day', fmt(p.recentPerDay)],
                 ['Chance of hitting', `${p.chance}%`],
@@ -167,7 +167,7 @@ export function TargetCoachCard({ month, compact = false }: { month: string; com
                 ))}
                 {data && !data.levers.length && <li className="text-xs text-muted">No clear levers right now: keep spend steady.</li>}
               </ol>
-              {data?.plan && <p className="mt-2 text-[11px] text-muted">{data.plan.source === 'ai' ? 'Written by AI from your numbers.' : 'Calculated from your numbers.'} Impacts are extra expected net by month end.</p>}
+              {data?.plan && <p className="mt-2 text-[11px] text-muted">{data.plan.source === 'ai' ? 'Written by AI from your numbers.' : 'Calculated from your numbers.'} Impacts are extra net sales by month end.</p>}
             </div>
           )}
         </div>

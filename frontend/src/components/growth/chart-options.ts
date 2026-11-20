@@ -197,9 +197,9 @@ export function scatterOption(rows: Array<{ name: string; spend: number; expRoas
   return {
     ...baseOption(t),
     grid: { left: 8, right: 24, top: 24, bottom: 8, containLabel: true },
-    tooltip: { ...baseOption(t).tooltip, formatter: (p: TP) => { const d = p.data as [number, number, number, string]; return rowsTip(t, d[3], [['', 'Spend', fullMoney(d[0], cur)], ['', 'Expected ROAS', ratio(d[1])], ['', 'Orders', Math.round(d[2]).toLocaleString()]]); } },
+    tooltip: { ...baseOption(t).tooltip, formatter: (p: TP) => { const d = p.data as [number, number, number, string]; return rowsTip(t, d[3], [['', 'Spend', fullMoney(d[0], cur)], ['', 'ROAS', ratio(d[1])], ['', 'Orders', Math.round(d[2]).toLocaleString()]]); } },
     xAxis: { type: 'value', name: 'Spend', nameTextStyle: { color: t.muted }, ...axis(t), axisLabel: { color: t.muted, formatter: (v: number) => axisNumber(v, mode) } },
-    yAxis: { type: 'value', name: 'Expected ROAS', nameTextStyle: { color: t.muted }, ...axis(t), axisLabel: { color: t.muted, formatter: (v: number) => `${v}×` } },
+    yAxis: { type: 'value', name: 'ROAS', nameTextStyle: { color: t.muted }, ...axis(t), axisLabel: { color: t.muted, formatter: (v: number) => `${v}×` } },
     series: [{
       type: 'scatter', data,
       symbolSize: (d: number[]) => Math.min(48, 10 + Math.sqrt(d[2]) * 3),

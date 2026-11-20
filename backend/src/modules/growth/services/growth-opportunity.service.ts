@@ -28,6 +28,8 @@ type CampaignRow = {
   spend: number;
   expected: number;
   expRoas: number | null;
+  roas: number | null;
+  net: number;
   frequency: number | null;
   status: string | null;
   children: CampaignRow[];
@@ -78,25 +80,25 @@ export class GrowthOpportunityService {
     const rows = camps.rows as unknown as CampaignRow[];
     if (be != null) {
       for (const c of rows) {
-        if (c.spend <= 0 || c.expRoas == null) continue;
+        if (c.spend <= 0 || c.roas == null) continue;
         const share = totalSpend ? c.spend / totalSpend : 0;
         const freq = c.frequency ?? 0;
-        if (c.expRoas >= be * 1.3 && freq < 2.5 && share >= 0.05 && /ACTIVE/i.test(c.status ?? 'ACTIVE')) {
+        if (c.roas >= be * 1.3 && freq < 2.5 && share >= 0.05 && /ACTIVE/i.test(c.status ?? 'ACTIVE')) {
           // +20% budget at the fitted elasticity (~0.7) keeps most of the return.
           const extraSpend = c.spend * 0.2;
-          const gain = extraSpend * c.expRoas * 0.7 - extraSpend * (be > 0 ? 1 : 0);
+          const gain = extraSpend * c.roas * 0.7 - extraSpend * (be > 0 ? 1 : 0);
           out.push({ id: `scale:${c.id}`, kind: 'scale', severity: 'good', entityId: c.id,
             title: `Scale ${c.name} by 20%`,
-            detail: `Expected ROAS ${c.expRoas.toFixed(2)}× vs break-even ${be.toFixed(2)}×, frequency ${freq.toFixed(1)}. There is room before fatigue.`,
+            detail: `ROAS ${c.roas.toFixed(2)}× vs break-even ${be.toFixed(2)}×, frequency ${freq.toFixed(1)}. There is room before fatigue.`,
             impact: monthly(Math.max(0, gain)), impactLabel: 'expected net / mo',
             action: { kind: 'scale', campaignId: c.id, pct: 20, label: 'Stage +20% budget' } });
-        } else if (c.expRoas < be * 0.85 && share >= 0.05) {
-          const loss = c.spend - c.expected / be;
+        } else if (c.roas < be * 0.85 && share >= 0.05) {
+          const loss = c.spend - c.net / be;
           out.push({ id: `cut:${c.id}`, kind: 'cut', severity: 'bad', entityId: c.id,
             title: `${c.name} is below break-even`,
-            detail: `Expected ROAS ${c.expRoas.toFixed(2)}× vs break-even ${be.toFixed(2)}×. Cut budget or fix targeting before it loses more.`,
+            detail: `ROAS ${c.roas.toFixed(2)}× vs break-even ${be.toFixed(2)}×. Cut budget or fix targeting before it loses more.`,
             impact: monthly(Math.max(0, loss)), impactLabel: 'saved / mo',
-            action: c.expRoas < be * 0.6
+            action: c.roas < be * 0.6
               ? { kind: 'patch', level: 'campaign', entityId: c.id, patch: { status: 'PAUSED' }, label: 'Stage pause' }
               : { kind: 'scale', campaignId: c.id, pct: -30, label: 'Stage −30% budget' } });
         }

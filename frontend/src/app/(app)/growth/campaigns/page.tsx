@@ -38,9 +38,7 @@ const COLS: Col[] = [
   { id: 'firstRoas', label: 'First-click ROAS', kind: 'ratio', get: (n) => n.firstRoas },
   { id: 'lastRoas', label: 'Last-click ROAS', kind: 'ratio', get: (n) => n.lastRoas },
   { id: 'roas', label: 'Model ROAS', title: 'Net sales under the selected attribution model ÷ spend', kind: 'ratio', get: (n) => n.roas },
-  { id: 'expRoas', label: 'Expected ROAS', title: 'After predicted cancellations and returns', kind: 'ratio', get: (n) => n.expRoas },
   { id: 'net', label: 'Net sales', kind: 'money', get: (n) => n.net },
-  { id: 'expected', label: 'Expected net', kind: 'money', get: (n) => n.expected },
   { id: 'delivered', label: 'Delivered', kind: 'money', get: (n) => n.delivered },
   { id: 'orders', label: 'Orders', kind: 'count', get: (n) => n.orders },
   { id: 'cpa', label: 'CPA', kind: 'money', get: (n) => n.cpa },
@@ -56,7 +54,7 @@ const COLS: Col[] = [
   { id: 'platformPurchases', label: 'Platform purchases', kind: 'count', get: (n) => n.platformPurchases },
 ];
 
-const DEFAULT_COLS: ColId[] = ['spend', 'trend', 'platformRoas', 'firstRoas', 'lastRoas', 'expRoas', 'expected', 'orders', 'cpa', 'frequency', 'ctr'];
+const DEFAULT_COLS: ColId[] = ['spend', 'trend', 'platformRoas', 'firstRoas', 'lastRoas', 'roas', 'net', 'orders', 'cpa', 'frequency', 'ctr'];
 const COLS_KEY = 'ca_growth_campaign_cols';
 const ACTIVE_KEY = 'ca_growth_campaign_active_only';
 
@@ -124,10 +122,10 @@ function bidLabel(n: CampaignNode, staged?: BidStrategy) {
 }
 
 function signal(n: CampaignNode, be: number | null): { label: string; cls: string } | null {
-  if (n.spend <= 0 || n.expRoas == null || be == null) return null;
+  if (n.spend <= 0 || n.roas == null || be == null) return null;
   if ((n.frequency ?? 0) > 3.2) return { label: 'Fatigue risk', cls: 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300' };
-  if (n.expRoas >= be * 1.3) return { label: 'Scale', cls: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' };
-  if (n.expRoas < be * 0.85) return { label: 'Below break-even', cls: 'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300' };
+  if (n.roas >= be * 1.3) return { label: 'Scale', cls: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' };
+  if (n.roas < be * 0.85) return { label: 'Below break-even', cls: 'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300' };
   return { label: 'Hold', cls: 'bg-sunken text-muted' };
 }
 
@@ -347,7 +345,7 @@ function CampaignsView() {
       {inspect && <Inspector node={inspect} breakEven={be} canEdit={canEdit(inspect.platform)} onClose={() => setInspect(null)} />}
       <Panel
         title="Campaigns → ad sets → ads"
-        hint={<>Highlighted column follows the attribution model ({MODEL_LABEL[filters.model]}). Expected ROAS subtracts predicted cancellations and returns{be != null ? `; break-even is ${be.toFixed(2)}×` : ''}.</>}
+        hint={<>Highlighted column follows the attribution model ({MODEL_LABEL[filters.model]}). Model ROAS = net sales ÷ spend{be != null ? `; break-even is ${be.toFixed(2)}×` : ''}.</>}
         action={
           <div className="flex flex-wrap items-center gap-2">
             <div role="group" aria-label="Campaign status" className="inline-flex rounded-lg border border-line bg-surface p-0.5 shadow-sm">
@@ -448,8 +446,8 @@ function CampaignsView() {
       </Panel>
 
       {theme && rows.length > 0 && (
-        <Panel title="Spend vs expected ROAS" hint="Bubble size = attributed orders · green = comfortably above break-even, amber = near it, red = below">
-          <EChart option={scatterOption(rows.map((r) => ({ name: r.name, spend: r.spend, expRoas: r.expRoas, orders: r.orders })), be, theme, mode, cur)} height={340} ariaLabel="Spend versus expected ROAS" />
+        <Panel title="Spend vs ROAS" hint="ROAS on net sales · bubble size = attributed orders · green = comfortably above break-even, amber = near it, red = below">
+          <EChart option={scatterOption(rows.map((r) => ({ name: r.name, spend: r.spend, expRoas: r.roas, orders: r.orders })), be, theme, mode, cur)} height={340} ariaLabel="Spend versus ROAS" />
         </Panel>
       )}
     </div>

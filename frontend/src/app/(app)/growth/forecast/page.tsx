@@ -12,15 +12,15 @@ import { pacingOption } from '@/components/growth/chart-options';
 import { ErrorNote, Panel } from '@/components/growth/ui';
 import { TargetCoachCard } from '@/components/growth/target-coach';
 
-type Metric = 'net' | 'expected' | 'gross' | 'spend';
-const LABEL: Record<Metric, string> = { net: 'Net sales', expected: 'Expected net', gross: 'Gross sales', spend: 'Ad spend' };
+type Metric = 'net' | 'gross' | 'spend';
+const LABEL: Record<Metric, string> = { gross: 'Gross sales', net: 'Net sales', spend: 'Ad spend' };
 
 export default function GrowthForecastPage() {
   const { filters, version, mode } = useGrowth();
   const theme = useChartTheme();
   const [data, setData] = useState<Forecast | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [metric, setMetric] = useState<Metric>('expected');
+  const [metric, setMetric] = useState<Metric>('net');
   const [budgets, setBudgets] = useState<Record<string, number>>({});
 
   useEffect(() => {

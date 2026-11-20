@@ -222,7 +222,7 @@ export class GrowthTargetService {
       levers.push({
         id: 'confirm',
         title: `Confirm ${n(unc.c)} waiting order${n(unc.c) === 1 ? '' : 's'}`,
-        detail: `Confirmed orders are delivered far more often. Calling them lifts expected net on ${Math.round(n(unc.v)).toLocaleString()} of open orders.`,
+        detail: `Confirmed orders are delivered far more often. Calling them keeps more of the ${Math.round(n(unc.v)).toLocaleString()} in open orders.`,
         impact: lift,
         link: '/orders/fulfillment',
       });
@@ -248,7 +248,7 @@ export class GrowthTargetService {
       source: 'rules',
       text: p.gap <= 0
         ? `On track: projected ${Math.round(p.projected.p50).toLocaleString()} vs target ${Math.round(p.target).toLocaleString()}. Keep spend steady and protect delivery rate.`
-        : `You need about ${Math.round(p.needPerDay).toLocaleString()} expected net a day for ${p.daysLeft} days (recent pace ${Math.round(p.recentPerDay).toLocaleString()}). The moves below are worth about ${Math.round(closes).toLocaleString()} of the ${Math.round(p.gap).toLocaleString()} gap.`,
+        : `You need about ${Math.round(p.needPerDay).toLocaleString()} net sales a day for ${p.daysLeft} days (recent pace ${Math.round(p.recentPerDay).toLocaleString()}). The moves below are worth about ${Math.round(closes).toLocaleString()} of the ${Math.round(p.gap).toLocaleString()} gap.`,
     };
     try {
       await this.metering.assertAllowed(companyId);
@@ -256,9 +256,9 @@ export class GrowthTargetService {
         tier: 'fast',
         system: [{ text: COACH_SYSTEM }],
         userText:
-          `Currency: ${cur ?? ''}. Month ${month}. Pacing (expected net, after predicted cancels/returns): ${JSON.stringify(p)}.\n` +
-          `Levers (impact = extra expected net by month end): ${JSON.stringify(levers.map(({ title, detail, impact }) => ({ title, detail, impact: impact == null ? null : Math.round(impact) })))}\n\n` +
-          'Write 2-3 sentences, max 70 words: where they will land, what the gap is, and the order to pull the levers in. No bullet points, no markdown.',
+          `Currency: ${cur ?? ''}. Month ${month}. Pacing (net sales; open orders counted at their usual delivery share): ${JSON.stringify(p)}.\n` +
+          `Levers (impact = extra net sales by month end): ${JSON.stringify(levers.map(({ title, detail, impact }) => ({ title, detail, impact: impact == null ? null : Math.round(impact) })))}\n\n` +
+          'Write 2-3 sentences, max 70 words: where they will land, what the gap is, and the order to pull the levers in. Say "net sales", never "expected net". No bullet points, no markdown.',
         maxTokens: 220,
         temperature: 0.2,
       });
