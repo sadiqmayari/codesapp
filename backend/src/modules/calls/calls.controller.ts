@@ -14,11 +14,16 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CallsService } from './calls.service';
 import { InboxService } from '../inbox/inbox.service';
+import { ModuleGuard } from '../../common/guards/module.guard';
+import { RequireModule } from '../../common/decorators/require-module.decorator';
+import { INBOX_ROLES } from '../../common/auth/roles';
 
 type Viewer = { userId: number; companyId: number; role: string };
 
 @Controller('calls')
-@UseGuards(AuthGuard('jwt'), TenantGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard, ModuleGuard)
+@Roles(...INBOX_ROLES)
+@RequireModule('calls')
 export class CallsController {
   constructor(
     private readonly calls: CallsService,

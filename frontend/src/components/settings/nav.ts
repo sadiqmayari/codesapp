@@ -34,6 +34,7 @@ import {
  *   'all'      → every signed-in member (own account only)
  *   'manage'   → owner/admin
  *   'kb'       → owner/admin + agent (knowledge base)
+ *   'hr'       → owner/admin + hr_manager (team members, attendance)
  * `href` (instead of a section) = a shortcut to a setting that lives on
  * another page; rendered with a ↗ marker.
  */
@@ -60,7 +61,7 @@ export type SettingsSectionId =
   | 'knowledge'
   | 'integrations';
 
-type Access = 'all' | 'manage' | 'kb';
+type Access = 'all' | 'manage' | 'kb' | 'hr';
 
 export interface SettingsNavItem {
   id: SettingsSectionId | string;
@@ -91,10 +92,10 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
     label: 'Workspace',
     items: [
       { id: 'general', label: 'General', icon: Building2, access: 'manage', keywords: 'branding logo company timezone clock' },
-      { id: 'team', label: 'Team', icon: Users, access: 'manage', keywords: 'members roles invite suspend reassign delete agents' },
+      { id: 'team', label: 'Team', icon: Users, access: 'hr', keywords: 'members roles invite suspend reassign delete agents' },
       { id: 'tracking', label: 'Tracking page', icon: MapPin, access: 'manage', keywords: 'public tracking link handle' },
       { id: 'competition', label: 'Competition', icon: Trophy, access: 'manage', keywords: 'leaderboard points badges speed bonus gamification' },
-      { id: 'attendance', label: 'Attendance & payroll', icon: Clock, access: 'manage', keywords: 'attendance payroll shifts leave salary check-in commission auto-checkout holidays', href: '/team-chat?view=attendance&tab=settings' },
+      { id: 'attendance', label: 'Attendance & payroll', icon: Clock, access: 'hr', keywords: 'attendance payroll shifts leave salary check-in commission auto-checkout holidays', href: '/team-chat?view=attendance&tab=settings' },
       { id: 'billing', label: 'Billing & plan', icon: CreditCard, access: 'manage', keywords: 'billing invoices plan subscription usage', href: '/billing' },
     ],
   },
@@ -143,6 +144,7 @@ export function canAccess(item: Pick<SettingsNavItem, 'access'>, role: string | 
   if (item.access === 'all') return true;
   if (canManageSettings(role)) return true;
   if (item.access === 'kb') return role === 'agent';
+  if (item.access === 'hr') return role === 'hr_manager';
   return false;
 }
 

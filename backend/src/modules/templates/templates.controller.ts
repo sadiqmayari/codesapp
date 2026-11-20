@@ -19,9 +19,13 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { TemplatesService } from './templates.service';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { ListTemplatesDto } from './dto/list-templates.dto';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { INBOX_ROLES, PRIVILEGED } from '../../common/auth/roles';
 
 @Controller('templates')
-@UseGuards(AuthGuard('jwt'), TenantGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
+@Roles(...INBOX_ROLES, 'fulfillment')
 export class TemplatesController {
   constructor(private readonly templatesService: TemplatesService) {}
 
@@ -42,6 +46,7 @@ export class TemplatesController {
   }
 
   @Post()
+  @Roles(...PRIVILEGED)
   @UseGuards(PlanGuard)
   @PlanLimit('templates')
   create(
@@ -52,6 +57,7 @@ export class TemplatesController {
   }
 
   @Delete(':id')
+  @Roles(...PRIVILEGED)
   remove(
     @CurrentUser() user: { companyId: number },
     @Param('id', ParseIntPipe) id: number,
@@ -60,6 +66,7 @@ export class TemplatesController {
   }
 
   @Post('sync')
+  @Roles(...PRIVILEGED)
   @HttpCode(HttpStatus.OK)
   sync(@CurrentUser() user: { companyId: number }) {
     return this.templatesService.sync(user.companyId);

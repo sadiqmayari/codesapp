@@ -30,6 +30,9 @@ import { ActivationStatus, Prisma } from '@prisma/client';
 import { clampQuery } from '../../common/utils/search';
 import { PUBLIC_PRICING_CACHE_KEY } from '../public/public.service';
 import { COURIER_DISPLAY_NAME } from '../couriers/couriers.constants';
+import { ModuleRef } from '@nestjs/core';
+import { FeatureService } from '../../common/services/feature.service';
+import { MODULE_REGISTRY, isModuleKey } from '../../common/features/feature.constants';
 
 /** Safe BigInt → number for COUNT/SUM aggregates from $queryRawUnsafe. */
 function n(v: unknown): number {
@@ -57,6 +60,8 @@ export class SuperAdminService {
     private readonly companyStatus: CompanyStatusService,
     private readonly mail: MailService,
     private readonly observability: ObservabilityService,
+    private readonly feature: FeatureService,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   /**
@@ -1367,36 +1372,111 @@ export class SuperAdminService {
     return { ok: true };
   }
 
+  /** Registry-driven module list + effective state for the client page. */
+  async getModules(id: number) {
+    const company = await this.prisma.company.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        feature_overrides: true,
+        content_enabled: true,
+        pr_enabled: true,
+        inventory_enabled: true,
+      },
+    });
+    if (!company) throw new NotFoundException('Company not found');
+    const eff = FeatureService.resolve(company);
+    const raw = (company.feature_overrides ?? {}) as Record<string, unknown>;
+    return {
+      modules: MODULE_REGISTRY.map((m) => ({
+        key: m.key,
+        label: m.label,
+        description: m.description,
+        group: m.group,
+        parent: m.parent ?? null,
+        enabled: eff.modules[m.key],
+        granted: m.legacyColumn
+          ? raw[m.key] === 'on' || (raw[m.key] !== 'off' && !!company[m.legacyColumn])
+          : raw[m.key] === 'on',
+      })),
+      callsMaxAgents: eff.callsMaxAgents,
+    };
+  }
+
   /**
-   * Per-tenant Content / PR module access. These are features the super-admin
-   * grants to individual clients (NOT a plan tier) — same model as invoice
-   * import. Writes companies.content_enabled / pr_enabled directly.
+   * Per-tenant MODULE GRANTS (super-admin authoritative). `patch` maps a
+   * registry key → boolean, plus optional `calls_max_agents` (number | null).
+   * Content/PR/Inventory also write their legacy companies.*_enabled column
+   * (and drop any stale override) so there is one truth. Audited + pushed
+   * live to the tenant's open sessions.
    */
   async setModuleAccess(
     id: number,
-    opts: { content?: boolean; pr?: boolean; inventory?: boolean },
+    patch: Record<string, unknown>,
+    actorId?: number,
   ) {
     const company = await this.prisma.company.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, feature_overrides: true },
     });
     if (!company) throw new NotFoundException('Company not found');
-    const data: {
-      content_enabled?: boolean;
-      pr_enabled?: boolean;
-      inventory_enabled?: boolean;
-    } = {};
-    if (opts.content !== undefined) data.content_enabled = opts.content;
-    if (opts.pr !== undefined) data.pr_enabled = opts.pr;
-    if (opts.inventory !== undefined) data.inventory_enabled = opts.inventory;
-    const updated = await this.prisma.company.update({
+    const overrides = {
+      ...((company.feature_overrides ?? {}) as Record<string, unknown>),
+    };
+    const data: Record<string, unknown> = {};
+    const changed: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(patch ?? {})) {
+      if (k === 'calls_max_agents') {
+        const n = v === null || v === '' ? null : Number(v);
+        if (n !== null && (!Number.isFinite(n) || n < 0 || n > 1000)) {
+          throw new BadRequestException('calls_max_agents must be 0-1000 or null');
+        }
+        if (n === null || n === 0) delete overrides.calls_max_agents;
+        else overrides.calls_max_agents = Math.floor(n);
+        changed[k] = n;
+        continue;
+      }
+      if (!isModuleKey(k) || typeof v !== 'boolean') continue;
+      const def = MODULE_REGISTRY.find((m) => m.key === k)!;
+      if (def.legacyColumn) {
+        data[def.legacyColumn] = v;
+        delete overrides[k];
+      } else {
+        overrides[k] = v ? 'on' : 'off';
+      }
+      changed[k] = v;
+    }
+    if (!Object.keys(changed).length) {
+      throw new BadRequestException('Nothing to change');
+    }
+    await this.prisma.company.update({
       where: { id },
-      data,
-      select: { content_enabled: true, pr_enabled: true, inventory_enabled: true },
+      data: { ...data, feature_overrides: overrides as never },
     });
-    // Keep parity with the other per-company overrides (sub cache bust).
+    this.feature.invalidate(id);
     this.cache.del(this.cache.subscriptionKey(id));
-    return updated;
+    await this.prisma.auditLog
+      .create({
+        data: {
+          user_id: actorId ?? null,
+          company_id: null,
+          action: 'super_admin.module_access',
+          entity: 'company',
+          entity_id: id,
+          metadata: { targetCompanyId: id, changed } as never,
+        },
+      })
+      .catch((err: Error) =>
+        this.logger.warn(`module-access audit log failed (non-fatal): ${err.message}`),
+      );
+    try {
+      const { InboxGateway } = require('../inbox/inbox.gateway');
+      const gw = this.moduleRef.get(InboxGateway, { strict: false });
+      gw?.emitToCompany(id, 'company.modules.updated', { changed });
+    } catch {
+      /* socket push is best-effort */
+    }
+    return this.getModules(id);
   }
 
   /**
@@ -1861,6 +1941,7 @@ export class SuperAdminService {
       companyId,
       role: owner.role,
       email: owner.email,
+      tv: owner.token_version,
       impersonated: true,
     };
 

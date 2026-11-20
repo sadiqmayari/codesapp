@@ -11,11 +11,15 @@ import {
   SummarizeDto,
   TranslateDto,
 } from './dto/ai-actions.dto';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { INBOX_ROLES } from '../../common/auth/roles';
 
 type AuthUser = { companyId: number; userId: number };
 
 @Controller('ai')
-@UseGuards(AuthGuard('jwt'), TenantGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
+@Roles(...INBOX_ROLES, 'fulfillment')
 export class AiController {
   constructor(
     private readonly ai: AiService,

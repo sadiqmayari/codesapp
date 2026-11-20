@@ -48,6 +48,7 @@ import {
   toMinutes,
   workDayFor,
 } from './schedule';
+import { FeatureService } from '../../common/services/feature.service';
 
 const DEFAULT_WORK_START = '09:30';
 const DEFAULT_CHECKIN_WINDOW_MIN = 150; // 2.5h after shift start (09:30 → 12:00)
@@ -156,6 +157,8 @@ const MEMBER_SELECT = {
   salary_overtime_rate: true,
 } as const;
 
+type Viewer = { userId: number; role: string };
+
 const NOT_TRACKED_ROLES = ['owner', 'super_admin'];
 const day = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
 const isP2002 = (e: unknown) =>
@@ -182,6 +185,7 @@ export class AttendanceService {
     private readonly prisma: PrismaService,
     private readonly gateway: InboxGateway,
     private readonly commissions: CommissionsService,
+    private readonly feature: FeatureService,
   ) {}
 
   // ── company defaults + per-user schedule ──────────────────────────────────
@@ -462,7 +466,7 @@ export class AttendanceService {
     this.safeEmit(() => {
       this.gateway.emitToCompany(companyId, 'attendance.changed', { userId, at: now.toISOString() });
       if (isLate) {
-        this.gateway.emitToPrivileged(companyId, 'attendance.late', { userId, name: u.name, at: now.toISOString() });
+        this.gateway.emitToHrAdmins(companyId, 'attendance.late', { userId, name: u.name, at: now.toISOString() });
       }
     });
     return this.toCell(row);
@@ -532,7 +536,23 @@ export class AttendanceService {
     }) as Promise<MemberRow[]>;
   }
 
-  async listMembers(companyId: number) {
+  /**
+   * HR managers never see or touch the pay of admins, nor their own (the
+   * owner manages those). Returns true when `viewer` must not see `target`'s pay.
+   */
+  private payHidden(viewer: Viewer | undefined, target: { userId: number; role: string }): boolean {
+    if (!viewer || viewer.role !== 'hr_manager') return false;
+    return target.role === 'admin' || target.userId === viewer.userId;
+  }
+
+  /** 403 when an HR manager tries to change an admin's pay. */
+  private async assertCanTouchPay(companyId: number, actor: Viewer, userId: number) {
+    if (actor.role !== 'hr_manager') return;
+    const u = await this.prisma.user.findFirst({ where: { id: userId, company_id: companyId }, select: { role: true } });
+    if (u?.role === 'admin') throw new ForbiddenException("HR managers can't change an admin's pay. Ask the owner.");
+  }
+
+  async listMembers(companyId: number, viewer?: Viewer) {
     const co = await this.companyDefaults(companyId);
     const members = await this.activeMembers(companyId);
     return members.map((m) => {
@@ -555,9 +575,10 @@ export class AttendanceService {
         joinedOn: day(m.joined_on),
         leftOn: day(m.left_on),
         annualPaidLeave: m.annual_paid_leave,
-        salaryAmount: m.salary_amount == null ? null : Number(m.salary_amount),
-        overtimeRate: m.salary_overtime_rate == null ? null : Number(m.salary_overtime_rate),
-        allowances: resolveAllowances(m.salary_allowances),
+        payHidden: this.payHidden(viewer, { userId: m.id, role: m.role }),
+        salaryAmount: this.payHidden(viewer, { userId: m.id, role: m.role }) || m.salary_amount == null ? null : Number(m.salary_amount),
+        overtimeRate: this.payHidden(viewer, { userId: m.id, role: m.role }) || m.salary_overtime_rate == null ? null : Number(m.salary_overtime_rate),
+        allowances: this.payHidden(viewer, { userId: m.id, role: m.role }) ? [] : resolveAllowances(m.salary_allowances),
       };
     });
   }
@@ -573,6 +594,7 @@ export class AttendanceService {
     if (touchesPay && actor.userId === userId && actor.role !== 'owner') {
       throw new ForbiddenException('You cannot change your own salary. Ask the owner.');
     }
+    if (touchesPay) await this.assertCanTouchPay(companyId, actor, userId);
     const data: Record<string, unknown> = {};
     if (dto.workStartTime !== undefined) data.attendance_work_start = dto.workStartTime || null;
     if (dto.workEndTime !== undefined) data.attendance_work_end = dto.workEndTime || null;
@@ -892,7 +914,14 @@ export class AttendanceService {
       : null;
   }
 
-  async payroll(companyId: number, month: string) {
+  async payroll(companyId: number, month: string, viewer?: Viewer) {
+    const p = await this.payrollAll(companyId, month);
+    if (!viewer || viewer.role !== 'hr_manager') return p;
+    const rows = p.rows.filter((r) => !this.payHidden(viewer, r));
+    return { ...p, rows, hiddenCount: p.rows.length - rows.length, totals: this.totalsOf(rows) };
+  }
+
+  private async payrollAll(companyId: number, month: string) {
     if (!MONTH_RE.test(month)) throw new BadRequestException('month must be YYYY-MM');
     const { from, to } = monthBounds(month);
     const run = await this.prisma.payrollRun.findUnique({ where: { company_id_month: { company_id: companyId, month } } });
@@ -914,7 +943,7 @@ export class AttendanceService {
     return { month, from, to, locked: false, policy, run: this.runView(run), rows, totals: this.totalsOf(rows) };
   }
 
-  async approveRun(companyId: number, actorId: number, month: string) {
+  async approveRun(companyId: number, actorId: number, month: string, viewer?: Viewer) {
     if (!MONTH_RE.test(month)) throw new BadRequestException('month must be YYYY-MM');
     const existing = await this.prisma.payrollRun.findUnique({ where: { company_id_month: { company_id: companyId, month } } });
     if (existing && existing.status !== 'draft') throw new ConflictException('This month is already approved');
@@ -954,10 +983,10 @@ export class AttendanceService {
         });
       }
     });
-    return this.payroll(companyId, month);
+    return this.payroll(companyId, month, viewer);
   }
 
-  async markRunPaid(companyId: number, actorId: number, month: string) {
+  async markRunPaid(companyId: number, actorId: number, month: string, viewer?: Viewer) {
     const run = await this.prisma.payrollRun.findUnique({ where: { company_id_month: { company_id: companyId, month } } });
     if (!run || run.status === 'draft') throw new BadRequestException('Approve the payroll first');
     if (run.status !== 'paid') {
@@ -966,7 +995,7 @@ export class AttendanceService {
         data: { status: 'paid', paid_at: new Date(), paid_by_user_id: actorId },
       });
     }
-    return this.payroll(companyId, month);
+    return this.payroll(companyId, month, viewer);
   }
 
   async reopenRun(companyId: number, actor: { userId: number; role: string }, month: string) {
@@ -990,9 +1019,14 @@ export class AttendanceService {
     }
   }
 
-  async listAdjustments(companyId: number, month: string) {
+  async listAdjustments(companyId: number, month: string, viewer?: Viewer) {
+    let hide: number[] = [];
+    if (viewer?.role === 'hr_manager') {
+      const admins = await this.prisma.user.findMany({ where: { company_id: companyId, role: 'admin' }, select: { id: true } });
+      hide = [...admins.map((a) => a.id), viewer.userId];
+    }
     const rows = await this.prisma.payrollAdjustment.findMany({
-      where: { company_id: companyId, month },
+      where: { company_id: companyId, month, ...(hide.length ? { user_id: { notIn: hide } } : {}) },
       orderBy: { created_at: 'asc' },
     });
     return rows.map((a) => ({
@@ -1013,6 +1047,7 @@ export class AttendanceService {
     if (dto.userId === actor.userId && actor.role !== 'owner') {
       throw new ForbiddenException('You cannot add adjustments to your own pay. Ask the owner.');
     }
+    await this.assertCanTouchPay(companyId, actor, dto.userId);
     await this.loadMember(companyId, dto.userId);
     await this.assertMonthOpen(companyId, dto.month);
     const a = await this.prisma.payrollAdjustment.create({
@@ -1030,9 +1065,15 @@ export class AttendanceService {
     return { id: a.id };
   }
 
-  async deleteAdjustment(companyId: number, id: number) {
+  async deleteAdjustment(companyId: number, id: number, actor?: Viewer) {
     const a = await this.prisma.payrollAdjustment.findFirst({ where: { id, company_id: companyId } });
     if (!a) throw new NotFoundException('Adjustment not found');
+    if (actor) {
+      if (actor.role !== 'owner' && a.user_id === actor.userId) {
+        throw new ForbiddenException('You cannot change your own pay. Ask the owner.');
+      }
+      await this.assertCanTouchPay(companyId, actor, a.user_id);
+    }
     await this.assertMonthOpen(companyId, a.month);
     await this.prisma.payrollAdjustment.delete({ where: { id } });
     return { ok: true };
@@ -1066,8 +1107,10 @@ export class AttendanceService {
       take: 2000,
     })) as (DbRow & { company_id: number })[];
     if (!open.length) return { closed: 0 };
+    const granted = await this.feature.companiesWith('attendance');
     const byCompany = new Map<number, typeof open>();
     for (const r of open) {
+      if (!granted.has(r.company_id)) continue;
       if (!byCompany.has(r.company_id)) byCompany.set(r.company_id, []);
       byCompany.get(r.company_id)!.push(r);
     }
@@ -1331,7 +1374,7 @@ export class AttendanceService {
         reason: dto.reason?.slice(0, 500) || null,
       },
     });
-    this.safeEmit(() => this.gateway.emitToPrivileged(companyId, 'attendance.request', { id: created.id, userId }));
+    this.safeEmit(() => this.gateway.emitToHrAdmins(companyId, 'attendance.request', { id: created.id, userId }));
     return this.mapLeave(created);
   }
 
@@ -1359,7 +1402,7 @@ export class AttendanceService {
         reason: dto.reason?.slice(0, 500) || null,
       },
     });
-    this.safeEmit(() => this.gateway.emitToPrivileged(companyId, 'attendance.request', { id: created.id, userId }));
+    this.safeEmit(() => this.gateway.emitToHrAdmins(companyId, 'attendance.request', { id: created.id, userId }));
     return this.mapLeave(created);
   }
 
@@ -1481,10 +1524,13 @@ export class AttendanceService {
    *  (weekly offs + holidays skipped; only active members who had joined) and flag
    *  check-ins still open. Idempotent. */
   async dailySweep() {
-    const companies = await this.prisma.company.findMany({
-      where: { activation_status: 'active' },
-      select: { id: true },
-    });
+    const granted = await this.feature.companiesWith('attendance');
+    const companies = (
+      await this.prisma.company.findMany({
+        where: { activation_status: 'active' },
+        select: { id: true },
+      })
+    ).filter((c) => granted.has(c.id));
     let absent = 0;
     let missed = 0;
     for (const { id: companyId } of companies) {
@@ -1575,8 +1621,8 @@ export class AttendanceService {
     return '﻿' + lines.join('\r\n');
   }
 
-  async payrollCsv(companyId: number, month: string): Promise<string> {
-    const p = await this.payroll(companyId, month);
+  async payrollCsv(companyId: number, month: string, viewer?: Viewer): Promise<string> {
+    const p = await this.payroll(companyId, month, viewer);
     const header = [
       'Member', 'Role', 'Period', 'Work days', 'Present', 'Half days', 'Absent', 'Paid leave', 'Unpaid leave',
       'Late', 'Late min', 'OT min', 'Base', 'Allowances', 'Overtime', 'Commission', 'Additions',

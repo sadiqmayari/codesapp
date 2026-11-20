@@ -10,6 +10,7 @@ import { GrowthVersionService } from './growth-version.service';
 import { GrowthMirrorService } from '../store/growth-mirror.service';
 import { addDays, chunk } from '../growth.util';
 import { runsBackground } from '../../../common/utils/process-role';
+import { FeatureService } from '../../../common/services/feature.service';
 
 export const ADS_QUEUE = 'growth-ads';
 export const DEFAULT_SYNC_INTERVAL_MIN = 240;
@@ -62,6 +63,7 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
     private readonly fx: FxService,
     private readonly version: GrowthVersionService,
     private readonly mirror: GrowthMirrorService,
+    private readonly feature: FeatureService,
   ) {}
 
   onModuleInit() {
@@ -77,7 +79,10 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
 
   /** First boot after the Growth migration: backfill 90 days at ad grain once. */
   private async bootstrap() {
-    const accounts = await this.prisma.adAccount.findMany({ where: { status: 'active' }, select: { id: true } });
+    const granted = await this.feature.companiesWith('growth');
+    const accounts = (
+      await this.prisma.adAccount.findMany({ where: { status: 'active' }, select: { id: true, company_id: true } })
+    ).filter((a) => granted.has(a.company_id));
     for (const a of accounts) {
       const adGrain = await this.prisma.adInsightDaily.findFirst({
         where: { account_id: a.id, NOT: { ad_id: { startsWith: 'c:' } } },
@@ -104,10 +109,14 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
 
   /** Enqueue a pull for every active account whose cadence elapsed. */
   async syncDue(): Promise<{ enqueued: number }> {
-    const accounts = await this.prisma.adAccount.findMany({
-      where: { status: 'active' },
-      select: { id: true, sync_interval_min: true, last_attempt_at: true },
-    });
+    // Super-admin module grant: a switched-off tenant's ads stop syncing.
+    const granted = await this.feature.companiesWith('growth');
+    const accounts = (
+      await this.prisma.adAccount.findMany({
+        where: { status: 'active' },
+        select: { id: true, company_id: true, sync_interval_min: true, last_attempt_at: true },
+      })
+    ).filter((a) => granted.has(a.company_id));
     const now = Date.now();
     let enqueued = 0;
     for (const a of accounts) {

@@ -38,6 +38,8 @@ import {
   GenerateLoadsheetDto,
 } from './dto/courier.dto';
 import { CreateReplacementDto } from './dto/create-replacement.dto';
+import { ModuleGuard } from '../../common/guards/module.guard';
+import { RequireModule } from '../../common/decorators/require-module.decorator';
 
 // Valid Orders-board filters: order-state slices + any shipment status.
 const QUEUE_STATUSES: readonly QueueStatus[] = [
@@ -106,7 +108,7 @@ const asStore = (v?: string): number | undefined => {
 };
 
 @Controller('shipments')
-@UseGuards(AuthGuard('jwt'), TenantGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, ModuleGuard)
 export class ShipmentsController {
   constructor(
     private readonly shipments: ShipmentService,
@@ -142,6 +144,7 @@ export class ShipmentsController {
   /** Book a replacement parcel (PostEx/Trax/…) for a ticket. Multipart so a Trax
    *  replacement can carry the optional photo of the item being taken back. */
   @Post('replacement')
+  @RequireModule('couriers')
   @UseInterceptors(
     FileInterceptor('returnImage', { limits: { fileSize: 5 * 1024 * 1024 } }),
   )
@@ -168,6 +171,7 @@ export class ShipmentsController {
    * never synced. Owner/admin only.
    */
   @Post('sync-status')
+  @RequireModule('couriers')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
   syncStatus(@CurrentUser() user: { companyId: number }) {
@@ -326,6 +330,7 @@ export class ShipmentsController {
    * PREVIEW — deliberately writes nothing to shipments until `/apply`.
    */
   @Post('courier-invoices/upload')
+  @RequireModule('couriers')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin', 'finance')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
@@ -369,6 +374,7 @@ export class ShipmentsController {
 
   /** Apply a parsed statement: mark paid parcels delivered + settled (background). */
   @Post('courier-invoices/:id/apply')
+  @RequireModule('couriers')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin', 'finance')
   applyCourierInvoice(
@@ -703,6 +709,7 @@ export class ShipmentsController {
   }
 
   @Post()
+  @RequireModule('couriers')
   book(
     @CurrentUser() user: { companyId: number; userId: number },
     @Body() dto: BookShipmentDto,
@@ -743,6 +750,7 @@ export class ShipmentsController {
 
   /** Bulk-book many selected orders at once (background fan-out). */
   @Post('bulk-book')
+  @RequireModule('couriers')
   bulkBook(
     @CurrentUser() user: { companyId: number; userId: number },
     @Body() dto: BulkBookDto,
@@ -772,6 +780,7 @@ export class ShipmentsController {
    * poll. Declared BEFORE :id so the static path isn't captured by the param route.
    */
   @Post('bulk-cancel')
+  @RequireModule('couriers')
   bulkCancel(
     @CurrentUser() user: { companyId: number; userId: number },
     @Body() dto: { mode?: 'unbook' | 'cancel'; orderGids?: string[] },
@@ -801,6 +810,7 @@ export class ShipmentsController {
    */
   // ── Pack station (fulfillment / member / owner / admin). Static routes, ABOVE :id. ──
   @Get('pack/lookup')
+  @RequireModule('pack')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin', 'fulfillment', 'member', 'agent')
   packLookup(@CurrentUser() user: { companyId: number }, @Query('code') code: string) {
@@ -808,6 +818,7 @@ export class ShipmentsController {
   }
 
   @Get('pack/stats')
+  @RequireModule('pack')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin', 'fulfillment', 'member', 'agent')
   packStats(@CurrentUser() user: { companyId: number; userId: number }) {
@@ -815,6 +826,7 @@ export class ShipmentsController {
   }
 
   @Post('pack')
+  @RequireModule('pack')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin', 'fulfillment', 'member', 'agent')
   markPacked(
@@ -922,6 +934,7 @@ export class ShipmentsController {
   }
 
   @Post(':id/redeliver')
+  @RequireModule('couriers')
   redeliver(
     @CurrentUser() user: { companyId: number },
     @Param('id', ParseIntPipe) id: number,
@@ -931,6 +944,7 @@ export class ShipmentsController {
 
   /** Send shipper advice on an attempted parcel (request re-attempt or return). */
   @Post(':id/shipper-advice')
+  @RequireModule('couriers')
   shipperAdvice(
     @CurrentUser() user: { companyId: number },
     @Param('id', ParseIntPipe) id: number,
@@ -945,6 +959,7 @@ export class ShipmentsController {
    *  returned; unsupported couriers (M&P, manual) are skipped, not errored.
    *  Static path 'shipper-advice/bulk' — distinct from ':id/shipper-advice'. */
   @Post('shipper-advice/bulk')
+  @RequireModule('couriers')
   bulkShipperAdvice(
     @CurrentUser() user: { companyId: number },
     @Body() body: { shipmentIds?: number[]; action?: string; remarks?: string },
@@ -959,6 +974,7 @@ export class ShipmentsController {
 
   /** Cancel/undo a booking: cancel at courier + Shopify unfulfill + free order. */
   @Post(':id/cancel-booking')
+  @RequireModule('couriers')
   cancelBooking(
     @CurrentUser() user: { companyId: number },
     @Param('id', ParseIntPipe) id: number,
@@ -968,6 +984,7 @@ export class ShipmentsController {
 
   /** Printable shipping labels for the selected parcels (single courier). */
   @Post('labels')
+  @RequireModule('couriers')
   labels(
     @CurrentUser() user: { companyId: number },
     @Body() body: { shipmentIds?: number[] },
@@ -978,6 +995,7 @@ export class ShipmentsController {
   /** ONE downloadable PDF of the courier's slips, 2 per A4 page (single courier,
    *  byte-label couriers only — Trax/PostEx/Rocket; Leopards excluded). */
   @Post('slips')
+  @RequireModule('couriers')
   slips(
     @CurrentUser() user: { companyId: number },
     @Body() body: { shipmentIds?: number[] },
@@ -1061,6 +1079,7 @@ export class ShipmentsController {
   }
 
   @Post('loadsheets/generate')
+  @RequireModule('couriers')
   generateLoadsheet(
     @CurrentUser() user: { companyId: number; userId: number },
     @Body() dto: GenerateLoadsheetDto,
@@ -1071,6 +1090,7 @@ export class ShipmentsController {
   /** Recover an already-generated courier loadsheet by its id (e.g. one Leopards
    *  made but our side lost) — downloads it + attaches the matching parcels. */
   @Post('loadsheets/import')
+  @RequireModule('couriers')
   importLoadsheet(
     @CurrentUser() user: { companyId: number; userId: number },
     @Body() dto: { courierType: CourierType; loadsheetId: string },
@@ -1101,6 +1121,7 @@ export class ShipmentsController {
 
   /** One action → a loadsheet per courier for the SELECTED parcels, in parallel. */
   @Post('loadsheets/generate-selection')
+  @RequireModule('couriers')
   generateLoadsheetsForSelection(
     @CurrentUser() user: { companyId: number; userId: number },
     @Body() body: { shipmentIds?: number[] },
@@ -1115,6 +1136,7 @@ export class ShipmentsController {
   /** Re-fetch a created loadsheet's courier PDF (the "Fetch PDF" action on an
    *  awaiting_pdf row — the courier hadn't finished rendering it yet). */
   @Post('loadsheets/:id/fetch-pdf')
+  @RequireModule('couriers')
   loadsheetFetchPdf(
     @CurrentUser() user: { companyId: number },
     @Param('id', ParseIntPipe) id: number,
@@ -1125,6 +1147,7 @@ export class ShipmentsController {
   /** Retry a failed loadsheet: re-download if the courier already has it (a
    *  number was allotted), otherwise regenerate. Prevents duplicate loadsheets. */
   @Post('loadsheets/:id/retry')
+  @RequireModule('couriers')
   retryLoadsheet(
     @CurrentUser() user: { companyId: number; userId: number },
     @Param('id', ParseIntPipe) id: number,

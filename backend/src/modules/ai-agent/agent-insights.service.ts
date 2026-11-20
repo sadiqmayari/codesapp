@@ -7,6 +7,7 @@ import { isOpenAt } from '../ai/agent/profile';
 import { InboxGateway } from '../inbox/inbox.gateway';
 import { parseMemory } from './memory';
 import { HANDOFF_LABEL } from './handoff.service';
+import { isPrivileged as isPrivilegedRole } from '../../common/auth/roles';
 
 interface Viewer {
   companyId: number;
@@ -60,7 +61,7 @@ export class AgentInsightsService {
       },
     });
     if (!convo) throw new NotFoundException('Conversation not found');
-    const privileged = v.role === 'owner' || v.role === 'admin';
+    const privileged = isPrivilegedRole(v.role);
     if (!privileged && convo.assigned_user_id !== null && convo.assigned_user_id !== v.userId) {
       throw new NotFoundException('Conversation not found');
     }

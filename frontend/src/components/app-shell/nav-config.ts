@@ -60,7 +60,13 @@ export function buildNav(user: AuthUser | null): NavSection[] {
   const role = user?.role;
   const flat = (items: NavItem[]): NavSection[] => [{ title: null, items }];
 
-  if (role === 'member') return flat([TEAM, { href: '/orders/pack', label: 'Pack station', icon: PackageCheck }]);
+  const mods = user?.company?.modules ?? null;
+  // A module the super-admin hasn't granted is hidden. `null` (old /auth/me) = show.
+  const has = (k: string) => (mods ? mods[k] === true : true);
+
+  if (role === 'hr_manager') return flat([TEAM]);
+  if (role === 'member')
+    return flat([TEAM, ...(has('pack') ? [{ href: '/orders/pack', label: 'Pack station', icon: PackageCheck }] : [])]);
   if (role === 'finance')
     return flat([{ href: '/finance', label: 'Finance', icon: Wallet }, TEAM]);
   if (role === 'fulfillment')
@@ -112,13 +118,13 @@ export function buildNav(user: AuthUser | null): NavSection[] {
         ...(inventoryEnabled
           ? [{ href: '/inventory', label: 'Inventory', icon: Boxes }]
           : []),
-        { href: '/tickets', label: 'Tickets', icon: LifeBuoy },
+        ...(has('tickets') ? [{ href: '/tickets', label: 'Tickets', icon: LifeBuoy }] : []),
       ],
     },
     {
       title: 'Growth',
       items: [
-        ...(isOwnerAdmin ? [{ href: '/growth', label: 'Growth', icon: TrendingUp }] : []),
+        ...(isOwnerAdmin && has('growth') ? [{ href: '/growth', label: 'Growth', icon: TrendingUp }] : []),
         { href: '/templates', label: 'Templates', icon: FileText },
         { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone },
         { href: '/bots', label: 'Bots', icon: Bot },
@@ -131,15 +137,19 @@ export function buildNav(user: AuthUser | null): NavSection[] {
     {
       title: 'Insights',
       items: [
-        { href: '/analytics', label: 'Analytics', icon: BarChart3 },
-        { href: '/leaderboard', label: 'Leaderboard', icon: Trophy },
+        ...(isOwnerAdmin ? [{ href: '/analytics', label: 'Analytics', icon: BarChart3 }] : []),
+        ...(has('leaderboard') ? [{ href: '/leaderboard', label: 'Leaderboard', icon: Trophy }] : []),
       ],
     },
     {
       title: 'Workspace',
       items: [
-        { href: '/webhooks', label: 'Webhooks', icon: Webhook },
-        { href: '/billing', label: 'Billing', icon: CreditCard },
+        ...(isOwnerAdmin
+          ? [
+              { href: '/webhooks', label: 'Webhooks', icon: Webhook },
+              { href: '/billing', label: 'Billing', icon: CreditCard },
+            ]
+          : []),
       ],
     },
   ];
@@ -159,4 +169,85 @@ export function isActivePath(pathname: string, href: string): boolean {
 export function hasInbox(user: AuthUser | null): boolean {
   const r = user?.role;
   return r === 'owner' || r === 'admin' || r === 'agent';
+}
+
+// ── Role → route access (the ONE rule; (app)/layout.tsx enforces it) ────────
+
+/** Paths every role may reach: own account settings + Team (chat, attendance). */
+const SELF_SERVICE_PREFIXES = ['/settings', '/team-chat'];
+const under = (p: string, b: string) => p === b || p.startsWith(`${b}/`);
+export function isSelfServicePath(p: string): boolean {
+  return SELF_SERVICE_PREFIXES.some((b) => under(p, b));
+}
+
+// Orders subpages the fulfillment role must NOT reach (money aggregates).
+const FULFILLMENT_BLOCKED_ORDER_PATHS = [
+  '/orders/analytics',
+  '/orders/agent',
+  '/orders/agents',
+  '/orders/attribution',
+  '/orders/abandoned',
+];
+
+export interface LockedAccess {
+  /** Where a blocked path redirects. */
+  home: string;
+  allowed: (path: string) => boolean;
+}
+
+/**
+ * Locked roles: their home + allow-list. `null` = a full-nav role (owner,
+ * admin, agent) that goes through the normal onboarding gate.
+ */
+export function lockedAccessFor(role: string | undefined): LockedAccess | null {
+  const self = (p: string) => isSelfServicePath(p);
+  switch (role) {
+    case 'finance':
+      return { home: '/finance', allowed: (p) => self(p) || under(p, '/finance') };
+    case 'fulfillment':
+      return {
+        home: '/orders',
+        allowed: (p) =>
+          self(p) ||
+          (under(p, '/orders') && !FULFILLMENT_BLOCKED_ORDER_PATHS.some((b) => under(p, b))),
+      };
+    case 'content_manager':
+    case 'videographer':
+    case 'graphic_designer':
+      return { home: '/content', allowed: (p) => self(p) || under(p, '/content') };
+    case 'pr_manager':
+      return { home: '/pr', allowed: (p) => self(p) || under(p, '/pr') };
+    case 'creative_executive':
+    case 'social_media_executive':
+      return { home: '/content', allowed: (p) => self(p) || under(p, '/content') || under(p, '/pr') };
+    case 'member':
+      // Warehouse packers are often members.
+      return { home: '/team-chat', allowed: (p) => self(p) || p === '/orders/pack' };
+    case 'hr_manager':
+      return { home: '/team-chat', allowed: (p) => self(p) };
+    default:
+      return null;
+  }
+}
+
+/** Route prefix → the super-admin module grant it needs. */
+export const MODULE_ROUTES: { prefix: string; module: string; label: string }[] = [
+  { prefix: '/growth', module: 'growth', label: 'Growth' },
+  { prefix: '/inventory', module: 'inventory', label: 'Inventory' },
+  { prefix: '/content', module: 'content', label: 'Content' },
+  { prefix: '/pr', module: 'pr', label: 'PR' },
+  { prefix: '/leaderboard', module: 'leaderboard', label: 'Leaderboard' },
+  { prefix: '/tickets', module: 'tickets', label: 'Tickets' },
+  { prefix: '/orders/pack', module: 'pack', label: 'Pack station' },
+];
+
+/** The module a path needs that this workspace hasn't been granted, if any. */
+export function blockedModuleFor(
+  path: string,
+  modules: Record<string, boolean> | null | undefined,
+): { module: string; label: string } | null {
+  if (!modules) return null;
+  const hit = MODULE_ROUTES.find((r) => under(path, r.prefix));
+  if (!hit || modules[hit.module] === true) return null;
+  return { module: hit.module, label: hit.label };
 }

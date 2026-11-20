@@ -21,6 +21,7 @@ import {
   SegmentPreviewQueryDto,
   UpdateSegmentDto,
 } from './dto/create-segment.dto';
+import { INBOX_ROLES } from '../../common/auth/roles';
 
 /**
  * Segments drive broadcast audiences, so create/edit/delete are owner/admin.
@@ -28,7 +29,8 @@ import {
  * builder and contacts filter need it.
  */
 @Controller('contacts/segments')
-@UseGuards(AuthGuard('jwt'), TenantGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
+@Roles(...INBOX_ROLES)
 export class SegmentsController {
   constructor(private readonly segmentsService: SegmentsService) {}
 

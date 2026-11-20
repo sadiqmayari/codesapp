@@ -7,6 +7,8 @@ import { InboxGateway } from '../inbox/inbox.gateway';
 import { CallEventDto } from './dto/call-event.dto';
 import { clampQuery } from '../../common/utils/search';
 import { phoneSearchDigits } from '../../common/utils/contact-phone';
+import { FeatureService } from '../../common/services/feature.service';
+import { isPrivileged as isPrivilegedRole } from '../../common/auth/roles';
 
 const digits = (s?: string | null) => (s ?? '').replace(/\D/g, '');
 
@@ -26,6 +28,7 @@ export class CallsService {
     private readonly gateway: InboxGateway,
     private readonly config: ConfigService,
     private readonly sipTrunkAuth: SipTrunkAuthService,
+    private readonly feature: FeatureService,
   ) {}
 
   /**
@@ -68,6 +71,23 @@ export class CallsService {
     const username = this.sipUsername(user.companyId, user.userId);
     const password = this.sipPassword(user.companyId, user.userId);
     if (!wssUrl) return { configured: false, wssUrl: '', realm, username: '', password: '' };
+
+    // Super-admin seat cap: only the first N agents get a SIP endpoint.
+    try {
+      const { callsMaxAgents } = await this.feature.companyModules(user.companyId);
+      if (callsMaxAgents) {
+        const rows = await this.prisma.$queryRawUnsafe<{ id: string }[]>(
+          `SELECT id FROM asterisk.ps_endpoints WHERE id LIKE ?`,
+          `agent-${user.companyId}-%`,
+        );
+        const mine = rows.some((r) => r.id === username);
+        if (!mine && rows.length >= callsMaxAgents) {
+          return { configured: false, wssUrl: '', realm, username: '', password: '', reason: 'seat_limit' };
+        }
+      }
+    } catch (e) {
+      this.logger.warn(`SIP seat check skipped: ${(e as Error).message}`);
+    }
 
     try {
       await this.provisionEndpoint(user.companyId, user.userId, username, password);
@@ -447,7 +467,7 @@ export class CallsService {
     else if (opts.filter === 'incoming') where.direction = 'inbound';
     else if (opts.filter === 'outgoing') where.direction = 'outbound';
 
-    const isPrivileged = viewer.role === 'owner' || viewer.role === 'admin';
+    const isPrivileged = isPrivilegedRole(viewer.role);
     const and: Record<string, unknown>[] = [];
     if (!isPrivileged) {
       and.push({

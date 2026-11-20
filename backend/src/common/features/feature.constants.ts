@@ -99,3 +99,58 @@ export const FEATURE_REGISTRY: Record<PlatformFeature, FeatureDef> = {
     tenantFlag: 'inventory_enabled',
   },
 };
+
+/**
+ * Super-admin MODULE GRANTS (Nov-2026). Each is a per-tenant switch the
+ * super-admin flips on the client page; stored in companies.feature_overrides
+ * as 'on' | 'off' (absent = off). `parent` = a sub-switch that only applies
+ * while its parent module is on. The tenant has no toggle of its own.
+ *
+ * Content / PR / Inventory keep their legacy companies.*_enabled columns
+ * (resolved as override ?? column) and are listed here only for the UI.
+ */
+export type ModuleGrantKey =
+  | 'growth'
+  | 'growth_publish'
+  | 'attendance'
+  | 'payroll'
+  | 'commissions'
+  | 'pack'
+  | 'calls'
+  | 'leaderboard'
+  | 'couriers'
+  | 'tickets';
+
+export type ModuleKey = ModuleGrantKey | 'content' | 'pr' | 'inventory';
+
+export interface ModuleDef {
+  key: ModuleKey;
+  label: string;
+  description: string;
+  group: 'Commerce' | 'Growth' | 'Team' | 'Communication';
+  parent?: ModuleKey;
+  /** Legacy companies.<column> (content/pr/inventory). */
+  legacyColumn?: 'content_enabled' | 'pr_enabled' | 'inventory_enabled';
+}
+
+export const MODULE_REGISTRY: ModuleDef[] = [
+  { key: 'couriers', group: 'Commerce', label: 'Couriers & booking', description: 'Book, track, loadsheets, returns and courier settlements' },
+  { key: 'pack', group: 'Commerce', label: 'Pack station', description: '/orders/pack scan-and-pack' },
+  { key: 'inventory', group: 'Commerce', label: 'Inventory', description: 'Catalogue mirror, stock push, product analytics', legacyColumn: 'inventory_enabled' },
+  { key: 'tickets', group: 'Commerce', label: 'Tickets', description: 'Support tickets and replacement parcels' },
+  { key: 'growth', group: 'Growth', label: 'Growth', description: 'Ad sync, attribution, forecast, Growth AI' },
+  { key: 'growth_publish', group: 'Growth', parent: 'growth', label: 'Allow publishing ads', description: 'Off = Growth is read-only (no budget edits, no new ads)' },
+  { key: 'content', group: 'Growth', label: 'Content', description: 'Content planning, Drive media, approvals', legacyColumn: 'content_enabled' },
+  { key: 'pr', group: 'Growth', label: 'PR', description: 'Influencer forms and PR orders', legacyColumn: 'pr_enabled' },
+  { key: 'attendance', group: 'Team', label: 'Attendance', description: 'Check-in, leave, auto-checkout, daily sweep' },
+  { key: 'payroll', group: 'Team', parent: 'attendance', label: 'Payroll', description: 'Payroll runs, salaries, payslips, adjustments' },
+  { key: 'commissions', group: 'Team', label: 'Commissions', description: 'Commission plans, statements, earnings in payslips' },
+  { key: 'leaderboard', group: 'Team', label: 'Leaderboard', description: 'Points, badges, contests, targets' },
+  { key: 'calls', group: 'Communication', label: 'WhatsApp calling', description: 'Softphone, call logs, per-agent routing' },
+];
+
+export const MODULE_KEYS: ModuleKey[] = MODULE_REGISTRY.map((m) => m.key);
+
+export function isModuleKey(k: string): k is ModuleKey {
+  return (MODULE_KEYS as string[]).includes(k);
+}

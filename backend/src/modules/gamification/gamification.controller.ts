@@ -19,13 +19,18 @@ import { GamificationService } from './gamification.service';
 import { CreateContestDto, UpdateContestDto } from './dtos/contest.dto';
 import { SetTargetDto } from './dtos/target.dto';
 import { UpdateGameConfigDto } from './dtos/config.dto';
+import { ModuleGuard } from '../../common/guards/module.guard';
+import { RequireModule } from '../../common/decorators/require-module.decorator';
+import { INBOX_ROLES } from '../../common/auth/roles';
 
 type Actor = { userId: number; companyId: number; role: string };
 
 const DEFAULT_RANGE_DAYS = 7;
 
 @Controller('gamification')
-@UseGuards(AuthGuard('jwt'), TenantGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard, ModuleGuard)
+@Roles(...INBOX_ROLES)
+@RequireModule('leaderboard')
 export class GamificationController {
   constructor(private readonly gamification: GamificationService) {}
 

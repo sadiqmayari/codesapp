@@ -23,6 +23,8 @@ interface Company {
   contentEnabled?: boolean;
   prEnabled?: boolean;
   inventoryEnabled?: boolean;
+  /** Every super-admin module grant (growth, attendance, payroll, pack, …). */
+  modules?: Record<string, boolean> | null;
 }
 
 export interface AuthUser {
@@ -47,6 +49,8 @@ interface AuthContextValue extends AuthState {
   setCompanyLogo: (logoUrl: string | null) => void;
   /** Patch the in-memory company.timezone + the global date formatter (no reload). */
   setCompanyTimezone: (tz: string | null) => void;
+  /** Re-fetch /auth/me company (module grants changed by the super-admin). */
+  refreshCompany: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -195,6 +199,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
+  const refreshCompany = useCallback(async () => {
+    const company = await fetchMe();
+    if (company === undefined) return;
+    setState((s) => (s.user ? { ...s, user: { ...s.user, company } } : s));
+  }, []);
+
   const logout = useCallback(async () => {
     await api.post('/auth/logout').catch(() => {});
     // Reset global formatter back to the viewer's browser timezone so the
@@ -206,7 +216,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ ...state, login, logout, setCompanyLogo, setCompanyTimezone }}
+      value={{ ...state, login, logout, setCompanyLogo, setCompanyTimezone, refreshCompany }}
     >
       {children}
     </AuthContext.Provider>

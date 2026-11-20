@@ -12,6 +12,7 @@ import { GrowthMirrorService } from '../store/growth-mirror.service';
 import { ymdCell } from '../store/growth-store';
 import { fitResponse } from '../attribution/forecast-math';
 import { addDays, n } from '../growth.util';
+import { FeatureService } from '../../../common/services/feature.service';
 
 export type ChangeInput =
   | { kind: 'patch'; level: EntityLevel; entityId: string; patch: EntityPatch }
@@ -85,13 +86,20 @@ export class AdManageService {
     private readonly sync: AdSyncService,
     private readonly version: GrowthVersionService,
     private readonly mirror: GrowthMirrorService,
+    private readonly feature: FeatureService,
   ) {}
 
   // ── access ────────────────────────────────────────────────────────────────
   async access(companyId: number) {
     const accs = await this.prisma.adAccount.findMany({ where: { company_id: companyId, status: 'active' } });
     const out = [];
+    // Super-admin switch: Growth can be granted read-only (no ad writes).
+    const publishOn = await this.feature.enabled(companyId, 'growth_publish');
     for (const a of accs) {
+      if (!publishOn) {
+        out.push({ accountId: a.id, platform: a.platform, name: a.name, canManage: false, missing: [], reason: 'Ad publishing is not enabled for this workspace. Contact your CodesApp account manager.' });
+        continue;
+      }
       if (!this.registry.canManage(a.platform)) {
         out.push({ accountId: a.id, platform: a.platform, name: a.name, canManage: false, missing: [], reason: 'Not available for this platform yet' });
         continue;

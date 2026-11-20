@@ -41,6 +41,7 @@ import {
   SendMessageType,
 } from './dto/send-message.dto';
 import { ListConversationsDto, ConversationListStatus } from './dto/list-conversations.dto';
+import { isPrivileged as isPrivilegedRole } from '../../common/auth/roles';
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_MESSAGES_PER_PAGE = 50;
@@ -333,7 +334,7 @@ export class InboxService implements OnModuleInit {
     // RBAC visibility (pool model): agents see ONLY chats assigned to them or
     // unassigned; owners/admins see all and may filter by assignee. The agent
     // scope is a hard boundary — an agent's assignee-filter params are ignored.
-    const isPrivileged = viewer.role === 'owner' || viewer.role === 'admin';
+    const isPrivileged = isPrivilegedRole(viewer.role);
     if (!isPrivileged) {
       // Agents: unassigned + their own only. Their "Assigned to me" filter
       // narrows to just their own; any other assignee param is ignored (the
@@ -485,7 +486,7 @@ export class InboxService implements OnModuleInit {
       select: { assigned_user_id: true },
     });
     if (!convo) throw new NotFoundException('Conversation not found');
-    const isPrivileged = viewer.role === 'owner' || viewer.role === 'admin';
+    const isPrivileged = isPrivilegedRole(viewer.role);
     if (isPrivileged) return;
     if (
       convo.assigned_user_id !== null &&
@@ -523,7 +524,7 @@ export class InboxService implements OnModuleInit {
     }
     if (viewer) {
       const isPrivileged =
-        viewer.role === 'owner' || viewer.role === 'admin';
+        isPrivilegedRole(viewer.role);
       if (
         !isPrivileged &&
         convo.assigned_user_id !== null &&
@@ -855,7 +856,7 @@ export class InboxService implements OnModuleInit {
       where: { id: noteId, company_id: companyId },
     });
     if (!note) throw new NotFoundException('Note not found');
-    const privileged = viewer.role === 'owner' || viewer.role === 'admin';
+    const privileged = isPrivilegedRole(viewer.role);
     if (!privileged && note.user_id !== viewer.userId) {
       throw new ForbiddenException('You can only change your own notes');
     }

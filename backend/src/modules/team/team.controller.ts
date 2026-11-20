@@ -17,12 +17,14 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { TeamService } from './team.service';
 import { CreateTeamMemberDto } from './dto/create-team-member.dto';
 import { UpdateTeamMemberDto } from './dto/update-team-member.dto';
+import { HR_ADMIN } from '../../common/auth/roles';
 
 type Actor = { userId: number; companyId: number; role: string };
 
 @Controller('team')
 @UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
-@Roles('owner', 'admin')
+// HR managers manage non-privileged staff (TeamService.assertCanManage).
+@Roles(...HR_ADMIN)
 export class TeamController {
   constructor(private readonly teamService: TeamService) {}
 
@@ -58,7 +60,7 @@ export class TeamController {
     @Body() body?: { reassignToUserId?: number | null },
   ) {
     const to = normalizeTarget(body?.reassignToUserId);
-    return this.teamService.suspend(user.companyId, user.userId, id, to);
+    return this.teamService.suspend(user.companyId, user.userId, user.role, id, to);
   }
 
   /** Permanently delete a member (irreversible — suspend is the reversible path).
@@ -70,7 +72,7 @@ export class TeamController {
     @Body() body?: { reassignToUserId?: number | null },
   ) {
     const to = normalizeTarget(body?.reassignToUserId);
-    return this.teamService.remove(user.companyId, user.userId, id, to);
+    return this.teamService.remove(user.companyId, user.userId, user.role, id, to);
   }
 
   /** Bulk-reassign a member's conversations to another agent (or release them to
@@ -84,6 +86,7 @@ export class TeamController {
   ) {
     return this.teamService.reassignChats(
       user.companyId,
+      user.role,
       id,
       normalizeTarget(body?.toUserId),
     );

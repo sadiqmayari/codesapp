@@ -21,9 +21,13 @@ import { ScheduleBroadcastDto } from './dto/schedule-broadcast.dto';
 import { ListBroadcastsDto } from './dto/list-broadcasts.dto';
 import { PreviewAudienceDto } from './dto/preview-audience.dto';
 import { TestSendDto } from './dto/test-send.dto';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { INBOX_ROLES, PRIVILEGED } from '../../common/auth/roles';
 
 @Controller('broadcasts')
-@UseGuards(AuthGuard('jwt'), TenantGuard, BroadcastPlanGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard, BroadcastPlanGuard)
+@Roles(...INBOX_ROLES)
 export class BroadcastsController {
   constructor(private readonly broadcastsService: BroadcastsService) {}
 
@@ -36,6 +40,7 @@ export class BroadcastsController {
   }
 
   @Post('preview-audience')
+  @Roles(...PRIVILEGED)
   @HttpCode(HttpStatus.OK)
   previewAudience(
     @CurrentUser() user: { companyId: number },
@@ -45,6 +50,7 @@ export class BroadcastsController {
   }
 
   @Post('test-send')
+  @Roles(...PRIVILEGED)
   @HttpCode(HttpStatus.OK)
   testSend(
     @CurrentUser() user: { companyId: number },
@@ -62,6 +68,7 @@ export class BroadcastsController {
   }
 
   @Post()
+  @Roles(...PRIVILEGED)
   create(
     @CurrentUser() user: { companyId: number },
     @Body() dto: CreateBroadcastDto,
@@ -70,6 +77,7 @@ export class BroadcastsController {
   }
 
   @Post(':id/duplicate')
+  @Roles(...PRIVILEGED)
   @HttpCode(HttpStatus.OK)
   duplicate(
     @CurrentUser() user: { companyId: number },
@@ -79,6 +87,7 @@ export class BroadcastsController {
   }
 
   @Patch(':id')
+  @Roles(...PRIVILEGED)
   update(
     @CurrentUser() user: { companyId: number },
     @Param('id', ParseIntPipe) id: number,
@@ -88,6 +97,7 @@ export class BroadcastsController {
   }
 
   @Post(':id/send')
+  @Roles(...PRIVILEGED)
   @HttpCode(HttpStatus.OK)
   send(
     @CurrentUser() user: { companyId: number },
@@ -97,6 +107,7 @@ export class BroadcastsController {
   }
 
   @Post(':id/schedule')
+  @Roles(...PRIVILEGED)
   @HttpCode(HttpStatus.OK)
   schedule(
     @CurrentUser() user: { companyId: number },
@@ -107,6 +118,7 @@ export class BroadcastsController {
   }
 
   @Post(':id/cancel')
+  @Roles(...PRIVILEGED)
   @HttpCode(HttpStatus.OK)
   cancel(
     @CurrentUser() user: { companyId: number },

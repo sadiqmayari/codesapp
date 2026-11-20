@@ -6,6 +6,7 @@ import { useAuth } from '@/context/auth-context';
 import { getLeaveRequests } from '@/lib/attendance';
 import { useSocket } from '@/context/socket-context';
 import { cn } from '@/lib/utils';
+import { isHrAdmin } from '@/lib/roles';
 import TodayBoardTab from './today-board';
 import MyAttendanceTab from './my-attendance';
 import GridTab from './grid';
@@ -27,8 +28,12 @@ export default function AttendancePanel() {
   const { on } = useSocket();
   const router = useRouter();
   const params = useSearchParams();
-  const isAdmin = user?.role === 'owner' || user?.role === 'admin';
+  // Team admins: owner, admin and HR manager (server enforces the same).
+  const isAdmin = isHrAdmin(user?.role);
   const isOwner = user?.role === 'owner';
+  const mods = user?.company?.modules ?? null;
+  const payrollOn = mods ? mods.payroll === true : true;
+  const commissionsOn = mods ? mods.commissions === true : true;
   const [pending, setPending] = useState(0);
 
   const tabs: { key: Tab; label: string }[] = isAdmin
@@ -38,8 +43,8 @@ export default function AttendancePanel() {
         { key: 'grid', label: 'Daily grid' },
         { key: 'summary', label: 'Summary' },
         { key: 'requests', label: 'Requests' },
-        { key: 'payroll', label: 'Payroll' },
-        { key: 'commissions', label: 'Commissions' },
+        ...(payrollOn ? [{ key: 'payroll' as Tab, label: 'Payroll' }] : []),
+        ...(commissionsOn ? [{ key: 'commissions' as Tab, label: 'Commissions' }] : []),
         { key: 'settings', label: 'Settings' },
       ]
     : [

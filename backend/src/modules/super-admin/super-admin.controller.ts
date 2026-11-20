@@ -226,21 +226,25 @@ export class SuperAdminController {
     });
   }
 
-  // Per-tenant Content / PR / Inventory module access.
-  // body: { content?: boolean; pr?: boolean; inventory?: boolean }
+  // Per-tenant MODULE GRANTS (registry-driven: growth, attendance, payroll,
+  // commissions, pack, calls, leaderboard, couriers, tickets, content, pr,
+  // inventory, growth_publish) + calls_max_agents. Audited.
+  @Get('clients/:id/modules')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  getModules(@Param('id', ParseIntPipe) id: number) {
+    return this.superAdminService.getModules(id);
+  }
+
   @Patch('clients/:id/module-access')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
   @Roles('super_admin')
   setModuleAccess(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { content?: boolean; pr?: boolean; inventory?: boolean },
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() actor: { userId: number },
   ) {
-    return this.superAdminService.setModuleAccess(id, {
-      content: typeof body?.content === 'boolean' ? body.content : undefined,
-      pr: typeof body?.pr === 'boolean' ? body.pr : undefined,
-      inventory:
-        typeof body?.inventory === 'boolean' ? body.inventory : undefined,
-    });
+    return this.superAdminService.setModuleAccess(id, body ?? {}, actor?.userId);
   }
 
   // AI observability snapshot for a tenant.

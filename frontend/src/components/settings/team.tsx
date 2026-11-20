@@ -33,6 +33,7 @@ function initials(name: string): string {
 }
 import type { TeamMember, TeamRole, AssignableRole } from '@/lib/crm-types';
 import { ASSIGNABLE_ROLES, ROLE_LABELS } from '@/lib/crm-types';
+import { canAssignRole, canManageMember } from '@/lib/roles';
 
 export function TeamSection({ actorRole }: { actorRole: TeamRole }) {
   const toast = useToast();
@@ -284,7 +285,7 @@ export function TeamSection({ actorRole }: { actorRole: TeamRole }) {
                 shownMembers.map((m) => {
                   const isSelf = m.id === user?.id;
                   const isOwner = m.role === 'owner';
-                  const locked = isSelf || isOwner;
+                  const locked = isSelf || isOwner || !canManageMember(actorRole, m.role);
                   return (
                     <tr key={m.id} className="border-t border-line first:border-t-0">
                       <td className="px-4 py-3">
@@ -325,7 +326,7 @@ export function TeamSection({ actorRole }: { actorRole: TeamRole }) {
                               </option>
                             )}
                             {ASSIGNABLE_ROLES.filter(
-                              (r) => r !== 'admin' || actorRole === 'owner',
+                              (r) => canAssignRole(actorRole, r),
                             ).map((r) => (
                               <option key={r} value={r}>
                                 {ROLE_LABELS[r] ?? r}
@@ -456,7 +457,7 @@ export function TeamSection({ actorRole }: { actorRole: TeamRole }) {
             className="w-full border border-line bg-surface rounded-lg px-3 py-2 text-sm"
           >
             {ASSIGNABLE_ROLES.filter(
-              (r) => r !== 'admin' || actorRole === 'owner',
+              (r) => canAssignRole(actorRole, r),
             ).map((r) => (
               <option key={r} value={r}>
                 {ROLE_LABELS[r] ?? r}

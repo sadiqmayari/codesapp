@@ -72,7 +72,10 @@ export default function TeamChatPage() {
   // `?view=attendance` deep-links straight to the Attendance tab. Derived from
   // the URL (not copied once into state) so a client-side link to it works
   // while already on /team-chat.
-  const view: 'chat' | 'attendance' = params.get('view') === 'attendance' ? 'attendance' : 'chat';
+  // Attendance is a super-admin module grant; Team chat is always on.
+  const attendanceOn = user?.company?.modules ? user.company.modules.attendance === true : true;
+  const view: 'chat' | 'attendance' =
+    attendanceOn && params.get('view') === 'attendance' ? 'attendance' : 'chat';
   const setView = (v: 'chat' | 'attendance') =>
     router.replace(v === 'attendance' ? '/team-chat?view=attendance' : '/team-chat', { scroll: false });
   const [threads, setThreads] = useState<ThreadItem[]>([]);
@@ -538,7 +541,7 @@ export default function TeamChatPage() {
     <div className="h-full flex flex-col bg-gray-50">
       {/* ── Chat / Attendance view toggle ── */}
       <div className="shrink-0 border-b border-gray-200 bg-white px-3 flex gap-1">
-        {(['chat', 'attendance'] as const).map((v) => (
+        {(attendanceOn ? (['chat', 'attendance'] as const) : (['chat'] as const)).map((v) => (
           <button
             key={v}
             role="tab"

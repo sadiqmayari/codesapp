@@ -280,12 +280,19 @@ export class CommissionsService {
     };
   }
 
-  async statement(companyId: number, month: string) {
+  async statement(companyId: number, month: string, viewer?: { userId: number; role: string }) {
     const w = await this.window(companyId, month);
     const [plans, members] = await Promise.all([this.listPlans(companyId), this.members(companyId)]);
     const active = plans.filter((p) => p.active);
     const out: PlanStatement[] = [];
     for (const p of active) out.push(await this.runPlan(companyId, month, p, { ...w, members }));
+    // HR managers never see admins' or their own earnings (owner manages those).
+    if (viewer?.role === 'hr_manager') {
+      for (const st of out) {
+        st.rows = st.rows.filter((r) => r.role !== 'admin' && r.userId !== viewer.userId);
+        st.total = Math.round(st.rows.reduce((t, r) => t + r.amount, 0) * 100) / 100;
+      }
+    }
     const perUser = new Map<number, { userId: number; name: string; role: string; total: number }>();
     for (const s of out) {
       for (const r of s.rows) {

@@ -19,6 +19,7 @@ import {
 } from './adapters/courier-adapter.interface';
 import { runsBackground } from '../../common/utils/process-role';
 import { SharedStateService } from '../../common/services/shared-state.service';
+import { FeatureService } from '../../common/services/feature.service';
 
 const SYNC_QUEUE = 'courier-status-sync';
 
@@ -83,6 +84,7 @@ export class CourierStatusSyncService implements OnModuleInit, OnModuleDestroy {
     private readonly shipments: ShipmentService,
     private readonly courierOps: CourierOpsService,
     private readonly tracking: ShipmentTrackingService,
+    private readonly feature: FeatureService,
   ) {}
 
   private schedulerTimer?: ReturnType<typeof setInterval>;
@@ -211,7 +213,9 @@ export class CourierStatusSyncService implements OnModuleInit, OnModuleDestroy {
       select: { company_id: true },
       distinct: ['company_id'],
     });
-    const ids = rows.map((r) => r.company_id);
+    // Super-admin module grant: a tenant with Couriers switched off stops syncing.
+    const granted = await this.feature.companiesWith('couriers');
+    const ids = rows.map((r) => r.company_id).filter((id) => granted.has(id));
     if (!ids.length) return { enqueued: 0 };
     const companies = await this.prisma.company.findMany({
       where: { id: { in: ids } },

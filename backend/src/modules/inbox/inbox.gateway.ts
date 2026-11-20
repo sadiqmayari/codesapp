@@ -12,6 +12,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { WsJwtGuard } from './ws-jwt.guard';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isPrivileged as isPrivilegedRole } from '../../common/auth/roles';
 
 @WebSocketGateway({
   cors: {
@@ -81,6 +82,10 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
     void client.join(this.userRoom(userId));
     if (role === 'owner' || role === 'admin') {
       void client.join(this.privilegedRoom(companyId));
+    }
+    // Team-admin room (owner/admin/hr_manager): attendance + leave events.
+    if (role === 'owner' || role === 'admin' || role === 'hr_manager') {
+      void client.join(this.hrRoom(companyId));
     }
     this.logger.log(
       `Socket ${client.id} connected (companyId=${companyId} userId=${userId} role=${role})`,
@@ -177,6 +182,26 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (!this.server) return;
     for (const id of new Set(userIds)) {
       this.server.to(this.userRoom(id)).emit(event, payload);
+    }
+  }
+
+  /** Emit to the company's team admins (owner/admin/hr_manager). */
+  emitToHrAdmins(companyId: number, event: string, payload: unknown): void {
+    if (!this.server) return;
+    this.server.to(this.hrRoom(companyId)).emit(event, payload);
+  }
+
+  /**
+   * Force-disconnect every socket of a user (all nodes, via the Redis adapter).
+   * Called on suspend / delete / role change / password change so a revoked
+   * session stops receiving realtime events at once. Never throws.
+   */
+  async disconnectUser(userId: number): Promise<void> {
+    try {
+      if (!this.server) return;
+      this.server.in(this.userRoom(userId)).disconnectSockets(true);
+    } catch (e) {
+      this.logger.warn(`disconnectUser(${userId}) failed: ${(e as Error).message}`);
     }
   }
 
@@ -290,7 +315,7 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
       select: { id: true, assigned_user_id: true },
     });
     if (!convo) return;
-    const privileged = role === 'owner' || role === 'admin';
+    const privileged = isPrivilegedRole(role);
     if (
       !privileged &&
       convo.assigned_user_id !== null &&
@@ -376,6 +401,10 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private companyRoom(companyId: number): string {
     return `company:${companyId}`;
+  }
+
+  private hrRoom(companyId: number): string {
+    return `company:${companyId}:hr`;
   }
 
   private privilegedRoom(companyId: number): string {

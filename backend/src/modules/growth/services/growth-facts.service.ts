@@ -10,6 +10,7 @@ import { GrowthMirrorService } from '../store/growth-mirror.service';
 import { classify, credit, promoteKnownCampaign, DEFAULT_WINDOW, MODELS, RawTouch, Touch, WINDOWS } from '../attribution/attribution';
 import { chunk, customerKey, localYmd, n, offsetMinutes, zoneOffset } from '../growth.util';
 import { runsBackground } from '../../../common/utils/process-role';
+import { FeatureService } from '../../../common/services/feature.service';
 
 export const FACTS_QUEUE = 'growth-facts';
 const BATCH = 300;
@@ -106,6 +107,7 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
     private readonly capi: CapiService,
     private readonly mirror: GrowthMirrorService,
     private readonly orderSync: ShopifyOrderSyncService,
+    private readonly feature: FeatureService,
   ) {}
 
   onModuleInit() {
@@ -127,7 +129,10 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
     // Nightly full refresh (~02:00 PKT) — refreshes delivery probabilities, is_new.
     const full = new Date().getUTCHours() === 21 && this.lastFullDay !== today;
     if (full) this.lastFullDay = today;
+    // Super-admin module grant: only tenants with Growth build facts.
+    const granted = await this.feature.companiesWith('growth');
     for (const c of companies) {
+      if (!granted.has(c.company_id)) continue;
       await this.enqueue(c.company_id, full ? 'full' : 'incremental');
       // Nightly: re-fetch Shopify journeys for recent orders that still have no
       // touchpoints (Shopify builds journeys hours after the order).

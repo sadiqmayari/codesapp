@@ -157,6 +157,7 @@ export class AuthService {
       companyId: user.company_id,
       role: user.role,
       email: user.email,
+      tv: user.token_version,
     };
 
     const accessToken = this.jwt.sign(payload, {
@@ -192,12 +193,15 @@ export class AuthService {
 
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
     if (!user || user.status !== 'active') throw new UnauthorizedException();
+    // Sessions revoked (password change / suspend / role change) since issue.
+    if ((payload.tv ?? 0) !== user.token_version) throw new UnauthorizedException('Session expired');
 
     const newPayload = {
       sub: user.id,
       companyId: user.company_id,
       role: user.role,
       email: user.email,
+      tv: user.token_version,
     };
 
     const accessToken = this.jwt.sign(newPayload, {
@@ -263,7 +267,7 @@ export class AuthService {
     const hash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { password_hash: hash, totp_secret: null },
+      data: { password_hash: hash, totp_secret: null, token_version: { increment: 1 } },
     });
 
     return { message: 'Password reset successfully' };
@@ -325,13 +329,11 @@ export class AuthService {
     // Effective module feature flags (plan ∧ tenant, with super-admin override)
     // so the sidebar/layout can gate the Content/PR nav. Resolved via the
     // shared FeatureService; parallel to keep /auth/me snappy.
-    const [contentEnabled, prEnabled, inventoryEnabled] = company
-      ? await Promise.all([
-          this.feature.contentEnabled(company.id),
-          this.feature.prEnabled(company.id),
-          this.feature.inventoryEnabled(company.id),
-        ])
-      : [false, false, false];
+    // ONE cached read of every super-admin module grant (FeatureService).
+    const modules = company ? await this.feature.modules(company.id) : null;
+    const contentEnabled = !!modules?.content;
+    const prEnabled = !!modules?.pr;
+    const inventoryEnabled = !!modules?.inventory;
     return {
       ...rest,
       company: company
@@ -349,6 +351,8 @@ export class AuthService {
             contentEnabled,
             prEnabled,
             inventoryEnabled,
+            // Every super-admin module grant: { growth, attendance, payroll, … }.
+            modules,
           }
         : null,
     };
@@ -406,6 +410,7 @@ export class AuthService {
     userId: number,
     currentPassword: string,
     newPassword: string,
+    res?: { cookie: Function },
   ) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
@@ -417,11 +422,38 @@ export class AuthService {
       );
     }
     const password_hash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-    await this.prisma.user.update({
+    // Bump the session version: every OTHER session (other browsers/phones)
+    // is signed out on its next request. This session gets fresh tokens.
+    const updated = await this.prisma.user.update({
       where: { id: userId },
-      data: { password_hash },
+      data: { password_hash, token_version: { increment: 1 } },
     });
-    return { message: 'Password changed' };
+    let accessToken: string | undefined;
+    if (res) {
+      const payload = {
+        sub: updated.id,
+        companyId: updated.company_id,
+        role: updated.role,
+        email: updated.email,
+        tv: updated.token_version,
+      };
+      accessToken = this.jwt.sign(payload, {
+        secret: this.config.get('JWT_SECRET'),
+        expiresIn: this.config.get('JWT_EXPIRES_IN') ?? '7d',
+      });
+      const refresh = this.jwt.sign(payload, {
+        secret: this.config.get('JWT_REFRESH_SECRET'),
+        expiresIn: this.config.get('JWT_REFRESH_EXPIRES_IN') ?? '7d',
+      });
+      (res as any).cookie('refresh_token', refresh, {
+        httpOnly: true,
+        secure: this.config.get('NODE_ENV') === 'production',
+        sameSite: 'lax',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+        path: '/',
+      });
+    }
+    return { message: 'Password changed. Other devices were signed out.', accessToken };
   }
 
   /**

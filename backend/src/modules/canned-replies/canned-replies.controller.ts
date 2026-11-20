@@ -15,9 +15,13 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CannedRepliesService } from './canned-replies.service';
 import { CreateCannedReplyDto } from './dto/create-canned-reply.dto';
 import { UpdateCannedReplyDto } from './dto/update-canned-reply.dto';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { INBOX_ROLES } from '../../common/auth/roles';
 
 @Controller('canned-replies')
-@UseGuards(AuthGuard('jwt'), TenantGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
+@Roles(...INBOX_ROLES, 'fulfillment')
 export class CannedRepliesController {
   constructor(private readonly cannedReplies: CannedRepliesService) {}
 

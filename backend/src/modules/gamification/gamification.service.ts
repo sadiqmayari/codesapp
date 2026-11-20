@@ -15,6 +15,7 @@ import {
 import { CreateContestDto, UpdateContestDto } from './dtos/contest.dto';
 import { SetTargetDto, TARGET_PERIODS, TargetPeriod } from './dtos/target.dto';
 import { UpdateGameConfigDto } from './dtos/config.dto';
+import { isPrivileged as isPrivilegedRole } from '../../common/auth/roles';
 
 const CONFIG_TTL_SEC = 300;
 
@@ -630,7 +631,7 @@ export class GamificationService {
   // Targets
   // ---------------------------------------------------------------------------
   async targets(actor: Actor) {
-    const isAdmin = actor.role === 'owner' || actor.role === 'admin';
+    const isAdmin = isPrivilegedRole(actor.role);
     const rows = await this.prisma.$queryRawUnsafe<
       Array<{
         id: number;

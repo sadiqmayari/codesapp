@@ -16,9 +16,16 @@ import { TicketsService } from './tickets.service';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { CreateTicketEventDto } from './dto/create-ticket-event.dto';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { ModuleGuard } from '../../common/guards/module.guard';
+import { RequireModule } from '../../common/decorators/require-module.decorator';
+import { INBOX_ROLES } from '../../common/auth/roles';
 
 @Controller('tickets')
-@UseGuards(AuthGuard('jwt'), TenantGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard, ModuleGuard)
+@Roles(...INBOX_ROLES, 'fulfillment')
+@RequireModule('tickets')
 export class TicketsController {
   constructor(private readonly tickets: TicketsService) {}
 

@@ -177,7 +177,8 @@ function MemberSheet({
   useEffect(() => setF(member), [member]);
   if (!f) return <SideSheet open={false} onClose={onClose} title="">{null}</SideSheet>;
   const set = (p: Partial<AttendanceMember>) => setF({ ...f, ...p });
-  const selfPay = f.userId === user?.id && user?.role !== 'owner';
+  // Own pay (non-owner) or an HR manager looking at an admin: read-only.
+  const selfPay = (f.userId === user?.id && user?.role !== 'owner') || !!f.payHidden;
   const cur = settings.payrollPolicy.currency;
   const save = async () => {
     setBusy(true);
@@ -301,7 +302,11 @@ function MemberSheet({
 
         <section className="space-y-3">
           <h3 className="text-sm font-semibold text-ink">Pay</h3>
-          {selfPay && <p className="text-xs text-amber-700">Only the owner can change your own pay.</p>}
+          {selfPay && (
+            <p className="text-xs text-amber-700">
+              {f.payHidden && f.userId !== user?.id ? "Only the owner manages an admin's pay." : 'Only the owner can change your own pay.'}
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <Field label={`Monthly salary (${cur})`} htmlFor="ms-salary">
               <input
@@ -606,7 +611,7 @@ export default function SettingsTab() {
                       ),
                   },
                   { key: 'off', header: 'Off', render: (m) => m.effectiveWeeklyOff.map((d) => WEEKDAYS[d]).join(', ') || '—' },
-                  { key: 'salary', header: 'Salary', align: 'right', sortValue: (m) => m.salaryAmount ?? 0, render: (m) => (m.salaryAmount ? fmtMoney(m.salaryAmount, p.currency) : <span className="text-amber-700">not set</span>) },
+                  { key: 'salary', header: 'Salary', align: 'right', sortValue: (m) => m.salaryAmount ?? 0, render: (m) => (m.payHidden ? <span className="text-muted">hidden</span> : m.salaryAmount ? fmtMoney(m.salaryAmount, p.currency) : <span className="text-amber-700">not set</span>) },
                   { key: 'allow', header: 'Allowances', align: 'right', render: (m) => (m.allowances.length ? fmtMoney(m.allowances.reduce((s, a) => s + a.amount, 0), p.currency) : '—') },
                   { key: 'ip', header: 'Office only', render: (m) => (m.requireOfficeIp ? 'Yes' : '—') },
                 ]}

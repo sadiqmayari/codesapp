@@ -16,6 +16,8 @@ import { UsageWarningBanner } from '@/components/usage-warning-banner';
 import AttendanceReminderBanner from '@/components/attendance-reminder-banner';
 import { InstallAppBanner } from '@/components/install-app-banner';
 import { NotificationGate } from '@/components/notification-gate';
+import { ModuleNotEnabled } from '@/components/module-not-enabled';
+import { blockedModuleFor, hasInbox, lockedAccessFor } from '@/components/app-shell/nav-config';
 import { playNotification } from '@/lib/notification-sound';
 import {
   clearConversationNotification,
@@ -37,34 +39,6 @@ function FullScreenSpinner({ label }: { label?: string }) {
       {label && <p className="text-gray-500 text-sm">{label}</p>}
     </div>
   );
-}
-
-// Orders subpages the fulfillment role must NOT reach — they surface money
-// aggregates (analytics) or fall outside the dispatch remit. Everything else
-// under /orders (list, /orders/fulfillment*, and /orders/<orderNo> detail) is
-// allowed; the Courier-payments tab is hidden inside /orders/fulfillment.
-const FULFILLMENT_BLOCKED_ORDER_PATHS = [
-  '/orders/analytics',
-  '/orders/agent',
-  '/orders/agents',
-  '/orders/attribution',
-  '/orders/abandoned',
-];
-function isFulfillmentPathAllowed(p: string): boolean {
-  if (isSelfServicePath(p)) return true;
-  if (p !== '/orders' && !p.startsWith('/orders/')) return false;
-  return !FULFILLMENT_BLOCKED_ORDER_PATHS.some(
-    (b) => p === b || p.startsWith(`${b}/`),
-  );
-}
-
-// Shared paths every role may reach however tightly locked to its home module:
-// account settings (Settings → Profile / Security) to edit their name + change
-// their password, and Team (team chat + attendance check-in). Allowed for ALL
-// restricted roles.
-const SELF_SERVICE_PREFIXES = ['/settings', '/team-chat'];
-function isSelfServicePath(p: string): boolean {
-  return SELF_SERVICE_PREFIXES.some((b) => p === b || p.startsWith(`${b}/`));
 }
 
 function dmPreview(m?: { type?: string; content?: string | null }): string {
@@ -104,8 +78,10 @@ function messagePreview(msg?: {
 function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { on } = useSocket();
-  const { user } = useAuth();
+  const { user, refreshCompany } = useAuth();
   const meId = user?.id ?? 0;
+  const inboxRole = hasInbox(user) || user?.role === 'fulfillment';
+  const blocked = blockedModuleFor(pathname, user?.company?.modules);
   const myRole = user?.role;
   const isAgent = myRole !== 'owner' && myRole !== 'admin';
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -139,10 +115,12 @@ function Shell({ children }: { children: React.ReactNode }) {
   // event so it never drifts.
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshUnread = useCallback(() => {
+    if (!inboxRole) return; // locked roles have no inbox (API would 403)
     if (refreshTimer.current) clearTimeout(refreshTimer.current);
     refreshTimer.current = setTimeout(() => {
       apiFetchEnvelope<unknown[]>('/inbox/conversations', {
         params: { status: 'unread', limit: 1 },
+        noOnboardingRedirect: true,
       })
         .then((env) => {
           const total =
@@ -155,7 +133,10 @@ function Shell({ children }: { children: React.ReactNode }) {
         })
         .catch(() => undefined);
     }, 600);
-  }, []);
+  }, [inboxRole]);
+
+  // Super-admin changed this workspace's module grants → refresh nav live.
+  useEffect(() => on('company.modules.updated', () => void refreshCompany()), [on, refreshCompany]);
 
   useEffect(() => {
     refreshUnread(); // initial authoritative count
@@ -334,7 +315,9 @@ function Shell({ children }: { children: React.ReactNode }) {
         {/* overflow-x-hidden: mobile safety net so no page can push content off
             the side ("navbars/tabs out of page"). Every real horizontal scroll
             surface (tables, tab bars) uses its own inner overflow-x-auto. */}
-        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">{children}</main>
+        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+          {blocked ? <ModuleNotEnabled label={blocked.label} /> : children}
+        </main>
         <MobileTabBar
           onMore={() => setSidebarOpen(true)}
           unread={unread}
@@ -405,111 +388,22 @@ export default function AppLayout({
   pathnameRef.current = pathname;
   const onboardingCheckedRef = useRef(false);
 
-  // The finance role is a view-only payments login: it never onboards and is
-  // locked to /finance. Skip the onboarding gate and redirect any other path.
-  const isFinance = user?.role === 'finance';
+  // Locked roles (finance, fulfillment, content/PR/creative, uploaders, member,
+  // hr_manager) never onboard and are kept on their allow-list. ONE rule from
+  // nav-config `lockedAccessFor` — sidebar, palette and tab bar use the same file.
+  const locked = lockedAccessFor(user?.role);
+  const isLockedRole = !!locked;
   useEffect(() => {
-    if (loading || !user || !isFinance) return;
+    if (loading || !user || !locked) return;
     onboardingCheckedRef.current = true;
     setGateState('ok');
-    if (
-      !pathnameRef.current.startsWith('/finance') &&
-      !isSelfServicePath(pathnameRef.current)
-    )
-      router.replace('/finance');
-  }, [loading, user, isFinance, pathname, router]);
-
-  // The fulfillment role is locked to the operational Orders pages (queue,
-  // shipments, loadsheets, receive, order detail). It never onboards, and any
-  // path outside that allow-list — including the money-bearing Orders subpages
-  // (analytics/agent/attribution/abandoned) and everything outside /orders —
-  // redirects to /orders.
-  const isFulfillment = user?.role === 'fulfillment';
-  useEffect(() => {
-    if (loading || !user || !isFulfillment) return;
-    onboardingCheckedRef.current = true;
-    setGateState('ok');
-    if (!isFulfillmentPathAllowed(pathnameRef.current)) router.replace('/orders');
-  }, [loading, user, isFulfillment, pathname, router]);
-
-  // The content_manager role is locked to the Content module; the pr_manager
-  // role is locked to the PR module. Both skip onboarding and redirect any
-  // other path to their home module.
-  const isContentManager = user?.role === 'content_manager';
-  useEffect(() => {
-    if (loading || !user || !isContentManager) return;
-    onboardingCheckedRef.current = true;
-    setGateState('ok');
-    if (
-      !pathnameRef.current.startsWith('/content') &&
-      !isSelfServicePath(pathnameRef.current)
-    )
-      router.replace('/content');
-  }, [loading, user, isContentManager, pathname, router]);
-
-  const isPrManager = user?.role === 'pr_manager';
-  useEffect(() => {
-    if (loading || !user || !isPrManager) return;
-    onboardingCheckedRef.current = true;
-    setGateState('ok');
-    if (
-      !pathnameRef.current.startsWith('/pr') &&
-      !isSelfServicePath(pathnameRef.current)
-    )
-      router.replace('/pr');
-  }, [loading, user, isPrManager, pathname, router]);
-
-  // Creative executive (and the junior social media executive, same enforced
-  // access): locked to Content + PR (manages both, assigns tasks).
-  const isCreativeExec =
-    user?.role === 'creative_executive' ||
-    user?.role === 'social_media_executive';
-  useEffect(() => {
-    if (loading || !user || !isCreativeExec) return;
-    onboardingCheckedRef.current = true;
-    setGateState('ok');
-    const p = pathnameRef.current;
-    if (!p.startsWith('/content') && !p.startsWith('/pr') && !isSelfServicePath(p))
-      router.replace('/content');
-  }, [loading, user, isCreativeExec, pathname, router]);
-
-  // Videographer / graphic designer: uploaders, locked to the Content module.
-  const isUploaderRole =
-    user?.role === 'videographer' || user?.role === 'graphic_designer';
-  useEffect(() => {
-    if (loading || !user || !isUploaderRole) return;
-    onboardingCheckedRef.current = true;
-    setGateState('ok');
-    if (
-      !pathnameRef.current.startsWith('/content') &&
-      !isSelfServicePath(pathnameRef.current)
-    )
-      router.replace('/content');
-  }, [loading, user, isUploaderRole, pathname, router]);
-
-  // The "member" role is Team-only: it never onboards, and anything that isn't a
-  // self-service path (/settings, /team-chat) redirects to /team-chat (its home).
-  const isMember = user?.role === 'member';
-  useEffect(() => {
-    if (loading || !user || !isMember) return;
-    onboardingCheckedRef.current = true;
-    setGateState('ok');
-    // Members may also run the pack station (warehouse packers are often members).
-    const p = pathnameRef.current;
-    if (!isSelfServicePath(p) && p !== '/orders/pack') router.replace('/team-chat');
-  }, [loading, user, isMember, pathname, router]);
+    if (!locked.allowed(pathnameRef.current)) router.replace(locked.home);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, user, isLockedRole, pathname]);
 
   useEffect(() => {
     if (loading || !user || billing !== 'ok') return;
-    if (
-      isFinance ||
-      isFulfillment ||
-      isContentManager ||
-      isPrManager ||
-      isCreativeExec ||
-      isUploaderRole ||
-      isMember
-    ) {
+    if (isLockedRole) {
       onboardingCheckedRef.current = true;
       setGateState('ok');
       return;

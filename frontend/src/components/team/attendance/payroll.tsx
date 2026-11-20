@@ -395,6 +395,11 @@ export default function PayrollTab() {
               </Card>
             ))}
           </div>
+          {!!data.hiddenCount && (
+            <p className="rounded-lg border border-line bg-sunken px-3 py-2 text-xs text-muted">
+              {data.hiddenCount} {data.hiddenCount === 1 ? 'person is' : 'people are'} hidden: admins and your own pay are managed by the owner.
+            </p>
+          )}
           <DataTable<Payslip>
             rows={data.rows}
             rowKey={(r) => r.userId}

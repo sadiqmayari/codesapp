@@ -6,11 +6,15 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CommissionsService } from './commissions.service';
 import { CommissionPlanDto, PreviewPlanDto } from './dto/commission-plan.dto';
+import { ModuleGuard } from '../../common/guards/module.guard';
+import { RequireModule } from '../../common/decorators/require-module.decorator';
+import { HR_ADMIN } from '../../common/auth/roles';
 
 type JwtUser = { userId: number; companyId: number; role: string };
 
 @Controller('commissions')
-@UseGuards(AuthGuard('jwt'), TenantGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, ModuleGuard)
+@RequireModule('commissions')
 export class CommissionsController {
   constructor(private readonly commissions: CommissionsService) {}
 
@@ -22,49 +26,49 @@ export class CommissionsController {
 
   @Get('plans')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles(...HR_ADMIN)
   plans(@CurrentUser() user: JwtUser) {
     return this.commissions.listPlans(user.companyId);
   }
 
   @Post('plans')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles(...HR_ADMIN)
   create(@CurrentUser() user: JwtUser, @Body() dto: CommissionPlanDto) {
     return this.commissions.createPlan(user.companyId, user.userId, dto);
   }
 
   @Patch('plans/:id')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles(...HR_ADMIN)
   update(@CurrentUser() user: JwtUser, @Param('id', ParseIntPipe) id: number, @Body() dto: CommissionPlanDto) {
     return this.commissions.updatePlan(user.companyId, id, dto);
   }
 
   @Delete('plans/:id')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles(...HR_ADMIN)
   remove(@CurrentUser() user: JwtUser, @Param('id', ParseIntPipe) id: number) {
     return this.commissions.deletePlan(user.companyId, id);
   }
 
   @Post('preview')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles(...HR_ADMIN)
   preview(@CurrentUser() user: JwtUser, @Body() dto: PreviewPlanDto) {
     return this.commissions.preview(user.companyId, dto);
   }
 
   @Get('statement')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles(...HR_ADMIN)
   statement(@CurrentUser() user: JwtUser, @Query('month') month: string) {
-    return this.commissions.statement(user.companyId, month);
+    return this.commissions.statement(user.companyId, month, { userId: user.userId, role: user.role });
   }
 
   @Post('backfill')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles(...HR_ADMIN)
   backfill(@CurrentUser() user: JwtUser) {
     return this.commissions.backfill(user.companyId);
   }

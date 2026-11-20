@@ -23,6 +23,9 @@ import {
 } from './dtos/ad-manage.dto';
 import { GrowthTargetService } from './services/growth-target.service';
 import { AskGrowthDto, ConnectAdAccountDto, GrowthRangeDto, GrowthStoreDto, UpdateAdAccountDto } from './dtos/growth.dto';
+import { ModuleGuard } from '../../common/guards/module.guard';
+import { RequireModule } from '../../common/decorators/require-module.decorator';
+import { PRIVILEGED } from '../../common/auth/roles';
 
 type U = { companyId: number; userId: number };
 
@@ -32,8 +35,9 @@ type U = { companyId: number; userId: number };
  * margins and ad credentials. Lives under /api/growth.
  */
 @Controller('growth')
-@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
-@Roles('owner', 'admin')
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard, ModuleGuard)
+@Roles(...PRIVILEGED)
+@RequireModule('growth')
 export class GrowthController {
   constructor(
     private readonly growth: GrowthService,
@@ -191,11 +195,13 @@ export class GrowthController {
   }
 
   @Post('manage/publish')
+  @RequireModule('growth_publish')
   managePublish(@CurrentUser() u: U, @Body() dto: ManageChangesDto) {
     return this.manage.publish({ companyId: u.companyId, userId: u.userId }, dto.changes as unknown as ChangeInput[]);
   }
 
   @Post('manage/duplicate')
+  @RequireModule('growth_publish')
   manageDuplicate(@CurrentUser() u: U, @Body() dto: ManageEntityDto) {
     return this.manage.duplicate({ companyId: u.companyId, userId: u.userId }, dto.level, dto.entityId);
   }
@@ -206,6 +212,7 @@ export class GrowthController {
   }
 
   @Post('manage/undo')
+  @RequireModule('growth_publish')
   manageUndo(@CurrentUser() u: U, @Body() dto: ManageUndoDto) {
     return this.manage.undo({ companyId: u.companyId, userId: u.userId }, dto);
   }
@@ -222,6 +229,7 @@ export class GrowthController {
   }
 
   @Post('create/media')
+  @RequireModule('growth_publish')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 200 * 1024 * 1024 } }))
   createMedia(@CurrentUser() u: U, @Query() q: CreateAccountDto, @UploadedFile() file?: UploadedMedia) {
     return this.creator.uploadMedia(u.companyId, q.accountId, file);
@@ -238,6 +246,7 @@ export class GrowthController {
   }
 
   @Post('create')
+  @RequireModule('growth_publish')
   createCampaign(@CurrentUser() u: U, @Body() dto: CreateCampaignDto) {
     return this.creator.create({ companyId: u.companyId, userId: u.userId }, dto.accountId, dto.draft as unknown as CreateDraft);
   }

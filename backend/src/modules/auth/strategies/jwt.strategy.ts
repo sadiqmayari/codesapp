@@ -9,6 +9,8 @@ export interface JwtPayload {
   companyId: number | null;
   role: string;
   email: string;
+  /** users.token_version at issue (absent on legacy tokens = 0). */
+  tv?: number;
 }
 
 @Injectable()
@@ -19,25 +21,28 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   ) {
     const secret = config.get<string>('JWT_SECRET');
     if (!secret) {
-      console.error(
-        '[JwtStrategy] JWT_SECRET not set — using insecure placeholder. Set JWT_SECRET in env vars.',
-      );
+      // Never run with a guessable signing key — fail the boot instead.
+      throw new Error('[JwtStrategy] JWT_SECRET is not set. Refusing to start.');
     }
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: secret ?? 'INSECURE_PLACEHOLDER_JWT_SECRET',
+      secretOrKey: secret,
     });
   }
 
   async validate(payload: JwtPayload) {
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, status: true, role: true, company_id: true, email: true },
+      select: { id: true, status: true, role: true, company_id: true, email: true, token_version: true },
     });
 
     if (!user || user.status !== 'active') {
       throw new UnauthorizedException();
+    }
+    // Super-admin tokens are a separate login (no company) — skip the check.
+    if (payload.role !== 'super_admin' && (payload.tv ?? 0) !== user.token_version) {
+      throw new UnauthorizedException('Session expired');
     }
 
     return {

@@ -6,6 +6,12 @@
 
 ## Current Status
 
+**Roles audit + HR manager + super-admin module grants (2026-11-21, latest):** migration `20261123000000_roles_hr_module_grants` (auto-applies: `hr_manager` enum, `users.token_version`, grandfathers module grants into `companies.feature_overrides`). Preview: https://claude.ai/artifact/V5aM79ah2faofcGQERytro
+- Fixed: locked roles reaching inbox/contacts/broadcasts/bots/templates/tickets/calls/AI APIs; admin able to demote/suspend/delete another admin; sessions + sockets surviving suspend/role/password change; JWT_SECRET placeholder fallback; member delete leaving leave requests/thread memberships/pack/content refs.
+- New role `hr_manager`: Team module admin (attendance, leave, payroll, commissions) + Settings → Team members (non-privileged roles only). Never sees/edits admin pay or own pay (masked rows + 403). Socket room `company:{id}:hr`.
+- Super-admin Modules card (registry-driven): growth (+ publish ads), attendance (+ payroll), commissions, pack, calls (+ seat cap), leaderboard, couriers, tickets, content, pr, inventory. Enforced by `ModuleGuard` + `@RequireModule`, schedulers skip switched-off tenants, tenant nav updates live (`company.modules.updated`), blocked pages show "not enabled". Audited.
+- One role vocabulary (`common/auth/roles.ts` + `frontend/src/lib/roles.ts`); `(app)/layout` 7 redirect effects → one `lockedAccessFor` rule in nav-config.
+
 **Team module v4 — audit + auto-checkout + payroll runs + commissions + pack station (2026-11-21, latest):** migration `20261122000000_team_v4` (auto-applies). Plan + mockups: https://claude.ai/artifact/5am1R67WawmFJUr4m7ci1g
 - Audit fixed ~60 issues across attendance, payroll and team chat (server-side check-in window, weekends/holidays no longer marked absent, night shifts, spoofable office-IP lock, self-approval, races, validation, tenant-clock times, CSV safety, broadcast request storm, `.bin` files, stuck optimistic bubbles, older messages, typing, presence across nodes).
 - Auto-checkout (worker, 10 min) + flexible staff on a required-hours target with a navbar timer chip instead of the all-day bar.

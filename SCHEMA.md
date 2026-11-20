@@ -119,9 +119,14 @@ company_id        Int?      FK → companies (null for super_admin)
 name              String
 email             String    unique
 password_hash     String
-role              Enum      super_admin | owner | admin | agent
+role              Enum      super_admin | owner | admin | agent | finance | fulfillment |
+                            content_manager | pr_manager | creative_executive |
+                            social_media_executive | videographer | graphic_designer |
+                            member | hr_manager (Nov-2026)
 status            Enum      pending | active | suspended
 totp_secret       String?   encrypted (2FA - scaffolded, not enforced v1)
+token_version     Int       default 0 — in every JWT as `tv`; bumped on password
+                            change / suspend / role change → stale sessions rejected
 created_at        DateTime  default now()
 updated_at        DateTime  updatedAt
 ```
@@ -137,6 +142,12 @@ waba_id           String?
 phone_number_id   String?
 onboarding_status Json      tracks wizard step progress
 logo_url          String?   VARCHAR(500) — Shell-Polish-A branding logo web path
+feature_overrides Json?     super-admin authority map. Module grants (Nov-2026):
+                            growth | growth_publish | attendance | payroll | commissions |
+                            pack | calls | leaderboard | couriers | tickets = 'on'|'off'
+                            (absent = off); content | pr | inventory override their
+                            *_enabled column; calls_max_agents = number (SIP seat cap).
+                            Resolved ONLY by FeatureService (MODULE_REGISTRY).
 created_at        DateTime  default now()
 ```
 

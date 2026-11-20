@@ -1,32 +1,130 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlatformSettingService } from './platform-setting.service';
+import { CacheService } from './cache.service';
 import {
   FeatureOverride,
+  MODULE_REGISTRY,
+  ModuleKey,
   PlatformFeature,
 } from '../features/feature.constants';
 
+const MODULES_TTL_S = 60;
+
+/** Effective module map for a tenant + super-admin limits. */
+export interface CompanyModules {
+  modules: Record<ModuleKey, boolean>;
+  /** Super-admin seat cap for WhatsApp calling (null = no cap). */
+  callsMaxAgents: number | null;
+}
+
 /**
- * Unified resolver for the 4-layer feature governance model
- * (see common/features/feature.constants.ts). New features resolve their
- * effective enabled-state here so plan / super-admin / tenant precedence is
- * consistent everywhere — instead of each feature re-implementing the logic.
+ * Unified resolver for the feature governance model
+ * (see common/features/feature.constants.ts).
  *
- * Existing AI gates (PlanGuard, the billing `features` flags, the per-tenant AI
- * toggles) keep working as-is; they can be migrated to delegate here over time.
- * This service is purely additive.
+ * MODULE GRANTS (super-admin authoritative, per tenant) resolve through
+ * `modules()` / `enabled()` — ONE cached read of companies.feature_overrides
+ * (+ the legacy content/pr/inventory columns). Workers use `companiesWith()`.
+ * Call `invalidate(companyId)` after any write to those columns.
  */
 @Injectable()
 export class FeatureService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly platformSetting: PlatformSettingService,
+    private readonly cache: CacheService,
   ) {}
+
+  private key(companyId: number) {
+    return `features:${companyId}`;
+  }
+
+  invalidate(companyId: number): void {
+    this.cache.del(this.key(companyId));
+  }
+
+  /** Pure resolution of one company row → effective module map. */
+  static resolve(row: {
+    feature_overrides: unknown;
+    content_enabled?: boolean | null;
+    pr_enabled?: boolean | null;
+    inventory_enabled?: boolean | null;
+  }): CompanyModules {
+    const ov = (row.feature_overrides && typeof row.feature_overrides === 'object'
+      ? row.feature_overrides
+      : {}) as Record<string, unknown>;
+    const modules = {} as Record<ModuleKey, boolean>;
+    for (const def of MODULE_REGISTRY) {
+      const v = ov[def.key];
+      if (def.legacyColumn) {
+        modules[def.key] =
+          v === 'on' ? true : v === 'off' ? false : !!row[def.legacyColumn];
+      } else {
+        modules[def.key] = v === 'on';
+      }
+    }
+    // A sub-switch is only on while its parent module is on.
+    for (const def of MODULE_REGISTRY) {
+      if (def.parent && !modules[def.parent]) modules[def.key] = false;
+    }
+    const cap = Number(ov['calls_max_agents']);
+    return {
+      modules,
+      callsMaxAgents: Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : null,
+    };
+  }
+
+  async companyModules(companyId: number): Promise<CompanyModules> {
+    const hit = this.cache.get<CompanyModules>(this.key(companyId));
+    if (hit) return hit;
+    const row = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: {
+        feature_overrides: true,
+        content_enabled: true,
+        pr_enabled: true,
+        inventory_enabled: true,
+      },
+    });
+    const out = row
+      ? FeatureService.resolve(row)
+      : FeatureService.resolve({ feature_overrides: null });
+    this.cache.set(this.key(companyId), out, MODULES_TTL_S);
+    return out;
+  }
+
+  async modules(companyId: number): Promise<Record<ModuleKey, boolean>> {
+    return (await this.companyModules(companyId)).modules;
+  }
+
+  async enabled(companyId: number, key: ModuleKey): Promise<boolean> {
+    return (await this.modules(companyId))[key] === true;
+  }
+
+  /**
+   * Company ids that have `key` granted — for background schedulers, so a
+   * switched-off module's jobs stop. One query per tick.
+   */
+  async companiesWith(key: ModuleKey): Promise<Set<number>> {
+    const rows = await this.prisma.company.findMany({
+      select: {
+        id: true,
+        feature_overrides: true,
+        content_enabled: true,
+        pr_enabled: true,
+        inventory_enabled: true,
+      },
+    });
+    const out = new Set<number>();
+    for (const r of rows) {
+      if (FeatureService.resolve(r).modules[key]) out.add(r.id);
+    }
+    return out;
+  }
 
   /**
    * Super-admin per-tenant force value (companies.feature_overrides[feature]).
-   * Returns 'on' | 'off' to force, or null for normal resolution. This is the
-   * authority layer — it wins over the tenant's own toggle.
+   * Returns 'on' | 'off' to force, or null for normal resolution.
    */
   async getOverride(
     companyId: number,
@@ -68,48 +166,18 @@ export class FeatureService {
     return planOn && tenantOn;
   }
 
-  /**
-   * Effective on/off for the Content module. This is a PER-TENANT feature the
-   * super-admin grants to individual clients (like invoice-import), NOT a plan
-   * tier inclusion — so the gate is the company flag directly (with the
-   * feature_overrides authority layer still winning if ever set):
-   *   override ?? companies.content_enabled.
-   */
-  async contentEnabled(companyId: number): Promise<boolean> {
-    const override = await this.getOverride(companyId, 'content');
-    if (override) return override === 'on';
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { content_enabled: true },
-    });
-    return company?.content_enabled ?? false;
+  /** Content module: override ?? companies.content_enabled. */
+  contentEnabled(companyId: number): Promise<boolean> {
+    return this.enabled(companyId, 'content');
   }
 
-  /**
-   * Effective on/off for the PR module — per-tenant, same model as Content:
-   *   override ?? companies.pr_enabled.
-   */
-  async prEnabled(companyId: number): Promise<boolean> {
-    const override = await this.getOverride(companyId, 'pr');
-    if (override) return override === 'on';
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { pr_enabled: true },
-    });
-    return company?.pr_enabled ?? false;
+  /** PR module: override ?? companies.pr_enabled. */
+  prEnabled(companyId: number): Promise<boolean> {
+    return this.enabled(companyId, 'pr');
   }
 
-  /**
-   * Effective on/off for the Inventory module — per-tenant, same model as
-   * Content/PR: override ?? companies.inventory_enabled.
-   */
-  async inventoryEnabled(companyId: number): Promise<boolean> {
-    const override = await this.getOverride(companyId, 'inventory');
-    if (override) return override === 'on';
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { inventory_enabled: true },
-    });
-    return company?.inventory_enabled ?? false;
+  /** Inventory module: override ?? companies.inventory_enabled. */
+  inventoryEnabled(companyId: number): Promise<boolean> {
+    return this.enabled(companyId, 'inventory');
   }
 }

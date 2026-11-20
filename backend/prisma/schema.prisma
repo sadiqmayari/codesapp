@@ -48,6 +48,10 @@ enum UserRole {
   // Settings → Profile/Security (edit name, change password). Tracked for
   // attendance like any other member. No inbox/orders/analytics/billing/settings.
   member
+  // HR manager: locked to the Team module (attendance, leave, payroll,
+  // commissions administration) + Settings Profile/Security/Team members. May
+  // add/suspend non-privileged staff; never touches admin pay or its own pay.
+  hr_manager
 }
 
 enum UserStatus {
@@ -534,6 +538,9 @@ model User {
   joined_on                    DateTime?  @db.Date
   left_on                      DateTime?  @db.Date
   annual_paid_leave            Int?
+  // Bumped on password change / suspend / role change: access + refresh JWTs
+  // carry it, a stale one is rejected (signs the user out everywhere).
+  token_version                Int        @default(0)
   created_at                   DateTime   @default(now())
   updated_at                   DateTime   @updatedAt
 

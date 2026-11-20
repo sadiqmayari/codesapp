@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Play, ShieldCheck } from 'lucide-react';
-import { apiFetch, ApiError } from '@/lib/api';
+import { apiFetch, ApiError, setAccessToken } from '@/lib/api';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { cn } from '@/lib/utils';
@@ -134,11 +134,13 @@ function PasswordCard() {
     }
     setSaving(true);
     try {
-      await apiFetch('/auth/change-password', {
+      const r = await apiFetch<{ accessToken?: string }>('/auth/change-password', {
         method: 'POST',
         body: { currentPassword: cur, newPassword: nw },
       });
-      toast.success('Password changed');
+      // Other devices are signed out; this session continues on the new token.
+      if (r?.accessToken) setAccessToken(r.accessToken);
+      toast.success('Password changed. Other devices were signed out.');
       setCur('');
       setNw('');
       setNw2('');

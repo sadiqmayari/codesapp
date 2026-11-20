@@ -33,7 +33,7 @@ export default function AttendanceReminderBanner() {
   const { user } = useAuth();
   const { on } = useSocket();
   const toast = useToast();
-  const isAdmin = user?.role === 'owner' || user?.role === 'admin';
+  const isAdmin = user?.role === 'owner' || user?.role === 'admin' || user?.role === 'hr_manager';
   const a = useMyToday();
   const [busy, setBusy] = useState(false);
   const [, force] = useState(0);

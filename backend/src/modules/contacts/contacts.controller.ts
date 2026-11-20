@@ -29,6 +29,7 @@ import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
 import { ListContactsDto } from './dto/list-contacts.dto';
 import { BulkContactsDto, MergeContactsDto } from './dto/bulk-contacts.dto';
+import { INBOX_ROLES } from '../../common/auth/roles';
 
 interface UploadedCsvFile {
   buffer: Buffer;
@@ -52,7 +53,8 @@ const actor = (u: ReqUser) => ({ companyId: u.companyId, userId: u.userId, role:
  * Static routes are declared BEFORE `:id` so e.g. `export` isn't parsed as an id.
  */
 @Controller('contacts')
-@UseGuards(AuthGuard('jwt'), TenantGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
+@Roles(...INBOX_ROLES)
 export class ContactsController {
   constructor(
     private readonly contactsService: ContactsService,

@@ -18,9 +18,13 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { BotsService } from './bots.service';
 import { CreateBotDto } from './dto/create-bot.dto';
 import { UpdateBotDto } from './dto/update-bot.dto';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { INBOX_ROLES, PRIVILEGED } from '../../common/auth/roles';
 
 @Controller('bots')
-@UseGuards(AuthGuard('jwt'), TenantGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
+@Roles(...INBOX_ROLES)
 export class BotsController {
   constructor(private readonly botsService: BotsService) {}
 
@@ -38,6 +42,7 @@ export class BotsController {
   }
 
   @Post()
+  @Roles(...PRIVILEGED)
   create(
     @CurrentUser() user: { companyId: number },
     @Body() dto: CreateBotDto,
@@ -48,6 +53,7 @@ export class BotsController {
   // Stage a media file for a `send_media` action. Returns the web path + mime
   // + filename to embed in the action; the file is re-sent on each trigger.
   @Post('media')
+  @Roles(...PRIVILEGED)
   @UseInterceptors(
     FileInterceptor('file', {
       limits: { fileSize: 25 * 1024 * 1024 }, // hard cap above per-type limits
@@ -64,6 +70,7 @@ export class BotsController {
   }
 
   @Patch(':id')
+  @Roles(...PRIVILEGED)
   update(
     @CurrentUser() user: { companyId: number },
     @Param('id', ParseIntPipe) id: number,
@@ -73,6 +80,7 @@ export class BotsController {
   }
 
   @Delete(':id')
+  @Roles(...PRIVILEGED)
   remove(
     @CurrentUser() user: { companyId: number },
     @Param('id', ParseIntPipe) id: number,
@@ -81,6 +89,7 @@ export class BotsController {
   }
 
   @Patch(':id/toggle')
+  @Roles(...PRIVILEGED)
   toggle(
     @CurrentUser() user: { companyId: number },
     @Param('id', ParseIntPipe) id: number,

@@ -15,7 +15,9 @@ import { getMyToday, onAttendanceChanged, tenantHHMM, tenantNowHHMM, toMin, type
 export function useMyToday() {
   const { user } = useAuth();
   const { on } = useSocket();
-  const tracked = !!user && user.role !== 'owner' && user.role !== 'super_admin';
+  // Not tracked: owner/super-admin, or a workspace without the Attendance module.
+  const attendanceOn = user?.company?.modules ? user.company.modules.attendance === true : true;
+  const tracked = !!user && attendanceOn && user.role !== 'owner' && user.role !== 'super_admin';
   const [today, setToday] = useState<MyToday | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [now, setNow] = useState(() => Date.now());

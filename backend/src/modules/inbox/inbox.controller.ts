@@ -26,13 +26,16 @@ import { AddLabelDto } from './dto/add-label.dto';
 import { AddNoteDto } from './dto/add-note.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { ListConversationsDto } from './dto/list-conversations.dto';
+import { INBOX_ROLES } from '../../common/auth/roles';
 
 // Every authenticated request carries the full identity (see JwtStrategy) — we
 // need role + userId (not just companyId) to enforce the pool-model RBAC.
 type ReqUser = { companyId: number; userId: number; role: string };
 
 @Controller('inbox')
-@UseGuards(AuthGuard('jwt'), TenantGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
+// Fulfillment opens a chat from the order drawer (pool-model visibility).
+@Roles(...INBOX_ROLES, 'fulfillment')
 export class InboxController {
   constructor(private readonly inboxService: InboxService) {}
 

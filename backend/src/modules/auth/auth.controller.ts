@@ -102,11 +102,13 @@ export class AuthController {
   changePassword(
     @CurrentUser() user: { userId: number },
     @Body() dto: ChangePasswordDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
     return this.authService.changePassword(
       user.userId,
       dto.currentPassword,
       dto.newPassword,
+      res,
     );
   }
 

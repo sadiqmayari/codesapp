@@ -55,6 +55,9 @@ import {
   BulkSetDefaultCourierDto,
   ClearDefaultCourierDto,
 } from './dto/courier.dto';
+import { ModuleGuard } from '../../common/guards/module.guard';
+import { RequireModule } from '../../common/decorators/require-module.decorator';
+import { PRIVILEGED } from '../../common/auth/roles';
 
 /**
  * Owner/admin-only credential + city-mapping management, mirroring
@@ -62,8 +65,9 @@ import {
  * GET only reports which couriers are configured + their webhook URL.
  */
 @Controller('settings/couriers')
-@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
-@Roles('owner', 'admin')
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard, ModuleGuard)
+@Roles(...PRIVILEGED)
+@RequireModule('couriers')
 export class SettingsCouriersController {
   constructor(
     private readonly prisma: PrismaService,

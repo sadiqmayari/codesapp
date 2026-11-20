@@ -12,6 +12,7 @@ import { InboxService } from '../inbox/inbox.service';
 import { SendMessageType } from '../inbox/dto/send-message.dto';
 import { UpdateTicketDto, TICKET_STATUSES as TICKET_STATUS_LIST } from './dto/update-ticket.dto';
 import { CreateTicketDto, TICKET_TYPES as TICKET_TYPE_LIST } from './dto/create-ticket.dto';
+import { isPrivileged as isPrivilegedRole } from '../../common/auth/roles';
 
 /** Statuses that count as still-open (a chat won't get a 2nd open ticket). */
 const OPEN_STATUSES = ['open', 'in_progress', 'awaiting_customer'];
@@ -72,7 +73,7 @@ export class TicketsService {
    * chat assigned to them / unassigned. Returns null for privileged viewers.
    */
   private agentScope(viewer?: TicketViewer): Prisma.SupportTicketWhereInput | null {
-    if (!viewer || viewer.role === 'owner' || viewer.role === 'admin') return null;
+    if (!viewer || isPrivilegedRole(viewer.role)) return null;
     return {
       OR: [
         { assigned_user_id: viewer.userId },

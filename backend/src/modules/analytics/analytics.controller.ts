@@ -16,9 +16,11 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AnalyticsService } from './analytics.service';
 import { DateRangeDto } from './dtos/date-range.dto';
 import { DashboardDto } from './dtos/dashboard.dto';
+import { ModuleGuard } from '../../common/guards/module.guard';
+import { RequireModule } from '../../common/decorators/require-module.decorator';
 
 @Controller('analytics')
-@UseGuards(AuthGuard('jwt'), TenantGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, ModuleGuard)
 export class AnalyticsController {
   constructor(private readonly analytics: AnalyticsService) {}
 
@@ -122,6 +124,7 @@ export class AnalyticsController {
   // Per-product inventory analytics dashboard (sell-through, turnover, GMROI,
   // ABC/Pareto star products, dead stock, return rate, reorder). OWNER/ADMIN.
   @Get('inventory-product')
+  @RequireModule('inventory')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
   inventoryProduct(

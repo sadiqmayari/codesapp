@@ -139,6 +139,8 @@ export interface PayrollResult {
   run: PayrollRun | null;
   rows: Payslip[];
   totals: { people: number; gross: number; deductions: number; commission: number; overtime: number; net: number };
+  /** HR manager view: rows hidden (admins + the HR manager themself). */
+  hiddenCount?: number;
 }
 
 export type AdjustmentKind = 'bonus' | 'reimbursement' | 'deduction' | 'advance' | 'loan';
@@ -211,6 +213,8 @@ export interface AttendanceMember {
   joinedOn: string | null;
   leftOn: string | null;
   annualPaidLeave: number | null;
+  /** True when the viewer (an HR manager) may not see/edit this pay. */
+  payHidden?: boolean;
   salaryAmount: number | null;
   overtimeRate: number | null;
   allowances: Allowance[];

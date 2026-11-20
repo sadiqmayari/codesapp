@@ -19,6 +19,12 @@
 
 ## Entries
 
+### [Roles] Locked roles could use the inbox/broadcast/bot APIs; admins could remove other admins (2026-11-21)
+**Error message:** none — found in the roles audit.
+**Cause:** (1) `broadcasts`, `bots`, `templates`, `canned-replies`, `tickets`, `ai`, `workspace`, `inbox`, `contacts` and `calls` controllers had no `RolesGuard`, so a `member`, `finance` or `videographer` login could send a broadcast, edit bots or read chats with a direct API call — only the frontend redirect stopped them. (2) `TeamService.update/suspend/remove` only protected the owner, so an admin could demote, suspend or delete another admin. (3) Suspend / role change / password change left live sockets and other sessions running.
+**Fix:** class-level `@Roles(...INBOX_ROLES)` (+ fulfillment where the order drawer needs it) on those controllers; bot/template/broadcast writes → `PRIVILEGED`. One rule `teamManageError` in `common/auth/roles.ts` (owner manages admins; HR manages non-privileged staff). `users.token_version` (JWT `tv`) is bumped on password change / suspend / role change and `InboxGateway.disconnectUser` drops sockets. `JWT_SECRET` missing now fails boot.
+**Rule:** every authenticated controller declares `@Roles` from `common/auth/roles.ts`. Never rely on the frontend allow-list for access.
+
 ### [Couriers] M&P push webhooks all dropped as "Unrecognized mnp webhook payload shape" (2026-11-20)
 **Error message:** `Unrecognized mnp webhook payload shape (company 3): {"comments":"","tracking_number":"565714810000683","timestamp":"…","status":"Hold in Operations"}` — 234 in one morning.
 **Cause:** M&P's push now uses snake_case `tracking_number`; `normalizeEvent('mnp')` only accepted `TrackingNumber`/`trackingNumber`/`ConsignmentNumber`/`CN`, so every push was discarded and parcels only moved on the tenant's status poll (Sois = every 12 h) — delivered parcels sat "in_transit" for hours. Two pushed statuses were also unmapped: `Hold in Operations` and numbered `Attempt:1/2/3`.

@@ -11,6 +11,8 @@ import { InboxService } from '../inbox/inbox.service';
 import { CreateTeamMemberDto } from './dto/create-team-member.dto';
 import { UpdateTeamMemberDto } from './dto/update-team-member.dto';
 import { resolveEffectiveLimits } from '../../common/utils/effective-limits';
+import { teamManageError } from '../../common/auth/roles';
+import { InboxGateway } from '../inbox/inbox.gateway';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -28,11 +30,27 @@ export class TeamService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly inbox: InboxService,
+    private readonly gateway: InboxGateway,
   ) {}
+
+  /** Throws when the actor may not manage this target / give it this role. */
+  private assertCanManage(actorRole: string, targetRole: string | null, newRole?: string | null) {
+    const err = teamManageError(actorRole, targetRole, newRole);
+    if (err) throw new ForbiddenException(err);
+  }
+
+  /** Revoke every session of a user: bump token_version + drop live sockets. */
+  private async revokeSessions(userId: number) {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { token_version: { increment: 1 } },
+    });
+    await this.gateway.disconnectUser(userId);
+  }
 
   list(companyId: number) {
     return this.prisma.user.findMany({
-      where: { company_id: companyId },
+      where: { company_id: companyId, role: { not: 'super_admin' } },
       select: SELECT,
       orderBy: { created_at: 'asc' },
     });
@@ -43,10 +61,8 @@ export class TeamService {
     actorRole: string,
     dto: CreateTeamMemberDto,
   ) {
-    // Only an owner may create an admin; admins can only create agents.
-    if (dto.role === 'admin' && actorRole !== 'owner') {
-      throw new ForbiddenException('Only the owner can create admins');
-    }
+    // Owner creates anyone; admin anyone but admins; HR only non-privileged roles.
+    this.assertCanManage(actorRole, null, dto.role);
 
     const email = dto.email.trim().toLowerCase();
     const existing = await this.prisma.user.findUnique({ where: { email } });
@@ -81,19 +97,14 @@ export class TeamService {
     if (target.id === actorUserId) {
       throw new BadRequestException('You cannot modify your own membership');
     }
-    if (target.role === 'owner') {
-      throw new ForbiddenException('The owner cannot be modified');
-    }
-    if (dto.role === 'admin' && actorRole !== 'owner') {
-      throw new ForbiddenException('Only the owner can promote to admin');
-    }
+    this.assertCanManage(actorRole, target.role, dto.role ?? null);
 
     // Re-activating from suspended counts against the plan again.
     if (dto.status === 'active' && target.status !== 'active') {
       await this.assertUnderUserLimit(companyId);
     }
 
-    return this.prisma.user.update({
+    const updated = await this.prisma.user.update({
       where: { id: targetId },
       data: {
         ...(dto.role ? { role: dto.role } : {}),
@@ -101,6 +112,12 @@ export class TeamService {
       },
       select: SELECT,
     });
+    // A role change or a suspend revokes live sessions so the new access applies
+    // everywhere at once (HTTP already re-reads role per request).
+    if ((dto.role && dto.role !== target.role) || (dto.status === 'suspended' && target.status !== 'suspended')) {
+      await this.revokeSessions(targetId);
+    }
+    return updated;
   }
 
   /**
@@ -114,6 +131,7 @@ export class TeamService {
   async suspend(
     companyId: number,
     actorUserId: number,
+    actorRole: string,
     targetId: number,
     reassignToUserId?: number | null,
   ) {
@@ -121,9 +139,7 @@ export class TeamService {
     if (target.id === actorUserId) {
       throw new BadRequestException('You cannot remove yourself');
     }
-    if (target.role === 'owner') {
-      throw new ForbiddenException('The owner cannot be removed');
-    }
+    this.assertCanManage(actorRole, target.role);
     // Reassign/unassign BEFORE suspending so the target validation (which
     // requires an active user) is unaffected by this member's new status.
     const { count } = await this.inbox.reassignConversations(
@@ -136,6 +152,7 @@ export class TeamService {
       data: { status: 'suspended' },
       select: SELECT,
     });
+    await this.revokeSessions(targetId);
     return { ...user, reassignedChats: count };
   }
 
@@ -152,6 +169,7 @@ export class TeamService {
   async remove(
     companyId: number,
     actorUserId: number,
+    actorRole: string,
     targetId: number,
     reassignToUserId?: number | null,
   ) {
@@ -159,9 +177,8 @@ export class TeamService {
     if (target.id === actorUserId) {
       throw new BadRequestException('You cannot delete yourself');
     }
-    if (target.role === 'owner') {
-      throw new ForbiddenException('The owner cannot be deleted');
-    }
+    this.assertCanManage(actorRole, target.role);
+    await this.gateway.disconnectUser(targetId);
 
     // Reassign/release conversations BEFORE deleting (this emits the socket
     // event and validates an active target while the member still exists).
@@ -191,6 +208,13 @@ export class TeamService {
         where: { assigned_user_id: targetId },
         data: { assigned_user_id: null },
       }),
+      // Tables without a DB foreign key: clean up so nothing points at a ghost.
+      // (Approved payroll lines / commission ledger keep their user_id as
+      // history on purpose.)
+      this.prisma.attendanceLeaveRequest.deleteMany({ where: { user_id: targetId } }),
+      this.prisma.internalThreadMember.deleteMany({ where: { user_id: targetId } }),
+      this.prisma.contentItem.updateMany({ where: { assignee_user_id: targetId }, data: { assignee_user_id: null } }),
+      this.prisma.shipment.updateMany({ where: { packed_by_user_id: targetId }, data: { packed_by_user_id: null } }),
       this.prisma.user.delete({ where: { id: targetId } }),
     ]);
 
@@ -204,10 +228,12 @@ export class TeamService {
    */
   async reassignChats(
     companyId: number,
+    actorRole: string,
     fromUserId: number,
     toUserId: number | null,
   ) {
-    await this.requireMember(companyId, fromUserId);
+    const from = await this.requireMember(companyId, fromUserId);
+    this.assertCanManage(actorRole, from.role);
     return this.inbox.reassignConversations(companyId, fromUserId, toUserId);
   }
 
