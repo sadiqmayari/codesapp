@@ -116,6 +116,24 @@ export class GrowthOpportunityService {
 
     out.push(...(await this.geoRules(companyId, q, monthly)));
 
+    // Ads tagged by NAME in their UTMs can't be told apart when copies share a name.
+    const [dup] = await this.prisma.$queryRawUnsafe<Array<{ names: bigint | number; ads: bigint | number }>>(
+      `SELECT COUNT(*) names, COALESCE(SUM(c), 0) ads FROM (
+         SELECT e.name, COUNT(DISTINCT e.external_id) c
+           FROM ad_entities e
+           JOIN ad_insights_daily i ON i.company_id = e.company_id AND i.ad_id = e.external_id
+          WHERE e.company_id = ? AND e.level = 'ad' AND e.name IS NOT NULL AND i.spend > 0 AND i.date >= ?
+          GROUP BY e.name HAVING c > 1) x`,
+      companyId,
+      q.from,
+    ).catch(() => [{ names: 0, ads: 0 }]);
+    if (Number(dup?.names ?? 0) > 0) {
+      out.push({ id: 'data:dup-names', kind: 'data', severity: 'warn',
+        title: `${Number(dup.names)} ad names are shared by ${Number(dup.ads)} ads`,
+        detail: 'Orders tagged with an ad NAME go to the copy that was spending when the customer clicked, which is usually right but not always. In Meta Ads Manager set the URL parameters to utm_campaign={{campaign.id}}&utm_content={{ad.id}} so every order lands on the exact ad.',
+        impact: null, impactLabel: 'Fix tracking' });
+    }
+
     const cov = overview.coverage;
     if (cov.unitsWithCostPct != null && cov.unitsWithCostPct < 95) {
       out.push({ id: 'data:cogs', kind: 'data', severity: 'warn', title: `${(100 - cov.unitsWithCostPct).toFixed(0)}% of units have no cost price`,

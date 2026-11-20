@@ -288,7 +288,8 @@ export class MetaWriter implements AdPlatformWriter {
     const creative = await this.call<{ id: string }>('POST', `/${acct}/adcreatives`, token, {
       name: `${d.name.slice(0, 380)} · creative`,
       object_story_spec: story,
-      url_tags: 'utm_source=meta&utm_medium=paid&utm_campaign={{campaign.name}}&utm_term={{adset.name}}&utm_content={{ad.name}}&utm_id={{campaign.id}}',
+      // IDs, not names: copies share names ("Dhamaka existing" ×2) and a name can't say which one was clicked.
+      url_tags: 'utm_source=meta&utm_medium=paid&utm_campaign={{campaign.id}}&utm_term={{adset.id}}&utm_content={{ad.id}}&utm_id={{campaign.id}}',
     });
     ids.creativeId = creative.id;
     onStep({ ...ids });

@@ -1048,3 +1048,8 @@ The old `/ad-report` had these defects; each is fixed by the Growth module (see 
 ## [AI] Saving AI settings in super-admin reset the usage-limit policy to "block" (fixed 2026-11-20)
 - Cause: controller defaulted a missing `usageLimitAction` to 'block' and the service always wrote it.
 - Fix: only fields that were sent are written.
+
+## [Growth] Creatives / campaign ROAS + CPA wrong for duplicated ads (2026-11-20)
+- **Symptom:** "Dhamaka existing" showed ROAS 0.68×, CPA Rs 4,641 while Meta reported 30 purchases yesterday; a Rs 4,987 copy of it had 1,154 orders in 30 days vs Meta's 2.
+- **Cause:** orders whose UTM carries the ad NAME were resolved through a name → id map that kept only the LAST ad seen; Sois has 25 names shared by 55 ads (copies inside the same campaign / ad set), so whole ads' orders landed on a paused or tiny copy.
+- **Fix:** name maps keep all ids; `GrowthFactsService.pickLive()` chooses the copy that was spending in the 7 days before the click. New ads tag ids (`{{ad.id}}`); Opportunities flags shared names. Full facts rebuild re-attributes history.

@@ -73,9 +73,12 @@ interface Ctx {
   shipGlobal: number;
   feeRatio: number;
   adById: Map<string, { platform: string; campaignId: string | null; adsetId: string | null }>;
-  campaignByName: Map<string, string>; // `${platform}|${lower name}` → id
+  /** `${platform}|${lower name}` → EVERY campaign id with that name (copies share names). */
+  campaignByName: Map<string, string[]>;
+  /** Spend per entity id per day (ads + campaigns) — picks the live one among same-named copies. */
+  spendByDay: Map<string, Map<string, number>>;
   campaignIds: Set<string>;
-  adByName: Map<string, string>;
+  adByName: Map<string, string[]>;
   campaignPlatformByName: Map<string, string>;
 }
 
@@ -200,6 +203,34 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
     return [...new Set([...a, ...b, ...c].map((r) => r.gid))];
   }
 
+  /**
+   * Among entities sharing a name, the one with the most spend in the 7 days up
+   * to the click (falls back to all-time spend). One candidate → itself.
+   */
+  private pickLive(ids: string[] | undefined, at: Date, ctx: Ctx): string | null {
+    if (!ids?.length) return null;
+    if (ids.length === 1) return ids[0];
+    const to = at.toISOString().slice(0, 10);
+    const from = new Date(at.getTime() - 7 * 86_400_000).toISOString().slice(0, 10);
+    let best: string | null = null;
+    let bestWin = -1;
+    let bestAll = -1;
+    for (const id of ids) {
+      let win = 0;
+      let all = 0;
+      for (const [d, v] of ctx.spendByDay.get(id) ?? []) {
+        all += v;
+        if (d >= from && d <= to) win += v;
+      }
+      if (win > bestWin || (win === bestWin && all > bestAll)) {
+        best = id;
+        bestWin = win;
+        bestAll = all;
+      }
+    }
+    return best;
+  }
+
   /** City rate scaled by how long the parcel has been out (late parcels are mostly returns). */
   private ageAdjusted(pCity: number, bookedAt: Date | null, now: Date, ctx: Ctx): number {
     if (!bookedAt || !ctx.ageRate.length) return pCity;
@@ -307,22 +338,46 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
     const shipAvg = new Map(shipRows.map((r) => [String(r.c), n(r.a)]));
     const shipVals = [...shipAvg.values()].filter((v) => v > 0);
     const adById = new Map<string, { platform: string; campaignId: string | null; adsetId: string | null }>();
-    const campaignByName = new Map<string, string>();
+    const campaignByName = new Map<string, string[]>();
     const campaignIds = new Set<string>();
-    const adByName = new Map<string, string>();
+    const adByName = new Map<string, string[]>();
+    const push = (m: Map<string, string[]>, k: string, v: string) => {
+      const l = m.get(k);
+      if (!l) m.set(k, [v]);
+      else if (!l.includes(v)) l.push(v);
+    };
     const campaignPlatformByName = new Map<string, string>();
     for (const e of entities) {
       if (e.level === 'campaign' && e.name) campaignPlatformByName.set(e.name.trim().toLowerCase(), e.platform);
       if (e.level === 'ad') {
         adById.set(e.external_id, { platform: e.platform, campaignId: e.campaign_id, adsetId: e.parent_external_id });
         if (e.name) {
-          adByName.set(`${e.platform}|${e.name.trim().toLowerCase()}`, e.external_id);
-          if (e.campaign_id) adByName.set(`${e.platform}|${e.campaign_id}|${e.name.trim().toLowerCase()}`, e.external_id);
+          push(adByName, `${e.platform}|${e.name.trim().toLowerCase()}`, e.external_id);
+          if (e.campaign_id) push(adByName, `${e.platform}|${e.campaign_id}|${e.name.trim().toLowerCase()}`, e.external_id);
         }
       } else if (e.level === 'campaign') {
         campaignIds.add(e.external_id);
-        if (e.name) campaignByName.set(`${e.platform}|${e.name.trim().toLowerCase()}`, e.external_id);
+        if (e.name) push(campaignByName, `${e.platform}|${e.name.trim().toLowerCase()}`, e.external_id);
       }
+    }
+    // Daily spend per ad + per campaign. UTMs that carry a NAME (not an id) are
+    // ambiguous when copies share it ("Dhamaka existing" ×2 in one campaign):
+    // the live, spending copy is the one the customer clicked.
+    const spendByDay = new Map<string, Map<string, number>>();
+    const spendRows = await this.prisma.$queryRawUnsafe<Array<{ a: string; c: string; d: Date | string; s: unknown }>>(
+      `SELECT ad_id a, campaign_id c, date d, SUM(spend) s FROM ad_insights_daily
+        WHERE company_id = ? AND spend > 0 GROUP BY ad_id, campaign_id, date`,
+      companyId,
+    ).catch(() => [] as Array<{ a: string; c: string; d: Date | string; s: unknown }>);
+    const addSpend = (id: string, day: string, v: number) => {
+      let m = spendByDay.get(id);
+      if (!m) spendByDay.set(id, (m = new Map()));
+      m.set(day, (m.get(day) ?? 0) + v);
+    };
+    for (const r of spendRows) {
+      const day = r.d instanceof Date ? r.d.toISOString().slice(0, 10) : String(r.d).slice(0, 10);
+      addSpend(String(r.a), day, n(r.s));
+      addSpend(String(r.c), day, n(r.s));
     }
     const ageRate: Array<[number, number]> = [];
     for (const r of await ageRowsP) {
@@ -342,6 +397,7 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
       feeRatio: n(feeRow[0]?.g) > 0 ? n(feeRow[0]?.f) / n(feeRow[0]?.g) : 0,
       adById,
       campaignByName,
+      spendByDay,
       campaignIds,
       adByName,
       campaignPlatformByName,
@@ -772,13 +828,16 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
         if (camp) {
           campaignId = ctx.campaignIds.has(camp)
             ? camp
-            : ctx.campaignByName.get(`${c.platform}|${camp.toLowerCase()}`) ?? `name:${camp.slice(0, 59)}`;
+            : this.pickLive(ctx.campaignByName.get(`${c.platform}|${camp.toLowerCase()}`), t.occurredAt, ctx) ?? `name:${camp.slice(0, 59)}`;
         }
-        // 2) ad by id, else by name INSIDE that campaign, else by name anywhere
+        // 2) ad by id, else by name INSIDE that campaign, else by name anywhere —
+        //    among same-named copies, the one that was spending when they clicked.
         const adKey =
           (ctx.adById.has(content) ? content : null) ??
-          (campaignId && !campaignId.startsWith('name:') ? ctx.adByName.get(`${c.platform}|${campaignId}|${contentKey}`) : undefined) ??
-          ctx.adByName.get(`${c.platform}|${contentKey}`) ??
+          (campaignId && !campaignId.startsWith('name:')
+            ? this.pickLive(ctx.adByName.get(`${c.platform}|${campaignId}|${contentKey}`), t.occurredAt, ctx)
+            : null) ??
+          this.pickLive(ctx.adByName.get(`${c.platform}|${contentKey}`), t.occurredAt, ctx) ??
           null;
         const ad = adKey ? ctx.adById.get(adKey) : undefined;
         if (ad && adKey) {

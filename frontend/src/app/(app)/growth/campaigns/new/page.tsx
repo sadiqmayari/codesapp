@@ -600,7 +600,7 @@ export default function NewCampaignPage() {
                   )}
                 </div>
                 {!wa && (
-                  <Field label="Website URL" hint="CodesApp adds utm_source=facebook, utm_campaign={{campaign.name}} and utm_content={{ad.name}} so every order is attributed in Growth.">
+                  <Field label="Website URL" hint="CodesApp tags the link with the campaign, ad set and ad IDs (utm_campaign / utm_term / utm_content) so every order is credited to exactly this ad.">
                     <input className={inputCls} value={d.url ?? ''} onChange={(e) => set('url', e.target.value)} placeholder="https://yourstore.com/products/…" />
                   </Field>
                 )}

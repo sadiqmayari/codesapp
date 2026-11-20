@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { ImageOff, Images, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { fullMoney, money, pct, ratio } from '@/lib/format-number';
-import { growthApi, type Creative } from '@/lib/growth';
+import { growthApi, MODEL_LABEL, type Creative } from '@/lib/growth';
 import { SkeletonCards } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useGrowth } from '@/components/growth/growth-filters';
@@ -21,7 +21,7 @@ const SORTS: Array<[SortKey, string]> = [
 ];
 
 export default function GrowthCreativesPage() {
-  const { mode } = useGrowth();
+  const { mode, filters } = useGrowth();
   const [sort, setSort] = useState<SortKey>('spend');
   const [onlyFatigued, setOnlyFatigued] = useState(false);
   const { data, loading, error } = useGrowthData((q, signal) => growthApi.creatives(q, { signal }));
@@ -79,19 +79,20 @@ export default function GrowthCreativesPage() {
                 </div>
                 <dl className="grid grid-cols-4 gap-1 text-center">
                   {([
-                    ['Hook', pct(r.hookRate, 0)],
-                    ['Hold', pct(r.holdRate, 0)],
-                    ['CTR', pct(r.ctr, 2)],
-                    ['ROAS', ratio(r.expRoas)],
-                  ] as Array<[string, string]>).map(([k, v]) => (
-                    <div key={k} className="rounded-md bg-sunken px-1 py-1.5">
+                    ['Hook', pct(r.hookRate, 0), '3-second video views ÷ impressions'],
+                    ['Hold', pct(r.holdRate, 0), 'ThruPlays ÷ 3-second views'],
+                    ['Link CTR', pct(r.ctr, 2), 'Link clicks ÷ impressions'],
+                    ['Exp. ROAS', ratio(r.expRoas), `Expected net from orders this ad brought in (${MODEL_LABEL[filters.model]}), after predicted cancellations and returns ÷ spend. Meta reports ${ratio(r.platformRoas)} on placed orders.`],
+                  ] as Array<[string, string, string]>).map(([k, v, help]) => (
+                    <div key={k} className="rounded-md bg-sunken px-1 py-1.5" title={help}>
                       <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted">{k}</dt>
                       <dd className="text-sm font-bold tabular-nums text-ink">{v}</dd>
                     </div>
                   ))}
                 </dl>
                 <div className="flex items-center justify-between text-xs text-muted">
-                  <span>CPA <b className="text-ink">{money(r.cpa, cur, mode)}</b></span>
+                  <span title={`Spend ÷ orders this ad brought in (${Math.round(r.orders * 10) / 10}). Meta counted ${r.platformPurchases} purchases.`}>CPA <b className="text-ink">{money(r.cpa, cur, mode)}</b></span>
+                  <span title="What Meta reports (placed orders)">Meta <b className="text-ink">{ratio(r.platformRoas)}</b></span>
                   <span>Freq <b className="text-ink">{r.frequency?.toFixed(1) ?? '—'}</b></span>
                   {r.ctrTrend && r.ctrTrend.prevCtr > 0 && (
                     <span title="CTR last 7 days vs the 7 days before" className={r.ctrTrend.ctr >= r.ctrTrend.prevCtr ? 'text-emerald-600' : 'text-red-600'}>
