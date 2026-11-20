@@ -15,6 +15,26 @@ import {
 import { Type } from 'class-transformer';
 import { PayrollPolicyDto } from './payroll.dto';
 
+// Declared BEFORE AttendanceSettingsDto: decorator metadata references it at
+// class-definition time (a later class = TDZ ReferenceError at boot).
+export class AutoCheckoutDto {
+  @IsOptional()
+  @IsIn(['off', 'shift_end', 'max_hours'])
+  mode?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(600)
+  afterEndMin?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(2)
+  @Max(20)
+  maxHours?: number;
+}
+
 export class AttendanceSettingsDto {
   // "HH:MM" 24h, tenant-local. Omit/empty keeps the default (09:30).
   @IsOptional()
@@ -78,22 +98,4 @@ export class AttendanceSettingsDto {
   @Min(0)
   @Max(365)
   annualPaidLeave?: number | null;
-}
-
-export class AutoCheckoutDto {
-  @IsOptional()
-  @IsIn(['off', 'shift_end', 'max_hours'])
-  mode?: string;
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(600)
-  afterEndMin?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(2)
-  @Max(20)
-  maxHours?: number;
 }
