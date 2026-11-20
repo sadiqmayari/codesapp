@@ -20,6 +20,7 @@ import {
   Clapperboard,
   Sparkles,
   Boxes,
+  PackageCheck,
 } from 'lucide-react';
 import type { AuthUser } from '@/context/auth-context';
 
@@ -59,7 +60,7 @@ export function buildNav(user: AuthUser | null): NavSection[] {
   const role = user?.role;
   const flat = (items: NavItem[]): NavSection[] => [{ title: null, items }];
 
-  if (role === 'member') return flat([TEAM]);
+  if (role === 'member') return flat([TEAM, { href: '/orders/pack', label: 'Pack station', icon: PackageCheck }]);
   if (role === 'finance')
     return flat([{ href: '/finance', label: 'Finance', icon: Wallet }, TEAM]);
   if (role === 'fulfillment')

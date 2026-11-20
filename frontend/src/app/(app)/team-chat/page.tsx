@@ -30,7 +30,7 @@ import VoiceRecorder from '@/components/inbox/voice-recorder';
 import EmojiPicker from '@/components/inbox/emoji-picker';
 import AudioMessage from '@/components/inbox/audio-message';
 import OrderPicker from '@/components/team-chat/order-picker';
-import AttendancePanel from '@/components/team-chat/attendance-panel';
+import AttendancePanel from '@/components/team/attendance/panel';
 import {
   type ThreadItem,
   type RosterUser,
@@ -69,16 +69,23 @@ export default function TeamChatPage() {
 
   // `?view=attendance` deep-links straight to the Attendance tab (used by
   // Settings → Attendance & payroll).
-  const [view, setView] = useState<'chat' | 'attendance'>(
-    params.get('view') === 'attendance' ? 'attendance' : 'chat',
-  );
+  // `?view=attendance` deep-links straight to the Attendance tab. Derived from
+  // the URL (not copied once into state) so a client-side link to it works
+  // while already on /team-chat.
+  const view: 'chat' | 'attendance' = params.get('view') === 'attendance' ? 'attendance' : 'chat';
+  const setView = (v: 'chat' | 'attendance') =>
+    router.replace(v === 'attendance' ? '/team-chat?view=attendance' : '/team-chat', { scroll: false });
   const [threads, setThreads] = useState<ThreadItem[]>([]);
   const [roster, setRoster] = useState<RosterUser[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const [text, setText] = useState('');
-  const [staged, setStaged] = useState<File | null>(null);
+  const [nextCursor, setNextCursor] = useState<number | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const stickBottomRef = useRef(true);
+  const typingTimer = useRef<number | null>(null);
+  const lastTypingEmit = useRef(0);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [typingFrom, setTypingFrom] = useState<number | null>(null);
@@ -117,6 +124,17 @@ export default function TeamChatPage() {
     }
   }, [toast]);
 
+  // One coalesced list reload: every message / read receipt used to call
+  // loadThreads() directly, so a busy broadcast fired a request storm.
+  const reloadTimer = useRef<number | null>(null);
+  const scheduleLoadThreads = useCallback(() => {
+    if (reloadTimer.current) window.clearTimeout(reloadTimer.current);
+    reloadTimer.current = window.setTimeout(() => {
+      reloadTimer.current = null;
+      void loadThreads();
+    }, 400);
+  }, [loadThreads]);
+
   useEffect(() => {
     loadThreads();
     getRoster()
@@ -146,6 +164,8 @@ export default function TeamChatPage() {
       .then((r) => {
         if (alive) {
           setMessages(r.messages);
+          setNextCursor(r.nextCursor);
+          stickBottomRef.current = true;
           setOtherReadAt(r.otherReadAt);
           setOtherDeliveredAt(r.otherDeliveredAt);
           if (r.broadcastMembers) {
@@ -163,8 +183,8 @@ export default function TeamChatPage() {
       .finally(() => {
         if (alive) setLoadingMsgs(false);
       });
-    // mark read + zero the local unread badge
-    markThreadRead(activeId).catch(() => undefined);
+    // mark read + zero the local unread badge (only when actually looking)
+    if (document.visibilityState === 'visible') markThreadRead(activeId).catch(() => undefined);
     setThreads((prev) =>
       prev.map((t) => (t.id === activeId ? { ...t, unreadCount: 0 } : t)),
     );
@@ -173,11 +193,53 @@ export default function TeamChatPage() {
     };
   }, [activeId]);
 
-  // keep scrolled to bottom on new messages
+  // Keep scrolled to the bottom on new messages — unless the user scrolled up
+  // to read older ones (it used to yank them back down on every message).
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && stickBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [messages, loadingMsgs]);
+
+  // Read receipts only count when the thread is really on screen: mark the
+  // open thread read when the tab becomes visible / focused again.
+  useEffect(() => {
+    const onVisible = () => {
+      const id = activeIdRef.current;
+      if (id && document.visibilityState === 'visible' && document.hasFocus()) {
+        markThreadRead(id).catch(() => undefined);
+        setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, unreadCount: 0 } : t)));
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, []);
+
+  const loadOlder = async () => {
+    if (!activeId || !nextCursor || loadingOlder) return;
+    const el = scrollRef.current;
+    const prevHeight = el?.scrollHeight ?? 0;
+    setLoadingOlder(true);
+    stickBottomRef.current = false;
+    try {
+      const r = await getThreadMessages(activeId, nextCursor);
+      setMessages((prev) => {
+        const have = new Set(prev.map((m) => m.id));
+        return [...r.messages.filter((m) => !have.has(m.id)), ...prev];
+      });
+      setNextCursor(r.nextCursor);
+      requestAnimationFrame(() => {
+        if (el) el.scrollTop = el.scrollHeight - prevHeight;
+      });
+    } catch {
+      toast.error('Could not load older messages');
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
 
   // ── realtime ──
   useEffect(() => {
@@ -193,7 +255,10 @@ export default function TeamChatPage() {
             if (prev.some((m) => m.id === message.id)) return prev;
             return [...prev, message];
           });
-          if (message.senderId !== meId) markThreadRead(threadId).catch(() => undefined);
+          stickBottomRef.current = true;
+          if (message.senderId !== meId && document.visibilityState === 'visible' && document.hasFocus()) {
+            markThreadRead(threadId).catch(() => undefined);
+          }
         }
         // Delivery ack for ANY thread (so the sender's ticks go grey ✓✓ even
         // when we don't have this chat open). Read, on open, supersedes it.
@@ -201,7 +266,7 @@ export default function TeamChatPage() {
           markThreadDelivered(threadId).catch(() => undefined);
         }
         // refresh the thread list ordering + previews + unread
-        loadThreads();
+        scheduleLoadThreads();
       }),
       on(
         'dm.read',
@@ -220,7 +285,9 @@ export default function TeamChatPage() {
               return !cur || p.at! > cur ? { ...prev, [p.readerId!]: p.at! } : prev;
             });
           }
-          loadThreads();
+          // Another member's read only changes OUR ticks, never our list —
+          // only our own read (no readerId: tab sync) needs a list refresh.
+          if (p.readerId == null || p.readerId === meId) scheduleLoadThreads();
         },
       ),
       on(
@@ -239,7 +306,8 @@ export default function TeamChatPage() {
       on('dm.typing', (p: { threadId: number; userId: number }) => {
         if (p.threadId === activeIdRef.current && p.userId !== meId) {
           setTypingFrom(p.userId);
-          window.setTimeout(() => setTypingFrom(null), 3000);
+          if (typingTimer.current) window.clearTimeout(typingTimer.current);
+          typingTimer.current = window.setTimeout(() => setTypingFrom(null), 3000);
         }
       }),
       on('presence.update', (p: { userId: number; online: boolean }) => {
@@ -254,7 +322,7 @@ export default function TeamChatPage() {
       }),
     ];
     return () => offs.forEach((off) => off());
-  }, [on, meId, loadThreads]);
+  }, [on, meId, scheduleLoadThreads]);
 
   // ── select / start ──
   const selectThread = (id: number) => {
@@ -274,7 +342,19 @@ export default function TeamChatPage() {
   };
 
   // ── send ──
-  const pushOptimistic = (msg: ChatMessage) => setMessages((p) => [...p, msg]);
+  const pushOptimistic = (msg: ChatMessage) => {
+    stickBottomRef.current = true;
+    setMessages((p) => [...p, msg]);
+  };
+  // The HTTP response is the source of truth — the socket echo is a bonus.
+  // (A bubble used to stay on the clock icon forever when the socket was down.)
+  const reconcile = (clientId: string, saved: ChatMessage | null | undefined) => {
+    if (!saved?.id) return;
+    setMessages((p) => {
+      if (p.some((m) => m.id === saved.id)) return p.filter((m) => m.clientId !== clientId || m.id === saved.id);
+      return p.map((m) => (m.clientId === clientId ? { ...saved, clientId } : m));
+    });
+  };
 
   const sendText = async () => {
     const body = text.trim();
@@ -294,7 +374,7 @@ export default function TeamChatPage() {
       createdAt: new Date().toISOString(),
     });
     try {
-      await sendTeamText(activeId, body, clientId);
+      reconcile(clientId, await sendTeamText(activeId, body, clientId));
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to send');
       setMessages((p) => p.filter((m) => m.clientId !== clientId));
@@ -304,24 +384,26 @@ export default function TeamChatPage() {
   const sendFile = async (file: File, kind: ChatMessageType) => {
     if (!activeId) return;
     const clientId = uid();
+    const previewUrl = URL.createObjectURL(file);
     pushOptimistic({
       id: -Date.now(),
       threadId: activeId,
       senderId: meId,
       type: kind,
       content: null,
-      mediaUrl: URL.createObjectURL(file),
+      mediaUrl: previewUrl,
       mediaMime: file.type,
       mediaName: file.name,
       clientId,
       createdAt: new Date().toISOString(),
     });
-    setStaged(null);
     try {
-      await sendTeamMedia(activeId, file, kind, clientId);
+      reconcile(clientId, await sendTeamMedia(activeId, file, kind, clientId));
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to send file');
       setMessages((p) => p.filter((m) => m.clientId !== clientId));
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(previewUrl), 60_000);
     }
   };
 
@@ -348,7 +430,7 @@ export default function TeamChatPage() {
       createdAt: new Date().toISOString(),
     });
     try {
-      await sendTeamOrder(activeId, order, clientId);
+      reconcile(clientId, await sendTeamOrder(activeId, order, clientId));
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to share order');
       setMessages((p) => p.filter((m) => m.clientId !== clientId));
@@ -372,7 +454,7 @@ export default function TeamChatPage() {
       createdAt: new Date().toISOString(),
     });
     try {
-      await sendTeamChat(activeId, chat, clientId);
+      reconcile(clientId, await sendTeamChat(activeId, chat, clientId));
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to share chat');
       setMessages((p) => p.filter((m) => m.clientId !== clientId));
@@ -430,6 +512,9 @@ export default function TeamChatPage() {
 
   const onType = () => {
     if (active?.kind === 'dm' && active.otherUserId) {
+      const now = Date.now();
+      if (now - lastTypingEmit.current < 2000) return; // throttle: was every keystroke
+      lastTypingEmit.current = now;
       emit('dm.typing', { threadId: active.id, toUserId: active.otherUserId });
     }
   };
@@ -456,6 +541,8 @@ export default function TeamChatPage() {
         {(['chat', 'attendance'] as const).map((v) => (
           <button
             key={v}
+            role="tab"
+            aria-selected={view === v}
             onClick={() => setView(v)}
             className={cn(
               'px-4 py-2.5 text-sm rounded-t-lg -mb-px border-b-2',
@@ -608,7 +695,26 @@ export default function TeamChatPage() {
             </div>
 
             {/* messages */}
-            <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-1">
+            <div
+              ref={scrollRef}
+              onScroll={(e) => {
+                const el = e.currentTarget;
+                stickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+              }}
+              className="flex-1 overflow-y-auto p-4 space-y-1"
+            >
+              {!loadingMsgs && nextCursor && (
+                <div className="flex justify-center py-2">
+                  <button
+                    type="button"
+                    onClick={loadOlder}
+                    disabled={loadingOlder}
+                    className="text-xs font-semibold text-brand-700 hover:underline disabled:text-gray-400"
+                  >
+                    {loadingOlder ? 'Loading…' : 'Load older messages'}
+                  </button>
+                </div>
+              )}
               {loadingMsgs ? (
                 <div className="flex flex-col gap-3 py-2" role="status" aria-label="Loading">
                   {Array.from({ length: 6 }).map((_, i) => (
@@ -680,11 +786,18 @@ export default function TeamChatPage() {
                     onChange={(e) => {
                       setText(e.target.value);
                       onType();
+                      const el = e.target;
+                      el.style.height = 'auto';
+                      el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
                     }}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
+                      // Phones: Enter = new line (the send button sends).
+                      // Keyboards: Enter sends, Shift+Enter = new line.
+                      const touch = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+                      if (e.key === 'Enter' && !e.shiftKey && !touch && !e.nativeEvent.isComposing) {
                         e.preventDefault();
                         sendText();
+                        e.currentTarget.style.height = 'auto';
                       }
                     }}
                     onPaste={onComposerPaste}
@@ -770,7 +883,7 @@ export default function TeamChatPage() {
                     </button>
                   ) : (
                     <VoiceRecorder
-                      hidden={!!text.trim() || !!staged}
+                      hidden={!!text.trim()}
                       onComplete={(file) => sendFile(file, 'audio')}
                     />
                   )}
@@ -935,6 +1048,7 @@ function Bubble({
           <a
             href={mediaUrl(m.mediaUrl) ?? m.mediaUrl}
             target="_blank"
+            download={m.mediaName ?? undefined}
             rel="noopener noreferrer"
             className={cn('inline-flex items-center gap-2 underline', mine ? 'text-white' : 'text-blue-700')}
           >

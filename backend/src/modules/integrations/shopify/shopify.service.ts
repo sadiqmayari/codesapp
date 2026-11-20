@@ -1,3 +1,4 @@
+import { OrderAttributionService } from '../../../common/services/order-attribution.service';
 import { netOrderSql, salesFromRow, salesSelectSql } from '../../../common/utils/sales';
 import { phoneVariants } from '../../../common/utils/contact-phone';
 import {
@@ -452,6 +453,7 @@ export class ShopifyService implements OnModuleInit {
     private readonly orderIdempotency: OrderIdempotencyService,
     private readonly orderSync: ShopifyOrderSyncService,
     private readonly agentActivity: AgentActivityService,
+    private readonly attribution: OrderAttributionService,
     // WooCommerce: the order-tag workers (confirm/cancel/pending/undeliverable)
     // delegate here for a woo:// order so the tenant's WooCommerce order gets
     // an order note (+ cancel sets status). No DI cycle — WooCommerceService
@@ -4157,16 +4159,21 @@ export class ShopifyService implements OnModuleInit {
           shopify_order_gid: orderGid,
         },
       },
-      select: { id: true, order_name: true, shopify_store_id: true },
+      select: { id: true, order_name: true, shopify_store_id: true, manual_confirmed_at: true },
     });
     if (!order) throw new NotFoundException('Order not found.');
 
-    // Attribute the manual confirm to the agent (Agent Performance report).
-    // Automatic confirms (webhook/prepaid) call this without a userId → not logged.
-    void this.agentActivity.record(companyId, userId, 'order_confirmed', {
-      orderGid,
-      orderName: order.order_name,
-    });
+    // Attribute the manual confirm to the agent (Agent Performance report +
+    // commission ledger). Automatic confirms (webhook/prepaid) call this without
+    // a userId → not logged. Re-confirming an already-confirmed order is not a
+    // second confirmation (re-clicks used to inflate the count).
+    if (!order.manual_confirmed_at) {
+      void this.agentActivity.record(companyId, userId, 'order_confirmed', {
+        orderGid,
+        orderName: order.order_name,
+      });
+    }
+    void this.attribution.record(companyId, userId, 'confirmed', { gid: orderGid, name: order.order_name });
 
     await this.prisma.shopifyOrder.update({
       where: {

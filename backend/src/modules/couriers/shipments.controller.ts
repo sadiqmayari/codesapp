@@ -799,6 +799,31 @@ export class ShipmentsController {
    * MUST stay ABOVE `@Get(':id')` — a static route after `:id` is shadowed by
    * it (the segment gets parsed as the id and ParseIntPipe 400s the request).
    */
+  // ── Pack station (fulfillment / member / owner / admin). Static routes, ABOVE :id. ──
+  @Get('pack/lookup')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'fulfillment', 'member', 'agent')
+  packLookup(@CurrentUser() user: { companyId: number }, @Query('code') code: string) {
+    return this.shipments.packLookup(user.companyId, code ?? '');
+  }
+
+  @Get('pack/stats')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'fulfillment', 'member', 'agent')
+  packStats(@CurrentUser() user: { companyId: number; userId: number }) {
+    return this.shipments.packStats(user.companyId, user.userId);
+  }
+
+  @Post('pack')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'fulfillment', 'member', 'agent')
+  markPacked(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Body() body: { shipmentId?: number },
+  ) {
+    return this.shipments.markPacked(user.companyId, user.userId, Number(body?.shipmentId));
+  }
+
   @Get('lookup-by-tracking')
   lookupByTracking(
     @CurrentUser() user: { companyId: number },

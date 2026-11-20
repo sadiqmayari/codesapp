@@ -1053,3 +1053,29 @@ The old `/ad-report` had these defects; each is fixed by the Growth module (see 
 - **Symptom:** "Dhamaka existing" showed ROAS 0.68×, CPA Rs 4,641 while Meta reported 30 purchases yesterday; a Rs 4,987 copy of it had 1,154 orders in 30 days vs Meta's 2.
 - **Cause:** orders whose UTM carries the ad NAME were resolved through a name → id map that kept only the LAST ad seen; Sois has 25 names shared by 55 ads (copies inside the same campaign / ad set), so whole ads' orders landed on a paused or tiny copy.
 - **Fix:** name maps keep all ids; `GrowthFactsService.pickLive()` chooses the copy that was spending in the 7 days before the click. New ads tag ids (`{{ad.id}}`); Opportunities flags shared names. Full facts rebuild re-attributes history.
+
+## [Attendance] Every Sunday marked absent and deducted from salary (fixed 2026-11-21)
+- Cause: the nightly sweep created an `absent` row for every member with no record, every day; there was no weekly-off or holiday calendar, so payroll deducted each Sunday.
+- Fix: `companies/users.attendance_weekly_off` + `attendance_holidays`; the sweep and payroll only count scheduled work days (`schedule.ts dayKind`).
+
+## [Attendance] Forgotten check-out = full pay, 0 hours, only an admin could fix (fixed 2026-11-21)
+- Fix: worker auto-checkout (`auto-checkout.ts`), `checkout_source='auto'`, configurable payroll penalty, member "Fix my day" requests.
+
+## [Attendance] Night shifts could not check out after midnight (fixed 2026-11-21)
+- Cause: check-out looked up "today's" row and shift length was `max(0, end − start)` = 0 for 22:00–06:00.
+- Fix: check-out uses the member's open row; `shiftMinutes` wraps; `workDayFor` assigns small-hours punches to the previous day.
+
+## [Attendance] Office-network lock bypassable with a fake X-Forwarded-For (fixed 2026-11-21)
+- Cause: `trust proxy: true` makes `req.ip` the LEFT-most XFF entry, which the client controls; a `10.0.0.0/` entry also matched every IP.
+- Fix: `clientIp(req)` (right-most hop / verified Cloudflare) + stricter `ipInAllowlist`. Same fix applied to `SuperAdminIpGuard`.
+
+## [Team chat] One broadcast message caused ~N² requests (fixed 2026-11-21)
+- Cause: every recipient reloaded the thread list on `dm.message`, marked read, and every read fanned `dm.read` to every member, each of whom reloaded again; the server also ran N sequential upserts per send.
+- Fix: coalesced list reloads, other members' reads don't reload your list, server-side read fan-out throttle, batched membership insert + per-process memo.
+
+## [Team chat] Attachments downloaded as `.bin` (fixed 2026-11-21)
+- Cause: `MediaService.extFromMime` fell back to `bin` for docx/zip/txt.
+- Fix: `saveBuffer(…, originalName)` keeps the uploaded file's extension; links carry `download`.
+
+## [Commissions] Re-clicking "confirm" counted a second confirmation; reordered carts erased the earlier agent's credit (fixed 2026-11-21)
+- Fix: the `order_attributions` ledger (unique per order + kind); `markOrderConfirmed` writes agent_activity only on the first confirm; `reserve()` records the creator before reclaiming a stale fingerprint row.

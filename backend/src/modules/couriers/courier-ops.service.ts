@@ -1,3 +1,4 @@
+import { OrderAttributionService } from '../../common/services/order-attribution.service';
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MediaService } from '../../common/services/media.service';
@@ -33,6 +34,7 @@ export class CourierOpsService {
     private readonly registry: CourierRegistryService,
     private readonly media: MediaService,
     private readonly shopifyFulfillment: ShopifyFulfillmentClient,
+    private readonly attribution: OrderAttributionService,
   ) {}
 
   /**
@@ -123,6 +125,9 @@ export class CourierOpsService {
 
     // Free the order for re-booking.
     await this.prisma.shipment.delete({ where: { id: shipment.id } }).catch(() => undefined);
+    // A cancelled booking earns no booking/packing commission.
+    await this.attribution.remove(companyId, shipment.shopify_order_gid, 'booked');
+    await this.attribution.remove(companyId, shipment.shopify_order_gid, 'packed');
 
     this.logger.log(
       `Cancel booking shipment ${shipment.id} order ${shipment.shopify_order_name ?? shipment.shopify_order_gid}: courier=${cancelledAtCourier} unfulfilled=${unfulfilled}`,

@@ -31,7 +31,7 @@ export default function AttendanceTodayTile() {
 
   return (
     <Link
-      href="/team-chat"
+      href="/team-chat?view=attendance&tab=today"
       className="mb-4 block rounded-2xl border border-gray-200 bg-white p-4 hover:border-green-300 transition"
     >
       <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-gray-500">

@@ -737,6 +737,37 @@ ALTER TABLE companies ADD COLUMN attendance_checkin_window_minutes INT NULL; -- 
 ```
 `resolveUser`/`myToday`: `checkinOpensAt = shiftStart − 30min`, `checkinCutoff = shiftStart + window` (flexible/exempt → 00:00–23:59, no window). The check-in CTA shows only inside `[checkinOpensAt, checkinCutoff]`. The old absolute `attendance_checkin_cutoff` column is dormant/superseded.
 
+### Team module v4 (migration `20261122000000_team_v4`, Nov-2026)
+Auto-checkout, work calendar, payroll runs + adjustments, commissions ledger + plans, pack station. Additive; auto-applies on container start.
+```sql
+ALTER TABLE companies ADD COLUMN attendance_auto_checkout JSON NULL,   -- {mode:'off'|'shift_end'|'max_hours', afterEndMin, maxHours}
+                      ADD COLUMN attendance_weekly_off JSON NULL,      -- [0..6], 0 = Sunday; NULL = [0]
+                      ADD COLUMN attendance_annual_paid_leave INT NULL;
+ALTER TABLE users ADD COLUMN attendance_required_minutes INT NULL,     -- flexible daily target (NULL = 480)
+                  ADD COLUMN attendance_weekly_off JSON NULL, ADD COLUMN joined_on DATE NULL,
+                  ADD COLUMN left_on DATE NULL, ADD COLUMN annual_paid_leave INT NULL;
+ALTER TABLE attendance_records ADD COLUMN checkout_source VARCHAR(8) NULL;   -- self | auto | admin
+ALTER TABLE attendance_leave_requests ADD COLUMN kind VARCHAR(16) NOT NULL DEFAULT 'leave', -- leave | correction
+  ADD COLUMN paid BOOLEAN NOT NULL DEFAULT true, ADD COLUMN leave_type VARCHAR(16) NULL,
+  ADD COLUMN req_check_in VARCHAR(5) NULL, ADD COLUMN req_check_out VARCHAR(5) NULL;
+ALTER TABLE shipments ADD COLUMN packed_by_user_id INT NULL, ADD COLUMN packed_at DATETIME(3) NULL,
+  ADD INDEX shipments_company_id_packed_at_idx (company_id, packed_at);
+CREATE TABLE attendance_holidays (id, company_id, date DATE, name VARCHAR(120), created_at, UNIQUE (company_id, date));
+CREATE TABLE payroll_runs (id, company_id, month VARCHAR(7), status VARCHAR(12) DEFAULT 'draft', -- draft|approved|paid
+  policy_snapshot JSON, totals JSON, created_by_user_id, approved_by_user_id, approved_at, paid_by_user_id, paid_at,
+  created_at, updated_at, UNIQUE (company_id, month));
+CREATE TABLE payroll_run_lines (id, run_id, company_id, user_id, snapshot JSON, gross, deductions, commission, net DECIMAL(14,2),
+  UNIQUE (run_id, user_id), INDEX (company_id, user_id));
+CREATE TABLE payroll_adjustments (id, company_id, user_id, month VARCHAR(7), kind VARCHAR(16), -- bonus|reimbursement|deduction|advance|loan
+  label VARCHAR(120), amount DECIMAL(14,2), note, created_by_user_id, created_at, INDEX (company_id, month));
+CREATE TABLE order_attributions (id, company_id, order_gid VARCHAR(255), order_name, kind VARCHAR(24), -- created|confirmed|packed|booked|dispatched|returned_received
+  user_id, source VARCHAR(24), value DECIMAL(14,2), at DATETIME(3), created_at,
+  UNIQUE (company_id, order_gid, kind), INDEX (company_id, kind, at), INDEX (company_id, user_id, kind));
+CREATE TABLE commission_plans (id, company_id, name VARCHAR(120), active BOOLEAN, metric VARCHAR(32),
+  config JSON, applies_to JSON, created_by_user_id, created_at, updated_at, INDEX (company_id, active));
+```
+`payroll_run_lines.snapshot` = the full `computePayslip()` output (what the payslip shows). `commission_plans.config` is resolved by `resolvePlanConfig()`; `applies_to` = `{roles[], userIds[]}`.
+
 ### Inventory push status (migration `20261108000000_inventory_push_status`, Nov-2026)
 Per-variant Shopify push outcome, surfaced on the board. Additive, nullable. Auto-applies on container start.
 ```sql

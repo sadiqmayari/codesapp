@@ -94,7 +94,7 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
       { id: 'team', label: 'Team', icon: Users, access: 'manage', keywords: 'members roles invite suspend reassign delete agents' },
       { id: 'tracking', label: 'Tracking page', icon: MapPin, access: 'manage', keywords: 'public tracking link handle' },
       { id: 'competition', label: 'Competition', icon: Trophy, access: 'manage', keywords: 'leaderboard points badges speed bonus gamification' },
-      { id: 'attendance', label: 'Attendance & payroll', icon: Clock, access: 'manage', keywords: 'attendance payroll shifts leave salary check-in', href: '/team-chat?view=attendance' },
+      { id: 'attendance', label: 'Attendance & payroll', icon: Clock, access: 'manage', keywords: 'attendance payroll shifts leave salary check-in commission auto-checkout holidays', href: '/team-chat?view=attendance&tab=settings' },
       { id: 'billing', label: 'Billing & plan', icon: CreditCard, access: 'manage', keywords: 'billing invoices plan subscription usage', href: '/billing' },
     ],
   },

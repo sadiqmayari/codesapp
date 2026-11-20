@@ -26,9 +26,7 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(InboxGateway.name);
 
   // Per-process presence registry: companyId -> (userId -> open connection count).
-  // Used for the Team-chat online dots. NOTE: per-process — accurate on the
-  // single prod app container; a multi-container scale-out would need a
-  // Redis-backed online-set (message rooms already fan out via the Redis adapter).
+  // getOnlineUserIds() unions it with fetchSockets() across nodes (Redis adapter).
   private readonly online = new Map<number, Map<number, number>>();
 
   // Per-company debounce timers for the coalesced `orders.changed` ping.
@@ -100,11 +98,15 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.server.to(this.companyRoom(companyId)).emit('agent.offline', { userId });
       this.logger.log(`Socket ${client.id} disconnected (userId=${userId})`);
       if (this.trackDisconnect(companyId, userId)) {
-        this.emitToCompany(companyId, 'presence.update', { userId, online: false });
-        // Record last-seen only when the user's LAST socket closes.
-        this.prisma.user
-          .update({ where: { id: userId }, data: { last_seen_at: new Date() } })
-          .catch(() => undefined);
+        // Last socket on THIS node — only offline if no other node has one.
+        void this.stillOnline(userId).then((still) => {
+          if (still) return;
+          this.emitToCompany(companyId, 'presence.update', { userId, online: false });
+          // Record last-seen only when the user's LAST socket closes.
+          this.prisma.user
+            .update({ where: { id: userId }, data: { last_seen_at: new Date() } })
+            .catch(() => undefined);
+        });
       }
     }
   }
@@ -135,9 +137,39 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return false;
   }
 
-  /** Snapshot of currently-online user ids for a company (Team-chat roster). */
-  getOnlineUserIds(companyId: number): number[] {
-    return Array.from(this.online.get(companyId)?.keys() ?? []);
+  /** Currently-online user ids for a company (Team-chat roster). Asks every
+   *  node through the Redis adapter (fetchSockets), so it stays right with more
+   *  than one web container; falls back to this process's own registry. */
+  async getOnlineUserIds(companyId: number): Promise<number[]> {
+    const local = Array.from(this.online.get(companyId)?.keys() ?? []);
+    if (!this.server) return local;
+    try {
+      const sockets = await Promise.race([
+        this.server.in(this.companyRoom(companyId)).fetchSockets(),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500)),
+      ]);
+      const ids = new Set<number>(local);
+      for (const so of sockets) {
+        const uid = Number((so.data as { userId?: number })?.userId);
+        if (uid) ids.add(uid);
+      }
+      return Array.from(ids);
+    } catch {
+      return local;
+    }
+  }
+
+  /** True when the user still has a socket on ANY node. */
+  private async stillOnline(userId: number): Promise<boolean> {
+    try {
+      const sockets = await Promise.race([
+        this.server.in(this.userRoom(userId)).fetchSockets(),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500)),
+      ]);
+      return sockets.length > 0;
+    } catch {
+      return false;
+    }
   }
 
   /** Emit an event to a set of specific users' rooms (Team-chat DM/broadcast delivery). */
@@ -157,16 +189,35 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
   /** Team-chat typing indicator — routed to the one recipient's room (DM). */
   @UseGuards(WsJwtGuard)
   @SubscribeMessage('dm.typing')
-  onDmTyping(
+  async onDmTyping(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: { threadId: number; toUserId: number },
-  ): void {
-    if (!body?.toUserId) return;
-    this.server.to(this.userRoom(body.toUserId)).emit('dm.typing', {
-      threadId: body.threadId,
+  ): Promise<void> {
+    const to = Number(body?.toUserId);
+    const threadId = Number(body?.threadId);
+    if (!to || !threadId) return;
+    // Only forward to a member of the same thread (it used to forward to any
+    // user id, including other tenants'). Membership is memoised per process.
+    const key = `${threadId}:${client.data.userId}:${to}`;
+    let ok = this.typingMemo.get(key);
+    if (ok === undefined) {
+      const rows = await this.prisma.internalThreadMember
+        .findMany({
+          where: { thread_id: threadId, company_id: client.data.companyId, user_id: { in: [client.data.userId, to] } },
+          select: { user_id: true },
+        })
+        .catch(() => []);
+      ok = rows.length === 2;
+      if (this.typingMemo.size > 5000) this.typingMemo.clear();
+      this.typingMemo.set(key, ok);
+    }
+    if (!ok) return;
+    this.server.to(this.userRoom(to)).emit('dm.typing', {
+      threadId,
       userId: client.data.userId,
     });
   }
+  private typingMemo = new Map<string, boolean>();
 
   @UseGuards(WsJwtGuard)
   @SubscribeMessage('typing.start')

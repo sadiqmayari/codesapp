@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsInt,
@@ -17,12 +18,12 @@ export class UpdateMemberDto {
   // "HH:MM" per-user shift override, or empty string to clear (→ company default).
   @IsOptional()
   @IsString()
-  @Matches(/^(\d{2}:\d{2})?$/, { message: 'workStartTime must be HH:MM or empty' })
+  @Matches(/^(([01]\d|2[0-3]):[0-5]\d)?$/, { message: 'workStartTime must be HH:MM or empty' })
   workStartTime?: string;
 
   @IsOptional()
   @IsString()
-  @Matches(/^(\d{2}:\d{2})?$/, { message: 'workEndTime must be HH:MM or empty' })
+  @Matches(/^(([01]\d|2[0-3]):[0-5]\d)?$/, { message: 'workEndTime must be HH:MM or empty' })
   workEndTime?: string;
 
   // Per-user grace minutes override (null clears → company default).
@@ -60,4 +61,36 @@ export class UpdateMemberDto {
   @ValidateNested({ each: true })
   @Type(() => AllowanceDto)
   allowances?: AllowanceDto[];
+
+  // ── Team v4 ──
+  // Flexible staff daily target minutes (null clears → 480).
+  @IsOptional()
+  @IsInt()
+  @Min(30)
+  @Max(1440)
+  requiredMinutes?: number | null;
+
+  // Per-user weekly off days (null clears → company default).
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(7)
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  @Max(6, { each: true })
+  weeklyOff?: number[] | null;
+
+  // YYYY-MM-DD or "" to clear.
+  @IsOptional()
+  @IsString()
+  joinedOn?: string;
+
+  @IsOptional()
+  @IsString()
+  leftOn?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(365)
+  annualPaidLeave?: number | null;
 }

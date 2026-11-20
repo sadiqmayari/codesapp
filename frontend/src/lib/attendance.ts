@@ -3,27 +3,42 @@ import { getActiveTimeZone } from '@/lib/utils';
 
 export type AttendanceStatus = 'present' | 'absent' | 'leave' | 'half_day' | 'holiday';
 
-export type LateMethod =
-  | 'none'
-  | 'n_lates_absent'
-  | 'fixed_per_late'
-  | 'per_minute'
-  | 'half_day';
+export type LateMethod = 'none' | 'n_lates_absent' | 'fixed_per_late' | 'per_minute' | 'half_day';
 export type OvertimeMethod = 'off' | 'hourly_multiplier' | 'flat_per_hour' | 'per_minute';
+export type DayRateBasis = 'calendar' | 'fixed' | 'thirty';
+export type AutoCheckoutPenalty = 'none' | 'half_day' | 'absent';
+export type AutoCheckoutMode = 'off' | 'shift_end' | 'max_hours';
 
 export const LATE_METHOD_LABELS: Record<LateMethod, string> = {
   none: 'No deduction',
-  n_lates_absent: 'N lates = 1 absent',
-  fixed_per_late: 'Fixed Rs per late',
-  per_minute: 'Per-minute late',
-  half_day: 'Half-day after X min',
+  n_lates_absent: 'Every N lates = 1 day cut',
+  fixed_per_late: 'Fixed amount per late',
+  per_minute: 'Per minute late',
+  half_day: 'Half day when very late',
 };
 export const OVERTIME_METHOD_LABELS: Record<OvertimeMethod, string> = {
-  off: 'Off (no overtime)',
+  off: 'No overtime pay',
   hourly_multiplier: 'Hourly rate × multiplier',
-  flat_per_hour: 'Flat Rs per overtime hour',
-  per_minute: 'Per-minute at normal rate',
+  flat_per_hour: 'Flat amount per hour',
+  per_minute: 'Per minute at normal rate',
 };
+export const DAY_RATE_LABELS: Record<DayRateBasis, string> = {
+  calendar: "Salary ÷ the month's work days",
+  fixed: 'Salary ÷ a fixed number of days',
+  thirty: 'Salary ÷ 30',
+};
+export const AUTO_PENALTY_LABELS: Record<AutoCheckoutPenalty, string> = {
+  none: 'No penalty',
+  half_day: 'Count as half day',
+  absent: 'Count as absent',
+};
+export const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+export interface StatutoryDeduction {
+  label: string;
+  type: 'fixed' | 'percent';
+  value: number;
+}
 
 export interface PayrollPolicy {
   lateMethod: LateMethod;
@@ -35,6 +50,18 @@ export interface PayrollPolicy {
   overtimeFlatRate: number;
   minOvertimeMinutes: number;
   workingDaysPerMonth: number;
+  dayRateBasis: DayRateBasis;
+  otOnlyAfterShiftEnd: boolean;
+  otMonthlyCapMin: number;
+  autoCheckoutPenalty: AutoCheckoutPenalty;
+  statutory: StatutoryDeduction[];
+  currency: string;
+}
+
+export interface AutoCheckoutPolicy {
+  mode: AutoCheckoutMode;
+  afterEndMin: number;
+  maxHours: number;
 }
 
 export interface Allowance {
@@ -42,34 +69,96 @@ export interface Allowance {
   amount: number;
 }
 
-export interface PayrollRow {
+export interface PayslipLineItem {
+  label: string;
+  amount: number;
+  kind: 'earning' | 'deduction';
+  detail?: string;
+}
+
+export interface Payslip {
   userId: number;
   name: string;
   role: string;
-  exemptLate: boolean;
+  flexible: boolean;
+  month: string;
+  periodFrom: string;
+  periodTo: string;
+  prorated: boolean;
   salary: number;
+  base: number;
   allowances: Allowance[];
   allowanceTotal: number;
+  scheduledDays: number;
   present: number;
   absent: number;
   halfDay: number;
-  leave: number;
+  paidLeave: number;
+  unpaidLeave: number;
+  offDays: number;
+  offDaysWorked: number;
+  unmarkedDays: number;
+  autoClosed: number;
   lateCount: number;
   lateMinutes: number;
+  workedMinutes: number;
   overtimeMinutes: number;
+  dayRate: number;
   overtimePay: number;
+  commission: number;
+  commissionLines: { planId: number; planName: string; units: number; base: number; amount: number }[];
   absenceDeduction: number;
-  lateDeduction: number;
+  unpaidLeaveDeduction: number;
   halfDayDeduction: number;
+  lateDeduction: number;
+  autoCheckoutDeduction: number;
+  statutoryDeduction: number;
+  adjustmentsPlus: number;
+  adjustmentsMinus: number;
+  gross: number;
+  deductions: number;
   netPayable: number;
+  lines: PayslipLineItem[];
+}
+
+export interface PayrollRun {
+  id: number;
+  month: string;
+  status: 'draft' | 'approved' | 'paid';
+  approvedAt: string | null;
+  paidAt: string | null;
+  approvedByUserId: number | null;
 }
 
 export interface PayrollResult {
   month: string;
   from: string;
   to: string;
+  locked: boolean;
   policy: PayrollPolicy;
-  rows: PayrollRow[];
+  run: PayrollRun | null;
+  rows: Payslip[];
+  totals: { people: number; gross: number; deductions: number; commission: number; overtime: number; net: number };
+}
+
+export type AdjustmentKind = 'bonus' | 'reimbursement' | 'deduction' | 'advance' | 'loan';
+export const ADJUSTMENT_LABELS: Record<AdjustmentKind, string> = {
+  bonus: 'Bonus',
+  reimbursement: 'Reimbursement',
+  deduction: 'Deduction',
+  advance: 'Advance (recovered)',
+  loan: 'Loan instalment',
+};
+export interface Adjustment {
+  id: number;
+  userId: number;
+  month: string;
+  kind: AdjustmentKind;
+  label: string;
+  amount: number;
+  note: string | null;
+  additive: boolean;
+  createdAt: string;
 }
 
 export interface AttendanceCell {
@@ -79,6 +168,7 @@ export interface AttendanceCell {
   checkOutAt: string | null; // ISO
   isLate: boolean;
   missedCheckout: boolean;
+  checkoutSource: 'self' | 'auto' | 'admin' | null;
   workedMinutes: number | null;
   note: string | null;
   overridden: boolean;
@@ -86,14 +176,20 @@ export interface AttendanceCell {
 
 export interface MyToday {
   date: string;
-  workStart: string; // "HH:MM"
+  dayKind: 'work' | 'weekly_off' | 'holiday';
+  holidayName: string | null;
+  workStart: string;
   workEnd: string | null;
+  effectiveEnd: string;
   graceMinutes: number;
-  checkinOpensAt: string; // "HH:MM" — check-in CTA opens (30m before shift start)
-  checkinCutoff: string; // "HH:MM" — self check-in CTA only offered until this
-  checkoutOpensAt: string; // "HH:MM" — check-out CTA opens (shift end / start+8h)
+  checkinOpensAt: string;
+  checkinCutoff: string;
+  checkoutOpensAt: string;
   exemptLate: boolean;
-  excluded: boolean; // true for the owner (not tracked)
+  flexible: boolean;
+  requiredMinutes: number | null;
+  autoCheckout: AutoCheckoutPolicy;
+  excluded: boolean;
   record: AttendanceCell | null;
 }
 
@@ -101,7 +197,7 @@ export interface AttendanceMember {
   userId: number;
   name: string;
   role: string;
-  workStart: string | null; // override (null = company default)
+  workStart: string | null;
   workEnd: string | null;
   graceMinutes: number | null;
   requireOfficeIp: boolean;
@@ -109,18 +205,28 @@ export interface AttendanceMember {
   effectiveEnd: string | null;
   effectiveGrace: number;
   exemptLate: boolean;
+  requiredMinutes: number | null;
+  weeklyOff: number[] | null;
+  effectiveWeeklyOff: number[];
+  joinedOn: string | null;
+  leftOn: string | null;
+  annualPaidLeave: number | null;
   salaryAmount: number | null;
   overtimeRate: number | null;
   allowances: Allowance[];
 }
 
 export interface AttendanceSettings {
+  timezone: string | null;
   workStartTime: string;
   workEndTime: string | null;
   graceMinutes: number;
   officeIps: string;
-  checkinWindowMinutes: number; // minutes after each user's shift start
+  checkinWindowMinutes: number;
   payrollPolicy: PayrollPolicy;
+  autoCheckout: AutoCheckoutPolicy;
+  weeklyOff: number[];
+  annualPaidLeave: number;
   yourIp: string;
 }
 
@@ -133,13 +239,52 @@ export interface TodaySummary {
   notCheckedIn: number;
 }
 
+export type BoardLane = 'in' | 'late' | 'out' | 'leave' | 'off' | 'absent' | 'not_in';
+export interface TodayPerson {
+  userId: number;
+  name: string;
+  role: string;
+  flexible: boolean;
+  start: string;
+  end: string | null;
+  requiredMinutes: number | null;
+  lane: BoardLane;
+  checkInAt: string | null;
+  checkOutAt: string | null;
+  status: AttendanceStatus | null;
+  halfDay: boolean;
+  lateByMin: number;
+  autoClosedYesterday: boolean;
+}
+export interface TodayBoard {
+  date: string;
+  now: string;
+  holidayName: string | null;
+  checkinWindow: number;
+  people: TodayPerson[];
+}
+
+export type LeaveType = 'casual' | 'sick' | 'annual' | 'unpaid' | 'other';
+export const LEAVE_TYPE_LABELS: Record<LeaveType, string> = {
+  casual: 'Casual',
+  sick: 'Sick',
+  annual: 'Annual',
+  unpaid: 'Unpaid',
+  other: 'Other',
+};
+
 export interface LeaveRequest {
   id: number;
   userId: number;
   userName?: string;
   userRole?: string;
+  kind: 'leave' | 'correction';
+  leaveType: LeaveType | null;
+  paid: boolean;
   fromDate: string;
   toDate: string;
+  reqCheckIn: string | null;
+  reqCheckOut: string | null;
   reason: string | null;
   status: 'pending' | 'approved' | 'rejected';
   reviewNote: string | null;
@@ -147,17 +292,25 @@ export interface LeaveRequest {
   createdAt: string;
 }
 
+export interface MyLeave {
+  requests: LeaveRequest[];
+  balance: { year: string; quota: number; used: number; left: number } | null;
+}
+
 export interface DailyGridMember {
   userId: number;
   name: string;
   role: string;
   cells: Record<string, AttendanceCell>;
+  offDays: string[];
 }
 
 export interface AttendanceReport {
   from: string;
   to: string;
+  today: string;
   dates: string[];
+  holidays: string[];
   members: DailyGridMember[];
 }
 
@@ -165,6 +318,8 @@ export interface MonthlySummaryRow {
   userId: number;
   name: string;
   role: string;
+  flexible: boolean;
+  scheduledDays: number;
   present: number;
   absent: number;
   leave: number;
@@ -172,6 +327,7 @@ export interface MonthlySummaryRow {
   holiday: number;
   late: number;
   earlyLeaves: number;
+  autoClosed: number;
   totalMinutes: number;
   expectedMinutes: number;
   overtimeMinutes: number;
@@ -185,6 +341,19 @@ export interface MonthlySummary {
   rows: MonthlySummaryRow[];
 }
 
+export interface MyHistory {
+  from: string;
+  to: string;
+  offDays: string[];
+  rows: AttendanceCell[];
+}
+
+export interface Holiday {
+  id: number;
+  date: string;
+  name: string;
+}
+
 export interface OverridePayload {
   status?: AttendanceStatus;
   checkIn?: string; // "HH:MM" or "" to clear
@@ -193,11 +362,11 @@ export interface OverridePayload {
 }
 
 export const STATUS_META: Record<AttendanceStatus, { label: string; cls: string }> = {
-  present: { label: 'Present', cls: 'bg-green-100 text-green-700' },
-  absent: { label: 'Absent', cls: 'bg-red-100 text-red-700' },
-  leave: { label: 'Leave', cls: 'bg-blue-100 text-blue-700' },
-  half_day: { label: 'Half-day', cls: 'bg-purple-100 text-purple-700' },
-  holiday: { label: 'Holiday', cls: 'bg-gray-100 text-gray-500' },
+  present: { label: 'Present', cls: 'bg-emerald-50 text-emerald-700' },
+  absent: { label: 'Absent', cls: 'bg-red-50 text-red-700' },
+  leave: { label: 'Leave', cls: 'bg-sky-50 text-sky-700' },
+  half_day: { label: 'Half day', cls: 'bg-violet-50 text-violet-700' },
+  holiday: { label: 'Holiday', cls: 'bg-gray-100 text-gray-600' },
 };
 
 function qs(params: Record<string, string | undefined>): string {
@@ -220,21 +389,35 @@ export const checkOut = async () => {
   return r;
 };
 export const getMyHistory = (params: { from?: string; to?: string }) =>
-  apiFetch<AttendanceCell[]>(`/attendance/me${qs(params)}`);
+  apiFetch<MyHistory>(`/attendance/me${qs(params)}`);
+export const getMyPayslips = () =>
+  apiFetch<{ currency: string; payslips: { run: PayrollRun; slip: Payslip }[] }>('/attendance/me/payslips');
 
 // ── admin ──
 export const getReport = (params: { from?: string; to?: string }) =>
   apiFetch<AttendanceReport>(`/attendance/report${qs(params)}`);
-export const getSummary = (month: string) =>
-  apiFetch<MonthlySummary>(`/attendance/summary${qs({ month })}`);
+export const getSummary = (month: string) => apiFetch<MonthlySummary>(`/attendance/summary${qs({ month })}`);
 export const overrideAttendance = (userId: number, date: string, body: OverridePayload) =>
   apiFetch<AttendanceCell>(`/attendance/${userId}/${date}`, { method: 'PATCH', body });
 export const getTodaySummary = () => apiFetch<TodaySummary>('/attendance/today-summary');
-export const getPayroll = (month: string) =>
-  apiFetch<PayrollResult>(`/attendance/payroll${qs({ month })}`);
+export const getTodayBoard = () => apiFetch<TodayBoard>('/attendance/today-board');
 
-export const getAttendanceSettings = () =>
-  apiFetch<AttendanceSettings>('/attendance/settings');
+// ── payroll ──
+export const getPayroll = (month: string) => apiFetch<PayrollResult>(`/attendance/payroll${qs({ month })}`);
+export const approvePayroll = (month: string) =>
+  apiFetch<PayrollResult>(`/attendance/payroll/${month}/approve`, { method: 'POST' });
+export const markPayrollPaid = (month: string) =>
+  apiFetch<PayrollResult>(`/attendance/payroll/${month}/paid`, { method: 'POST' });
+export const reopenPayroll = (month: string) =>
+  apiFetch<PayrollResult>(`/attendance/payroll/${month}/reopen`, { method: 'POST' });
+export const getAdjustments = (month: string) => apiFetch<Adjustment[]>(`/attendance/adjustments${qs({ month })}`);
+export const addAdjustment = (body: { userId: number; month: string; kind: AdjustmentKind; label: string; amount: number; note?: string }) =>
+  apiFetch<{ id: number }>('/attendance/adjustments', { method: 'POST', body });
+export const deleteAdjustment = (id: number) =>
+  apiFetch<{ ok: true }>(`/attendance/adjustments/${id}`, { method: 'DELETE' });
+
+// ── settings + calendar ──
+export const getAttendanceSettings = () => apiFetch<AttendanceSettings>('/attendance/settings');
 export const setAttendanceSettings = (body: {
   workStartTime?: string;
   workEndTime?: string;
@@ -242,82 +425,125 @@ export const setAttendanceSettings = (body: {
   officeIps?: string;
   checkinWindowMinutes?: number;
   payrollPolicy?: Partial<PayrollPolicy>;
+  autoCheckout?: Partial<AutoCheckoutPolicy>;
+  weeklyOff?: number[];
+  annualPaidLeave?: number | null;
 }) => apiFetch<AttendanceSettings>('/attendance/settings', { method: 'PATCH', body });
+export const getHolidays = (year?: string) => apiFetch<Holiday[]>(`/attendance/holidays${qs({ year })}`);
+export const addHoliday = (body: { date: string; name: string }) =>
+  apiFetch<Holiday>('/attendance/holidays', { method: 'POST', body });
+export const deleteHoliday = (id: number) => apiFetch<{ ok: true }>(`/attendance/holidays/${id}`, { method: 'DELETE' });
 
 // ── per-member config ──
+export interface MemberPatch {
+  workStartTime?: string;
+  workEndTime?: string;
+  graceMinutes?: number | null;
+  requireOfficeIp?: boolean;
+  exemptLate?: boolean;
+  requiredMinutes?: number | null;
+  weeklyOff?: number[] | null;
+  joinedOn?: string;
+  leftOn?: string;
+  annualPaidLeave?: number | null;
+  salaryAmount?: number | null;
+  overtimeRate?: number | null;
+  allowances?: Allowance[];
+}
 export const getMembers = () => apiFetch<AttendanceMember[]>('/attendance/members');
-export const updateMember = (
-  userId: number,
-  body: {
-    workStartTime?: string;
-    workEndTime?: string;
-    graceMinutes?: number | null;
-    requireOfficeIp?: boolean;
-    exemptLate?: boolean;
-    salaryAmount?: number | null;
-    overtimeRate?: number | null;
-    allowances?: Allowance[];
-  },
-) => apiFetch<{ ok: true }>(`/attendance/members/${userId}`, { method: 'PATCH', body });
+export const updateMember = (userId: number, body: MemberPatch) =>
+  apiFetch<{ ok: true }>(`/attendance/members/${userId}`, { method: 'PATCH', body });
 
-// ── leave requests ──
-export const requestLeave = (body: { fromDate: string; toDate: string; reason?: string }) =>
+// ── leave + correction requests ──
+export const requestLeave = (body: { fromDate: string; toDate: string; reason?: string; leaveType?: LeaveType }) =>
   apiFetch<LeaveRequest>('/attendance/leave', { method: 'POST', body });
-export const getMyLeave = () => apiFetch<LeaveRequest[]>('/attendance/leave/mine');
-export const getLeaveRequests = (status?: string) =>
-  apiFetch<LeaveRequest[]>(`/attendance/leave${qs({ status })}`);
-export const reviewLeave = (
-  id: number,
-  body: { status: 'approved' | 'rejected'; reviewNote?: string },
-) => apiFetch<LeaveRequest>(`/attendance/leave/${id}`, { method: 'PATCH', body });
+export const requestCorrection = (body: { date: string; checkIn?: string; checkOut?: string; reason?: string }) =>
+  apiFetch<LeaveRequest>('/attendance/corrections', { method: 'POST', body });
+export const cancelMyRequest = (id: number) =>
+  apiFetch<{ ok: true }>(`/attendance/leave/mine/${id}`, { method: 'DELETE' });
+export const getMyLeave = () => apiFetch<MyLeave>('/attendance/leave/mine');
+export const getLeaveRequests = (status?: string) => apiFetch<LeaveRequest[]>(`/attendance/leave${qs({ status })}`);
+export const reviewLeave = (id: number, body: { status: 'approved' | 'rejected'; reviewNote?: string }) =>
+  apiFetch<LeaveRequest>(`/attendance/leave/${id}`, { method: 'PATCH', body });
 
-/** Download the attendance report as CSV (auth header attached by axios). */
-export async function downloadAttendanceCsv(params: { from?: string; to?: string }) {
-  const res = await api.get('/attendance/report/export', { params, responseType: 'blob' });
+async function downloadBlob(path: string, params: Record<string, string | undefined>, filename: string) {
+  const res = await api.get(path, { params, responseType: 'blob' });
   const url = URL.createObjectURL(res.data as Blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'attendance.csv';
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+export const downloadAttendanceCsv = (params: { from?: string; to?: string }) =>
+  downloadBlob('/attendance/report/export', params, `attendance-${params.from ?? ''}-to-${params.to ?? ''}.csv`);
+export const downloadPayrollCsv = (month: string) =>
+  downloadBlob('/attendance/payroll/export', { month }, `payroll-${month}.csv`);
 
 // ── helpers ──
+const clockFmt = () => {
+  try {
+    return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', timeZone: getActiveTimeZone() });
+  } catch {
+    return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+};
+
+/** Clock time of an instant on the TENANT clock (never the browser's). */
 export function fmtClock(iso: string | null): string {
   if (!iso) return '—';
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return clockFmt().format(new Date(iso));
 }
 
-export function fmtHours(minutes: number | null): string {
-  if (minutes == null) return '—';
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return `${h}h ${String(m).padStart(2, '0')}m`;
-}
-
-/** Current tenant-local wall-clock time as "HH:MM" (24h), using the company
- *  timezone set on AuthProvider; falls back to the browser clock. */
-export function tenantNowHHMM(): string {
-  const tz = getActiveTimeZone();
+/** "HH:MM" 24h of an instant on the tenant clock — for pre-filling time inputs. */
+export function tenantHHMM(iso: string | null): string {
+  if (!iso) return '';
   try {
     return new Intl.DateTimeFormat('en-GB', {
-      timeZone: tz,
+      timeZone: getActiveTimeZone(),
       hour: '2-digit',
       minute: '2-digit',
       hourCycle: 'h23',
-    }).format(new Date());
+    }).format(new Date(iso));
   } catch {
-    const d = new Date();
+    const d = new Date(iso);
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   }
 }
 
+export function fmtHours(minutes: number | null | undefined): string {
+  if (minutes == null) return '—';
+  const m = Math.max(0, Math.round(minutes));
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+}
+
+/** Current tenant-local wall-clock "HH:MM" (24h). */
+export function tenantNowHHMM(): string {
+  return tenantHHMM(new Date().toISOString());
+}
+
+export function toMin(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+export function fmtMoney(n: number | null | undefined, currency = 'Rs'): string {
+  if (n == null || !Number.isFinite(n)) return '—';
+  return `${currency} ${Math.round(n).toLocaleString('en-US')}`;
+}
+
+/** "Short weekday, 12 Nov" for a bare YYYY-MM-DD. */
+export function dayShort(ymd: string): string {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+}
+
 // ── cross-component sync signal ──────────────────────────────────────────────
-// Fired after a check-in/out so BOTH the announcement bar and the panel re-load
-// their own `myToday`. Kills the "bar still shows after I checked in" bug.
+// Fired after a check-in/out so the navbar chip, the reminder bar and the panel
+// all re-load their own `myToday`.
 const ATTENDANCE_EVENT = 'attendance:changed';
 export function emitAttendanceChanged() {
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(ATTENDANCE_EVENT));
@@ -326,34 +552,4 @@ export function onAttendanceChanged(fn: () => void): () => void {
   if (typeof window === 'undefined') return () => undefined;
   window.addEventListener(ATTENDANCE_EVENT, fn);
   return () => window.removeEventListener(ATTENDANCE_EVENT, fn);
-}
-
-/** Download the monthly payroll as CSV. */
-export function downloadPayrollCsv(result: PayrollResult) {
-  const esc = (v: unknown) => {
-    const s = v === null || v === undefined ? '' : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const header = [
-    'Member', 'Role', 'Flexible', 'Base salary', 'Allowances', 'Overtime pay',
-    'Absence deduction', 'Late deduction', 'Half-day deduction', 'Net payable',
-  ];
-  const lines = [header.map(esc).join(',')];
-  for (const r of result.rows) {
-    lines.push(
-      [
-        r.name, r.role, r.exemptLate ? 'yes' : '', r.salary, r.allowanceTotal,
-        r.overtimePay, r.absenceDeduction, r.lateDeduction, r.halfDayDeduction, r.netPayable,
-      ].map(esc).join(','),
-    );
-  }
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `payroll-${result.month}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }

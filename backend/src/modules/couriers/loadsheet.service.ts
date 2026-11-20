@@ -1,3 +1,4 @@
+import { OrderAttributionService } from '../../common/services/order-attribution.service';
 import {
   BadRequestException,
   Injectable,
@@ -68,6 +69,7 @@ export class LoadsheetService implements OnModuleInit {
     private readonly registry: CourierRegistryService,
     private readonly media: MediaService,
     private readonly shopify: ShopifyFulfillmentClient,
+    private readonly attribution: OrderAttributionService,
   ) {}
 
   onModuleInit(): void {
@@ -287,6 +289,7 @@ export class LoadsheetService implements OnModuleInit {
     // list is an immutable record (settlement later marks COD paid, which would
     // otherwise flip "Pending" -> "Online" on a reprint). Best-effort.
     await this.stampDispatchPayments(companyId, batch.id);
+    await this.recordDispatch(companyId, batch.id, createdByUserId);
     // Enqueue AFTER commit so the worker sees the pinned rows.
     await this.jobQueue.enqueue(
       COURIER_LOADSHEET_QUEUE,
@@ -304,6 +307,22 @@ export class LoadsheetService implements OnModuleInit {
    * block loadsheet generation; those rows simply fall back to the live
    * classifier in buildDispatchList.
    */
+  /** Commission ledger: credit the dispatcher for every parcel on the batch. Best-effort. */
+  private async recordDispatch(companyId: number, batchId: number, userId?: number | null): Promise<void> {
+    if (!userId) return;
+    try {
+      const rows = await this.prisma.shipment.findMany({
+        where: { company_id: companyId, loadsheet_batch_id: batchId },
+        select: { shopify_order_gid: true, shopify_order_name: true },
+      });
+      for (const r of rows) {
+        await this.attribution.record(companyId, userId, 'dispatched', { gid: r.shopify_order_gid, name: r.shopify_order_name });
+      }
+    } catch {
+      /* never block a loadsheet */
+    }
+  }
+
   private async stampDispatchPayments(
     companyId: number,
     batchId: number,
@@ -425,6 +444,7 @@ export class LoadsheetService implements OnModuleInit {
       });
       // Freeze the payment classification at (re)dispatch, same as a fresh batch.
       await this.stampDispatchPayments(companyId, batch.id);
+    await this.recordDispatch(companyId, batch.id, createdByUserId);
     }
     return {
       batchId: batch.id,

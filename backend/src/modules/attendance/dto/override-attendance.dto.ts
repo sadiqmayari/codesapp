@@ -19,12 +19,12 @@ export class OverrideAttendanceDto {
 
   @IsOptional()
   @IsString()
-  @Matches(/^(\d{2}:\d{2})?$/, { message: 'checkIn must be HH:MM or empty' })
+  @Matches(/^(([01]\d|2[0-3]):[0-5]\d)?$/, { message: 'checkIn must be HH:MM or empty' })
   checkIn?: string;
 
   @IsOptional()
   @IsString()
-  @Matches(/^(\d{2}:\d{2})?$/, { message: 'checkOut must be HH:MM or empty' })
+  @Matches(/^(([01]\d|2[0-3]):[0-5]\d)?$/, { message: 'checkOut must be HH:MM or empty' })
   checkOut?: string;
 
   @IsOptional()

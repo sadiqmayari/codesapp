@@ -33,6 +33,7 @@ import {
   type ThemePref,
 } from '@/lib/theme';
 import { useCommandPalette } from './command-palette';
+import { AttendanceChip } from './attendance-chip';
 import { flatNav } from './nav-config';
 
 interface UsageWarning {
@@ -276,6 +277,8 @@ export function Navbar({
           Ctrl K
         </kbd>
       </button>
+
+      <AttendanceChip />
 
       <div
         className="flex items-center gap-1.5 text-xs text-gray-500 shrink-0"

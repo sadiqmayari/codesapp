@@ -116,7 +116,7 @@ describe('OrderIdempotencyService.reserve', () => {
   beforeEach(() => {
     prisma = makePrisma();
     events = makeEvents();
-    svc = new OrderIdempotencyService(prisma, events);
+    svc = new OrderIdempotencyService(prisma, events, { record: jest.fn(), remove: jest.fn() } as any);
   });
 
   it('proceeds and reserves an in_flight row when no fingerprint exists', async () => {
@@ -224,7 +224,7 @@ describe('OrderIdempotencyService.finalize / release', () => {
   beforeEach(() => {
     prisma = makePrisma();
     prisma.pendingOrderHash.update.mockResolvedValue({});
-    svc = new OrderIdempotencyService(prisma, makeEvents());
+    svc = new OrderIdempotencyService(prisma, makeEvents(), { record: jest.fn(), remove: jest.fn() } as any);
   });
 
   it('finalize marks the row created with the order refs', async () => {

@@ -60,15 +60,25 @@ export class MediaService {
     buffer: Buffer,
     mime: string,
     companyId: number,
-  ): { path: string; filename: string } {
-    const dir = this.getCompanyMediaDir(companyId);
+    originalName?: string | null,
+  ): { path: string; filename: string; webPath: string } {
+    const now = new Date();
+    const dir = this.getCompanyMediaDir(companyId, now);
     this.ensureDir(dir);
 
-    const filename = `${uuidv4()}.${this.extFromMime(mime)}`;
+    // Unknown mime → keep the uploaded file's own extension (docx/zip/txt…)
+    // instead of saving it as an unopenable ".bin".
+    let ext = this.extFromMime(mime);
+    if (ext === 'bin' && originalName) {
+      const m = /\.([a-z0-9]{1,8})$/i.exec(originalName.trim());
+      if (m) ext = m[1].toLowerCase();
+    }
+    const filename = `${uuidv4()}.${ext}`;
     const fullPath = path.join(dir, filename);
     fs.writeFileSync(fullPath, buffer);
 
-    return { path: fullPath, filename };
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    return { path: fullPath, filename, webPath: `/storage/media/${companyId}/${now.getFullYear()}/${mm}/${filename}` };
   }
 
   downloadFromUrl(

@@ -56,13 +56,16 @@ export default function OrdersLayout({ children }: { children: React.ReactNode }
 
   const role = user?.role;
   const isFulfillment = role === 'fulfillment';
+  const isMember = role === 'member'; // Team-only role: reaches just the pack station here
   const canManage = role === 'owner' || role === 'admin';
 
   // The full-page order detail (/orders/<no>) is a drill-down — no section tabs.
   const isDetail = /^\/orders\/\d+$/.test(pathname);
 
-  const primary: Tab[] = [
+  const pack: Tab = { key: 'pack', label: 'Pack', href: '/orders/pack' };
+  const primary: Tab[] = isMember ? [pack] : [
     { key: 'queue', label: 'Orders', href: BOARD, count: 'toBook' },
+    pack,
     { key: 'dispatch', label: 'Dispatch', href: `${BOARD}?view=dispatch`, count: 'dispatch' },
     { key: 'returns', label: 'Returns', href: '/orders/returns', also: [`${BOARD}/receive`] },
     { key: 'replacements', label: 'Replacements', href: `${BOARD}?view=replacements` },
@@ -73,10 +76,10 @@ export default function OrdersLayout({ children }: { children: React.ReactNode }
         ]
       : []),
   ];
-  const secondary: Tab[] = canManage
+  const secondary: Tab[] = canManage && !isMember
     ? [{ key: 'payments', label: 'Courier payments', href: `${BOARD}?view=payments` }]
     : [];
-  const insights: Tab[] = [
+  const insights: Tab[] = isMember ? [] : [
     ...(!isFulfillment ? [{ key: 'analytics', label: 'Analytics', href: '/orders/analytics' }] : []),
     { key: 'performance', label: 'Courier performance', href: `${BOARD}?view=performance` },
     ...(canManage ? [{ key: 'agents', label: 'Agent performance', href: '/orders/agents' }] : []),
@@ -87,7 +90,7 @@ export default function OrdersLayout({ children }: { children: React.ReactNode }
   // Live badge counts (best-effort; a failure just hides the badge).
   const [counts, setCounts] = useState<{ toBook?: number; dispatch?: number }>({});
   useEffect(() => {
-    if (isDetail) return;
+    if (isDetail || isMember) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const load = () => {
@@ -110,7 +113,7 @@ export default function OrdersLayout({ children }: { children: React.ReactNode }
       if (timer) clearTimeout(timer);
       off();
     };
-  }, [on, isDetail]);
+  }, [on, isDetail, isMember]);
 
   const [insOpen, setInsOpen] = useState(false);
   const insRef = useRef<HTMLDivElement>(null);

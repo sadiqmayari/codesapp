@@ -6,6 +6,14 @@
 
 ## Current Status
 
+**Team module v4 — audit + auto-checkout + payroll runs + commissions + pack station (2026-11-21, latest):** migration `20261122000000_team_v4` (auto-applies). Plan + mockups: https://claude.ai/artifact/5am1R67WawmFJUr4m7ci1g
+- Audit fixed ~60 issues across attendance, payroll and team chat (server-side check-in window, weekends/holidays no longer marked absent, night shifts, spoofable office-IP lock, self-approval, races, validation, tenant-clock times, CSV safety, broadcast request storm, `.bin` files, stuck optimistic bubbles, older messages, typing, presence across nodes).
+- Auto-checkout (worker, 10 min) + flexible staff on a required-hours target with a navbar timer chip instead of the all-day bar.
+- Payroll v2: work calendar, proration, paid/unpaid leave, OT rules + cap, statutory deductions, adjustments, Draft → Approved (locked snapshot) → Paid, member payslips + PDF.
+- Commission engine: one attribution ledger (created/confirmed/booked/dispatched/packed/returned) with history backfill, plan builder (per unit / % / slabs / target bonus / team pool, earn on placed/confirmed/delivered, returns reverse) with live preview, my-earnings card, flows into payroll.
+- Pack station `/orders/pack` (scan → checklist → packed by/at).
+- Team UI rebuilt into `components/team/attendance/*` (Today board, My attendance calendar, Daily grid, Summary, Requests, Payroll, Commissions, Settings with one save bar).
+
 **CodesApp logo — "Growth C" (2026-11-20, latest):** NO backend change. Concepts: https://claude.ai/artifact/Dgz7gY84NJ7JNtw1z169gE (user picked C).
 - New favicon set (`src/app/icon.svg`, `apple-icon.png`, `favicon.ico`), PWA PNGs (`public/icons/`, maskable included; manifest updated), brand kit in `public/logo/` (SVG + PNG, outlined wordmark, 1024 Meta app icon).
 - Shared `components/brand/codesapp-logo.tsx` used on login, register and the landing header (replaced the plain "CodesApp" text / generic chat icon).

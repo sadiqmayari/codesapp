@@ -96,7 +96,7 @@ export class InternalChatService {
       select: { id: true, name: true, role: true, last_seen_at: true },
       orderBy: { name: 'asc' },
     });
-    const online = new Set(this.gateway.getOnlineUserIds(companyId));
+    const online = new Set(await this.gateway.getOnlineUserIds(companyId));
     return users.map((u) => ({
       id: u.id,
       name: u.name,
@@ -106,8 +106,8 @@ export class InternalChatService {
     }));
   }
 
-  presence(companyId: number) {
-    return { online: this.gateway.getOnlineUserIds(companyId) };
+  async presence(companyId: number) {
+    return { online: await this.gateway.getOnlineUserIds(companyId) };
   }
 
   // ── Broadcast channel (one per company, lazy-created) ──
@@ -121,11 +121,23 @@ export class InternalChatService {
     })) as ThreadRow;
   }
 
+  // Per-process memo of "this user already has a broadcast member row" so every
+  // thread read no longer writes an upsert. 10-min TTL keeps it self-healing.
+  private memberMemo = new Map<string, number>();
+  private broadcastMemo = new Map<number, { t: ThreadRow; at: number }>();
+
   private async ensureBroadcastMembership(
     companyId: number,
     userId: number,
   ): Promise<ThreadRow> {
-    const t = await this.ensureBroadcast(companyId);
+    const cached = this.broadcastMemo.get(companyId);
+    const t =
+      cached && Date.now() - cached.at < 10 * 60_000 ? cached.t : await this.ensureBroadcast(companyId);
+    if (!cached || cached.t.id !== t.id) this.broadcastMemo.set(companyId, { t, at: Date.now() });
+    const key = `${t.id}:${userId}`;
+    const seen = this.memberMemo.get(key);
+    if (seen && Date.now() - seen < 10 * 60_000) return t;
+    this.memberMemo.set(key, Date.now());
     await this.prisma.internalThreadMember.upsert({
       where: { thread_id_user_id: { thread_id: t.id, user_id: userId } },
       create: { thread_id: t.id, company_id: companyId, user_id: userId },
@@ -143,11 +155,11 @@ export class InternalChatService {
       where: { company_id: companyId, status: 'active', role: { not: 'super_admin' } },
       select: { id: true },
     });
-    for (const u of users) {
-      await this.prisma.internalThreadMember.upsert({
-        where: { thread_id_user_id: { thread_id: threadId, user_id: u.id } },
-        create: { thread_id: threadId, company_id: companyId, user_id: u.id },
-        update: {},
+    // One batched insert (skip existing) instead of N sequential upserts per send.
+    if (users.length) {
+      await this.prisma.internalThreadMember.createMany({
+        data: users.map((u) => ({ thread_id: threadId, company_id: companyId, user_id: u.id })),
+        skipDuplicates: true,
       });
     }
     return users.map((u) => u.id);
@@ -182,7 +194,7 @@ export class InternalChatService {
       where: { company_id: companyId, user_id: userId },
       select: { thread_id: true, unread_count: true, thread: true },
     });
-    const online = new Set(this.gateway.getOnlineUserIds(companyId));
+    const online = new Set(await this.gateway.getOnlineUserIds(companyId));
 
     // Resolve the "other participant" for DM threads in one query.
     const dmThreadIds = memberships
@@ -279,7 +291,7 @@ export class InternalChatService {
         },
       })) as ThreadRow;
     }
-    const online = new Set(this.gateway.getOnlineUserIds(companyId));
+    const online = new Set(await this.gateway.getOnlineUserIds(companyId));
     return {
       id: thread.id,
       kind: 'dm',
@@ -360,7 +372,8 @@ export class InternalChatService {
     text: string,
     clientId?: string,
   ) {
-    const thread = await this.requireThread(actor.companyId, actor.userId, threadId);    const body = (text ?? '').trim();
+    const thread = await this.requireThread(actor.companyId, actor.userId, threadId);
+    const body = (text ?? '').trim();
     if (!body) throw new BadRequestException('Message is empty');
     const msg = (await this.prisma.internalMessage.create({
       data: {
@@ -383,7 +396,8 @@ export class InternalChatService {
     kind: string | undefined,
     clientId?: string,
   ) {
-    const thread = await this.requireThread(actor.companyId, actor.userId, threadId);    if (!file || !file.buffer?.length) throw new BadRequestException('No file uploaded');
+    const thread = await this.requireThread(actor.companyId, actor.userId, threadId);
+    if (!file || !file.buffer?.length) throw new BadRequestException('No file uploaded');
     const mime = file.mimetype || 'application/octet-stream';
     const messageType =
       kind === 'audio' || mime.startsWith('audio/')
@@ -391,10 +405,9 @@ export class InternalChatService {
         : mime.startsWith('image/')
           ? 'image'
           : 'file';
-    const now = new Date();
-    const { filename } = this.media.saveBuffer(file.buffer, mime, actor.companyId);
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const webPath = `/storage/media/${actor.companyId}/${now.getFullYear()}/${mm}/${filename}`;
+    // One clock for the folder + the URL (they used to be computed separately,
+    // so an upload at a month boundary could point at the wrong folder).
+    const { webPath } = this.media.saveBuffer(file.buffer, mime, actor.companyId, file.originalname);
     const msg = (await this.prisma.internalMessage.create({
       data: {
         thread_id: threadId,
@@ -426,7 +439,8 @@ export class InternalChatService {
     payload: OrderShare,
     clientId?: string,
   ) {
-    const thread = await this.requireThread(actor.companyId, actor.userId, threadId);    const number = String(payload?.number ?? '').trim();
+    const thread = await this.requireThread(actor.companyId, actor.userId, threadId);
+    const number = String(payload?.number ?? '').trim();
     if (!number) throw new BadRequestException('Missing order number');
     const card: OrderShare = {
       number,
@@ -502,6 +516,8 @@ export class InternalChatService {
     return mapMsg(msg);
   }
 
+  private readFanoutAt = new Map<string, number>();
+
   async markRead(companyId: number, userId: number, threadId: number) {
     const thread = await this.requireThread(companyId, userId, threadId);
     const at = new Date();
@@ -514,7 +530,16 @@ export class InternalChatService {
     // Sync the caller's other tabs so the badge clears everywhere.
     this.gateway.emitToUsers([userId], 'dm.read', { threadId });
     // Tell the OTHER member(s) so the sender's ticks update live — DM ticks turn
-    // blue, broadcast "seen by N" counts bump up.
+    // blue, broadcast "seen by N" counts bump up. Broadcast fan-out is throttled
+    // (one per reader per thread per 5 s): every member reading every message
+    // used to trigger N×N list reloads.
+    if (thread.kind === 'broadcast') {
+      const k = `${threadId}:${userId}`;
+      const last = this.readFanoutAt.get(k) ?? 0;
+      if (Date.now() - last < 5000) return { ok: true };
+      this.readFanoutAt.set(k, Date.now());
+      if (this.readFanoutAt.size > 5000) this.readFanoutAt.clear();
+    }
     const others = await this.otherDmMemberIds(threadId, userId);
     if (others.length) {
       this.gateway.emitToUsers(others, 'dm.read', {

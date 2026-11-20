@@ -452,6 +452,12 @@ model Company {
   // 12:00). Computed per user from their effective shift start, so staff on
   // different shifts get their own cutoff. Flexible/exempt staff have NO cutoff.
   attendance_checkin_window_minutes Int?
+  // Team v4: auto-checkout policy {mode:'off'|'shift_end'|'max_hours',
+  // afterEndMin, maxHours} (resolved by attendance/auto-checkout.ts), weekly off
+  // days JSON [0..6] (0 = Sunday; NULL = [0]) and the default annual paid-leave quota.
+  attendance_auto_checkout          Json?
+  attendance_weekly_off             Json?
+  attendance_annual_paid_leave      Int?
   created_at                        DateTime          @default(now())
 
   subscription         Subscription             @relation(fields: [subscription_id], references: [id])
@@ -520,6 +526,14 @@ model User {
   salary_amount                Decimal?   @db.Decimal(14, 2)
   salary_allowances            Json?
   salary_overtime_rate         Decimal?   @db.Decimal(14, 2)
+  // Team v4: flexible staff daily target minutes (NULL = 480), per-user weekly
+  // off override (NULL = company), joined/left dates (payroll proration; NULL
+  // joined = created_at) and per-user annual paid-leave override.
+  attendance_required_minutes  Int?
+  attendance_weekly_off        Json?
+  joined_on                    DateTime?  @db.Date
+  left_on                      DateTime?  @db.Date
+  annual_paid_leave            Int?
   created_at                   DateTime   @default(now())
   updated_at                   DateTime   @updatedAt
 
@@ -562,6 +576,8 @@ model AttendanceRecord {
   // created (auto-absent) or set (approved leave) rather than a self check-in.
   missed_checkout   Boolean          @default(false)
   system_marked     Boolean          @default(false)
+  // How the day was closed: self | auto (auto-checkout) | admin (override).
+  checkout_source   String?          @db.VarChar(8)
   note              String?          @db.VarChar(255)
   marked_by_user_id Int?
   created_at        DateTime         @default(now())
@@ -594,6 +610,14 @@ model AttendanceLeaveRequest {
   reviewed_by_user_id Int?
   reviewed_at         DateTime?
   review_note         String?            @db.VarChar(255)
+  // Team v4: kind 'leave' | 'correction' (fix a day's punch times — from_date
+  // = the day, req_check_in/out = requested HH:MM), paid (unpaid leave is
+  // deducted in payroll), leave_type (casual|sick|annual|unpaid|other).
+  kind                String             @default("leave") @db.VarChar(16)
+  paid                Boolean            @default(true)
+  leave_type          String?            @db.VarChar(16)
+  req_check_in        String?            @db.VarChar(5)
+  req_check_out       String?            @db.VarChar(5)
   created_at          DateTime           @default(now())
   updated_at          DateTime           @updatedAt
 
@@ -607,7 +631,7 @@ model AttendanceLeaveRequest {
 
 // ── Internal team messaging (staff ↔ staff; NOT WhatsApp) ──────────────────
 // A thread is either a 1:1 `dm` (dm_key = "minId-maxId") or the single per-company
-// `broadcast` channel (owners/admins post, everyone reads). Member-based so more
+// `broadcast` channel (every active member can post + read). Member-based so more
 // named channels are a trivial later add.
 model InternalThread {
   id              Int       @id @default(autoincrement())
@@ -2369,6 +2393,9 @@ model Shipment {
   // courier status: this is a human-verified "the parcel is in our hands" fact.
   received_at                 DateTime?
   received_by_user_id         Int?
+  // Pack station: who scanned the parcel as packed (commission source).
+  packed_by_user_id           Int?
+  packed_at                   DateTime?
   // Set when the tenant reconciles the courier's COD remittance for a delivered
   // shipment. NULL = still receivable (shows in Courier Pending Payments).
   courier_settled_at          DateTime?
@@ -2398,6 +2425,7 @@ model Shipment {
   @@index([company_id, status])
   @@index([company_id, courier_type, status, loadsheet_batch_id])
   @@index([company_id, status, courier_settled_at])
+  @@index([company_id, packed_at])
   @@index([company_id, shipper_advice_required_at])
   // Orders-analytics buckets the delivery tiles by shipment event date.
   @@index([company_id, booked_at])
@@ -2890,4 +2918,109 @@ model AiPromptOverride {
 
   @@index([prompt_key, status])
   @@map("ai_prompt_overrides")
+}
+
+// ── Team v4: work calendar, payroll runs, commissions ──────────────────────
+model AttendanceHoliday {
+  id         Int      @id @default(autoincrement())
+  company_id Int
+  date       DateTime @db.Date
+  name       String   @db.VarChar(120)
+  created_at DateTime @default(now())
+
+  @@unique([company_id, date])
+  @@map("attendance_holidays")
+}
+
+// One row per company per month. draft = live compute; approved = lines are a
+// locked snapshot (salary/policy edits never change it); paid = settled.
+model PayrollRun {
+  id                  Int       @id @default(autoincrement())
+  company_id          Int
+  month               String    @db.VarChar(7)
+  status              String    @default("draft") @db.VarChar(12)
+  policy_snapshot     Json?
+  totals              Json?
+  created_by_user_id  Int?
+  approved_by_user_id Int?
+  approved_at         DateTime?
+  paid_by_user_id     Int?
+  paid_at             DateTime?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+
+  @@unique([company_id, month])
+  @@map("payroll_runs")
+}
+
+model PayrollRunLine {
+  id         Int     @id @default(autoincrement())
+  run_id     Int
+  company_id Int
+  user_id    Int
+  snapshot   Json
+  gross      Decimal @default(0) @db.Decimal(14, 2)
+  deductions Decimal @default(0) @db.Decimal(14, 2)
+  commission Decimal @default(0) @db.Decimal(14, 2)
+  net        Decimal @default(0) @db.Decimal(14, 2)
+
+  @@unique([run_id, user_id])
+  @@index([company_id, user_id])
+  @@map("payroll_run_lines")
+}
+
+// One-off payroll lines: bonus / reimbursement add; deduction / advance / loan subtract.
+model PayrollAdjustment {
+  id                 Int      @id @default(autoincrement())
+  company_id         Int
+  user_id            Int
+  month              String   @db.VarChar(7)
+  kind               String   @db.VarChar(16)
+  label              String   @db.VarChar(120)
+  amount             Decimal  @db.Decimal(14, 2)
+  note               String?  @db.VarChar(255)
+  created_by_user_id Int?
+  created_at         DateTime @default(now())
+
+  @@index([company_id, month])
+  @@map("payroll_adjustments")
+}
+
+// THE attribution ledger: who did what to an order. One row per (order, kind):
+// created | confirmed | packed | booked | dispatched | returned_received.
+// Commission plans read only this table (+ order/shipment outcome).
+model OrderAttribution {
+  id         Int      @id @default(autoincrement())
+  company_id Int
+  order_gid  String   @db.VarChar(255)
+  order_name String?  @db.VarChar(64)
+  kind       String   @db.VarChar(24)
+  user_id    Int
+  source     String?  @db.VarChar(24)
+  value      Decimal? @db.Decimal(14, 2)
+  at         DateTime
+  created_at DateTime @default(now())
+
+  @@unique([company_id, order_gid, kind])
+  @@index([company_id, kind, at])
+  @@index([company_id, user_id, kind])
+  @@map("order_attributions")
+}
+
+// A tenant's commission rule. `config` = { earnOn, basis, calc, reverse, min, cap }
+// resolved by modules/commissions/commission-math.ts resolvePlanConfig().
+model CommissionPlan {
+  id                 Int      @id @default(autoincrement())
+  company_id         Int
+  name               String   @db.VarChar(120)
+  active             Boolean  @default(true)
+  metric             String   @db.VarChar(32)
+  config             Json
+  applies_to         Json
+  created_by_user_id Int?
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  @@index([company_id, active])
+  @@map("commission_plans")
 }

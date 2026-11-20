@@ -1,3 +1,4 @@
+import { clientIp } from '../utils/ip-match';
 import {
   CanActivate,
   ExecutionContext,
@@ -30,9 +31,9 @@ export class SuperAdminIpGuard implements CanActivate {
     if (nodeEnv === 'development') return true;
 
     const req = context.switchToHttp().getRequest();
-    let ip: string = req.ip ?? req.connection?.remoteAddress ?? '';
-    // Normalize IPv4-mapped IPv6 (::ffff:1.2.3.4 → 1.2.3.4)
-    if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+    // Real client IP behind Cloudflare/Traefik (req.ip = the spoofable
+    // left-most X-Forwarded-For entry with trust proxy on).
+    const ip: string = clientIp(req);
 
     const whitelist = (
       this.config.get<string>('SUPER_ADMIN_IP_WHITELIST') ?? ''

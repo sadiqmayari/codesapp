@@ -1,3 +1,4 @@
+import { OrderAttributionService } from './order-attribution.service';
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
@@ -99,6 +100,7 @@ export class OrderIdempotencyService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventStoreService,
+    private readonly attribution: OrderAttributionService,
   ) {}
 
   // ── Fingerprinting (pure, deterministic) ──────────────────────────────
@@ -222,7 +224,15 @@ export class OrderIdempotencyService {
         }
 
         // Stale row: an expired in-flight (crashed worker) OR a created row past
-        // the dedup window (legitimate reorder). Reclaim the slot.
+        // the dedup window (legitimate reorder). Reclaim the slot — but first
+        // make sure the earlier order's creator keeps their credit in the
+        // attribution ledger (deleting this row used to erase it).
+        if (existing.status === 'created' && existing.order_gid && existing.created_by_user_id) {
+          await this.attribution.record(companyId, existing.created_by_user_id, 'created', {
+            gid: existing.order_gid,
+            name: existing.order_name,
+          }, { at: existing.created_at });
+        }
         await this.prisma.pendingOrderHash
           .delete({ where: { id: existing.id } })
           .catch(() => undefined);
@@ -337,6 +347,19 @@ export class OrderIdempotencyService {
         reservationId,
       )
       .catch(() => undefined);
+
+    // Commission ledger: credit the agent who created the order.
+    const row = await this.prisma.pendingOrderHash
+      .findUnique({ where: { id: reservationId }, select: { company_id: true, created_by_user_id: true } })
+      .catch(() => null);
+    if (row?.created_by_user_id) {
+      await this.attribution.record(row.company_id, row.created_by_user_id, 'created', {
+        gid: order.orderId,
+        name: order.orderName,
+        value: total != null && Number.isFinite(total) ? total : null,
+        source: source ?? 'inbox',
+      });
+    }
   }
 
   /**

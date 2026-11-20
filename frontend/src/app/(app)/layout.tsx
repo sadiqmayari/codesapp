@@ -494,7 +494,9 @@ export default function AppLayout({
     if (loading || !user || !isMember) return;
     onboardingCheckedRef.current = true;
     setGateState('ok');
-    if (!isSelfServicePath(pathnameRef.current)) router.replace('/team-chat');
+    // Members may also run the pack station (warehouse packers are often members).
+    const p = pathnameRef.current;
+    if (!isSelfServicePath(p) && p !== '/orders/pack') router.replace('/team-chat');
   }, [loading, user, isMember, pathname, router]);
 
   useEffect(() => {

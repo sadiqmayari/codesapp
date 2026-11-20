@@ -1,3 +1,5 @@
+import { OrderAttributionService } from '../../common/services/order-attribution.service';
+import { localParts, localTimeToInstant } from '../attendance/schedule';
 import {
   BadRequestException,
   ConflictException,
@@ -411,6 +413,23 @@ export class ShipmentService implements OnModuleInit {
     const status: ShipmentStatus = args.addressIssueReason
       ? 'address_issue'
       : 'booked';
+    const claimed = await this.claimShipmentTx(args, status);
+    if (status === 'booked' && args.courierType !== 'manual' && args.createdByUserId) {
+      void this.attribution.record(
+        args.companyId,
+        args.createdByUserId,
+        'booked',
+        { gid: args.gid, name: args.orderName },
+        { force: true },
+      );
+    }
+    return claimed;
+  }
+
+  private async claimShipmentTx(
+    args: Parameters<ShipmentService['claimShipment']>[0],
+    status: ShipmentStatus,
+  ): Promise<Shipment> {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const rows = await tx.$queryRaw<{ id: number; status: string }[]>`
@@ -482,6 +501,7 @@ export class ShipmentService implements OnModuleInit {
     private readonly agentActivity: AgentActivityService,
     private readonly gateway: InboxGateway,
     private readonly sharedState: SharedStateService,
+    private readonly attribution: OrderAttributionService,
   ) {}
 
   onModuleInit(): void {
@@ -679,6 +699,9 @@ export class ShipmentService implements OnModuleInit {
       select: { id: true, shopify_order_gid: true, courier_type: true, status: true },
     });
     for (const s of reserved) {
+      if (s.status === 'booked' && opts.createdByUserId) {
+        void this.attribution.record(companyId, opts.createdByUserId, 'booked', { gid: s.shopify_order_gid }, { force: true });
+      }
       this.emitOrderLocked(companyId, s.shopify_order_gid, opts.createdByUserId, byName);
       if (s.status === 'address_issue') {
         void this.addressIssueNotifier.notify(s.id);
@@ -3467,6 +3490,16 @@ export class ShipmentService implements OnModuleInit {
       },
     });
 
+    if (source === 'manual' && shipment.received_at == null && userId) {
+      void this.attribution.record(
+        companyId,
+        userId,
+        'returned_received',
+        { gid: shipment.shopify_order_gid, name: shipment.shopify_order_name },
+        { at: receivedAt ?? new Date() },
+      );
+    }
+
     // Inventory module: a PHYSICALLY received return (manual receipt) restocks
     // its line items + pushes to Shopify. Enqueued on the shopify queue so there
     // is no CouriersModule→ShopifyService import; the handler is idempotent per
@@ -3755,6 +3788,110 @@ export class ShipmentService implements OnModuleInit {
       company_id: companyId,
       shopify_order_name: { in: [`#${digits}`, digits] },
     });
+  }
+
+  // ── Pack station ─────────────────────────────────────────────────────────
+  /** Resolve a scanned code (tracking number or order number) to a parcel +
+   *  its items, for the pack-station checklist. */
+  async packLookup(companyId: number, code: string) {
+    const raw = (code || '').trim();
+    if (!raw) throw new BadRequestException('Scan or type a tracking or order number');
+    const digits = raw.replace(/^#/, '');
+    const shipment = await this.prisma.shipment.findFirst({
+      where: {
+        company_id: companyId,
+        OR: [
+          { courier_tracking_number: raw },
+          ...(/^\d+$/.test(digits) ? [{ shopify_order_name: { in: [`#${digits}`, digits] } }] : []),
+        ],
+      },
+      orderBy: { created_at: 'desc' },
+      select: {
+        id: true,
+        shopify_order_gid: true,
+        shopify_order_name: true,
+        courier_type: true,
+        courier_tracking_number: true,
+        status: true,
+        packed_at: true,
+        packed_by_user_id: true,
+      },
+    });
+    if (!shipment) throw new NotFoundException(`No booked parcel found for "${raw}"`);
+    const gid = shipment.shopify_order_gid.replace(/#R\d+$/, '');
+    const order = await this.prisma.shopifyOrder.findUnique({
+      where: { company_id_shopify_order_gid: { company_id: companyId, shopify_order_gid: gid } },
+      select: { customer_name: true, city: true, total_outstanding: true, line_items: true },
+    });
+    const items = (Array.isArray(order?.line_items) ? (order!.line_items as unknown[]) : []).map((rawIt) => {
+      const it = rawIt as Record<string, unknown>;
+      const v = (it?.variantTitle ?? it?.variant_title ?? null) as string | null;
+      return {
+        title: String(it?.title ?? it?.name ?? 'Item').trim() || 'Item',
+        variant: v && String(v).trim() && !/default title/i.test(String(v)) ? String(v).trim() : null,
+        sku: (it?.sku as string | null) ?? null,
+        quantity: Number(it?.quantity ?? it?.qty ?? 1) || 1,
+      };
+    });
+    const packedBy = shipment.packed_by_user_id
+      ? await this.prisma.user.findUnique({ where: { id: shipment.packed_by_user_id }, select: { name: true } })
+      : null;
+    return {
+      shipmentId: shipment.id,
+      orderName: shipment.shopify_order_name,
+      tracking: shipment.courier_tracking_number,
+      courier: shipment.courier_type,
+      status: shipment.status,
+      customerName: order?.customer_name ?? null,
+      city: order?.city ?? null,
+      cod: order?.total_outstanding != null ? Number(order.total_outstanding) : null,
+      items,
+      packedAt: shipment.packed_at?.toISOString() ?? null,
+      packedBy: packedBy?.name ?? null,
+    };
+  }
+
+  /** Mark a parcel packed by this user (idempotent; a re-pack by someone else moves the credit). */
+  async markPacked(companyId: number, userId: number, shipmentId: number) {
+    const s = await this.prisma.shipment.findFirst({
+      where: { id: shipmentId, company_id: companyId },
+      select: { id: true, status: true, packed_by_user_id: true, shopify_order_gid: true, shopify_order_name: true },
+    });
+    if (!s) throw new NotFoundException('Shipment not found');
+    if (['cancelled', 'returned', 'failed', 'delivered'].includes(s.status)) {
+      throw new BadRequestException(`This parcel is ${s.status}, so it cannot be packed.`);
+    }
+    const now = new Date();
+    if (s.packed_by_user_id !== userId) {
+      await this.prisma.shipment.update({ where: { id: s.id }, data: { packed_by_user_id: userId, packed_at: now } });
+      void this.attribution.record(
+        companyId,
+        userId,
+        'packed',
+        { gid: s.shopify_order_gid, name: s.shopify_order_name },
+        { force: true, at: now },
+      );
+      try {
+        this.gateway.emitOrdersChanged(companyId);
+      } catch {
+        /* never block packing */
+      }
+    }
+    return { ok: true, ...(await this.packStats(companyId, userId)) };
+  }
+
+  /** The packer's own counters: today (tenant clock) + this month. */
+  async packStats(companyId: number, userId: number) {
+    const c = await this.prisma.company.findUnique({ where: { id: companyId }, select: { timezone: true } });
+    const tz = c?.timezone ?? null;
+    const { dateStr } = localParts(new Date(), tz);
+    const dayStart = localTimeToInstant(dateStr, '00:00', tz);
+    const monthStart = localTimeToInstant(`${dateStr.slice(0, 7)}-01`, '00:00', tz);
+    const [today, month] = await Promise.all([
+      this.prisma.orderAttribution.count({ where: { company_id: companyId, user_id: userId, kind: 'packed', at: { gte: dayStart } } }),
+      this.prisma.orderAttribution.count({ where: { company_id: companyId, user_id: userId, kind: 'packed', at: { gte: monthStart } } }),
+    ]);
+    return { packedToday: today, packedThisMonth: month };
   }
 
   /** Shared parcel resolver for the tracking + order-number lookups. */
