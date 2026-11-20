@@ -86,6 +86,9 @@ const STATUS_MAP: Record<string, ShipmentStatus> = {
   'reached at destination': 'in_transit',
   'out for delivery': 'out_for_delivery',
   'out-for-delivery': 'out_for_delivery',
+  // Parcel held at an M&P facility (operational hold, not a delivery attempt
+  // and not shipper advice) — still live on the forward leg.
+  'hold in operations': 'in_transit',
   // ── Delivery attempt / advice (undelivered, still live) ──
   attempt: 'attempted',
   'unsuccessful delivery attempt': 'attempted',
@@ -353,6 +356,9 @@ export class MnpAdapter implements CourierAdapter {
     //    and the return-heuristic below would otherwise mark it `failed`).
     const mapped = STATUS_MAP[key];
     if (mapped) return mapped;
+    // M&P's push numbers the forward delivery attempts: "Attempt:1", "Attempt:2"…
+    // (the return leg uses "Return - Attempt", mapped above to failed).
+    if (/^attempt\s*:?\s*\d+$/.test(key)) return 'attempted';
     // 2) Heuristic safety net for any UNDOCUMENTED variant M&P might emit.
     if (isReturnedToShipper(rawStatus)) return 'returned';
     // Return-in-motion / RTO leg → failed (Failed tab; re-polled → promotes to

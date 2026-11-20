@@ -37,7 +37,7 @@ interface NormalizedEvent {
 
 /** Pulls {trackingNumber, rawStatus, reason} out of each courier's own
  *  webhook payload shape, as observed in the tenant's n8n tracking flows. */
-function normalizeEvent(courierType: CourierType, body: any): NormalizedEvent | null {
+export function normalizeEvent(courierType: CourierType, body: any): NormalizedEvent | null {
   if (courierType === 'postex') {
     if (!body?.trackingNumber || !body?.orderStatus) return null;
     // PostEx signals an RTO via the `returnRequested` BOOLEAN, not via
@@ -80,9 +80,14 @@ function normalizeEvent(courierType: CourierType, body: any): NormalizedEvent | 
     //   "Status":"Delivered", "Comments":"The shipment has been delivered..." }.
     // Accept common key casings defensively; Status uses the same vocabulary as
     // the CNTracking poll, which mapStatus already covers.
+    // Since Nov-2026 M&P pushes snake_case: { tracking_number, status, comments,
+    // timestamp } — without `tracking_number` here every push was dropped as an
+    // "unrecognized payload" and statuses waited for the (12 h) poll.
     const tn =
       body?.TrackingNumber ??
       body?.trackingNumber ??
+      body?.tracking_number ??
+      body?.tracking_no ??
       body?.ConsignmentNumber ??
       body?.consignment ??
       body?.CN ??

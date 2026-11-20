@@ -19,6 +19,12 @@
 
 ## Entries
 
+### [Couriers] M&P push webhooks all dropped as "Unrecognized mnp webhook payload shape" (2026-11-20)
+**Error message:** `Unrecognized mnp webhook payload shape (company 3): {"comments":"","tracking_number":"565714810000683","timestamp":"…","status":"Hold in Operations"}` — 234 in one morning.
+**Cause:** M&P's push now uses snake_case `tracking_number`; `normalizeEvent('mnp')` only accepted `TrackingNumber`/`trackingNumber`/`ConsignmentNumber`/`CN`, so every push was discarded and parcels only moved on the tenant's status poll (Sois = every 12 h) — delivered parcels sat "in_transit" for hours. Two pushed statuses were also unmapped: `Hold in Operations` and numbered `Attempt:1/2/3`.
+**Fix:** accept `tracking_number` / `tracking_no`; map `hold in operations` → in_transit and `^attempt:N$` → attempted (`Return - Attempt` stays failed). `normalizeEvent` is now exported and covered by `adapters/mnp.adapter.spec.ts` (every status seen in prod that day). Queued a one-off `courier-status-sync` for company 3 to catch up.
+**Rule:** when a courier's "Unrecognized … payload shape" warning appears, add the new key spelling instead of assuming the old shape — the warning means 100% of that courier's pushes are being lost.
+
 ### [Templates] Creating a template Meta refuses → "Something went wrong" (2026-11-20)
 **Error message:** `Invalid prisma.template.update() invocation: The provided value for the column is too long for the column's type. Column: rejection_reason` (after Meta 400 `Component HEADER is not supported for AUTHENTICATION templates…`).
 **Cause:** `TemplatesService.create` stored the RAW Graph error ("Meta template POST /v25.0/… → 400 {json}", ~400 chars) in `templates.rejection_reason` (VARCHAR(191)) → the update threw a 500, so the user saw a generic error, and the row was left stuck "pending" with no Meta id. The form also offered Authentication in the free-form builder, which Meta never accepts (auth templates use Meta's fixed passcode format).
