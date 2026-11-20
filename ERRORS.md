@@ -1079,3 +1079,7 @@ The old `/ad-report` had these defects; each is fixed by the Growth module (see 
 
 ## [Commissions] Re-clicking "confirm" counted a second confirmation; reordered carts erased the earlier agent's credit (fixed 2026-11-21)
 - Fix: the `order_attributions` ledger (unique per order + kind); `markOrderConfirmed` writes agent_activity only on the first confirm; `reserve()` records the creator before reclaiming a stale fingerprint row.
+
+## [Attendance] Auto-absent never ran in prod (fixed 2026-11-21)
+- Cause: the sweep only ran when an external scheduler called `/cron/attendance/daily-sweep`, and that entry was never added to the VPS crontab (0 system-marked absent rows ever).
+- Fix: the worker runs the sweep hourly (`AutoCheckoutService`); only tenants that use attendance; never earlier than 2026-11-20.

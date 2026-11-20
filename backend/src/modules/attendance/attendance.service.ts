@@ -55,6 +55,8 @@ const EARLY_CHECKIN_MIN = 30; // check-in opens 30 min BEFORE shift start
 const OPEN_ROW_MAX_MS = 22 * 3_600_000; // an open day older than this can't be checked out by the member
 const MAX_LEAVE_DAYS = 62;
 const END_OF_DAY = '23:59';
+// Auto-absent went live on 2026-11-21: the sweep never marks earlier days.
+const AUTO_ABSENT_FROM = '2026-11-20';
 
 export interface AttendanceCell {
   date: string; // YYYY-MM-DD
@@ -1487,16 +1489,25 @@ export class AttendanceService {
     let missed = 0;
     for (const { id: companyId } of companies) {
       try {
+        // Only tenants that actually use attendance (a check-in in the last 14
+        // days) — otherwise a tenant that never adopted it fills with absents.
+        const inUse = await this.prisma.attendanceRecord.findFirst({
+          where: { company_id: companyId, check_in_at: { gte: new Date(Date.now() - 14 * 86_400_000) } },
+          select: { id: true },
+        });
+        if (!inUse) continue;
         const co = await this.companyDefaults(companyId);
         const today = localParts(new Date(), co.tz).dateStr;
-        const days = [addDays(today, -3), addDays(today, -2), addDays(today, -1)];
+        // Never back-mark days before auto-absent went live.
+        const days = [addDays(today, -3), addDays(today, -2), addDays(today, -1)].filter((d) => d >= AUTO_ABSENT_FROM);
+        if (!days.length) continue;
         const members = (await this.prisma.user.findMany({
           where: { company_id: companyId, status: 'active', role: { notIn: NOT_TRACKED_ROLES as never } },
           select: MEMBER_SELECT,
         })) as MemberRow[];
         if (!members.length) continue;
-        const rows = await this.rowsFor(companyId, members.map((m) => m.id), days[0], days[2]);
-        const hol = await this.calendarFor(companyId, [], days[0], days[2]);
+        const rows = await this.rowsFor(companyId, members.map((m) => m.id), days[0], days[days.length - 1]);
+        const hol = await this.calendarFor(companyId, [], days[0], days[days.length - 1]);
         const have = new Set(rows.map((r) => `${r.user_id}:${r.work_date.toISOString().slice(0, 10)}`));
         const toCreate: Prisma.AttendanceRecordCreateManyInput[] = [];
         for (const m of members) {
@@ -1516,7 +1527,7 @@ export class AttendanceService {
         const res = await this.prisma.attendanceRecord.updateMany({
           where: {
             company_id: companyId,
-            work_date: { gte: dateCol(days[0]), lte: dateCol(days[2]) },
+            work_date: { gte: dateCol(days[0]), lte: dateCol(days[days.length - 1]) },
             check_in_at: { not: null },
             check_out_at: null,
             missed_checkout: false,
