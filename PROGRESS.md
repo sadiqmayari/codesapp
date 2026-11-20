@@ -6,6 +6,10 @@
 
 ## Current Status
 
+**CodesApp logo — "Growth C" (2026-11-20, latest):** NO backend change. Concepts: https://claude.ai/artifact/Dgz7gY84NJ7JNtw1z169gE (user picked C).
+- New favicon set (`src/app/icon.svg`, `apple-icon.png`, `favicon.ico`), PWA PNGs (`public/icons/`, maskable included; manifest updated), brand kit in `public/logo/` (SVG + PNG, outlined wordmark, 1024 Meta app icon).
+- Shared `components/brand/codesapp-logo.tsx` used on login, register and the landing header (replaced the plain "CodesApp" text / generic chat icon).
+
 **Meta Tech Provider — App Review prep (2026-11-20, latest):** NO migration, NO backend change. Runbook: https://claude.ai/artifact/JtbbxNVQ6siUVfnktNiwmV
 - New public page `/data-deletion` (`frontend/src/app/data-deletion/page.tsx`, static, no login) = the "User data deletion → instructions URL" Meta needs: `https://apps.codentra.pk/data-deletion`. Contact `admin@codentra.pk`.
 - Plan (one Meta app `Codentra - CAS` / `1899296380732173` onboards every client): Phase A = WhatsApp App Review (`whatsapp_business_messaging` + `whatsapp_business_management`) using two videos of the EXISTING app (inbox send + template create) — no dummy app. Then build Embedded Signup (v4) after Advanced Access; existing Option-B tenants keep working (NULL-secret fallback). Later rounds on the SAME app: Messenger, FB comments, IG DMs, IG comments, then Ads/Marketing API last.

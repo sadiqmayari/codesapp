@@ -7,6 +7,7 @@ import { z } from 'zod';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import { CodesAppLogo } from '@/components/brand/codesapp-logo';
 
 const schema = z.object({
   name: z.string().min(2, 'Name is required'),
@@ -63,6 +64,9 @@ export default function RegisterPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12">
       <div className="w-full max-w-md bg-white rounded-2xl shadow p-8">
         <div className="text-center mb-8">
+          <div className="flex justify-center mb-4">
+            <CodesAppLogo size={36} />
+          </div>
           <h1 className="text-2xl font-bold text-gray-900">Create your account</h1>
           <p className="text-gray-500 mt-1">CodesApp — WhatsApp CRM</p>
         </div>

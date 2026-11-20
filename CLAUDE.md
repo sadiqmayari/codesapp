@@ -618,6 +618,12 @@ Migration `20261110000000_attendance_payroll` (additive + nullable; real Prisma 
 - **`/data-deletion` is a public page** (`frontend/src/app/data-deletion/page.tsx`, static, outside `(app)`, not in middleware `PROTECTED_PREFIXES`) — it is the app's Meta "data deletion instructions URL". Keep it public and reachable; changing the URL means updating the Meta App Settings too.
 - **Embedded Signup is NOT built yet** (build after Advanced Access; target Embedded Signup v4 — v2/v3 deprecated 2026-10-15). When built it must coexist with Option B: store the OAuth token in the existing columns and leave `webhook_app_secret_encrypted`/`webhook_verify_token` NULL so `resolveSecrets` uses platform `META_APP_SECRET`/`META_VERIFY_TOKEN`. Never rotate those env values while any tenant relies on the keyless/platform webhook path.
 
+### Runtime conventions (CodesApp brand — "Growth C" logo · Nov-2026)
+- **Mark = an open C ring in green `#12B76A` + a rising cyan `#22B8CF` arrow, app tile on navy `#0E1A2B`.** Wordmark "codes**app**" (Manrope ExtraBold, "app" in green). In-app use the shared `components/brand/codesapp-logo.tsx` (`CodesAppMark`, `CodesAppLogo`) — login, register and the landing header use it. Never hand-draw the mark again.
+- **Icons are Next file-convention files:** `src/app/icon.svg` (favicon/PWA "any"/notification icon — the bolder small-size variant), `src/app/apple-icon.png` (180), `src/app/favicon.ico` (16/32/48). PWA PNGs in `public/icons/` (192, 512, maskable-512) referenced by `public/manifest.webmanifest`.
+- **Brand kit (public, downloadable) in `public/logo/`:** `codesapp-mark.svg`, `codesapp-icon.svg`, `codesapp-logo.svg`/`-dark.svg` (wordmark outlined to paths — no font dependency) + PNGs, and `codesapp-app-icon-1024.png` (full-bleed square — the Meta app icon). All generated from one script; if the mark changes, regenerate every file together and update `codesapp-logo.tsx` to the same geometry.
+- The sidebar still shows each TENANT's own logo (`companies.logo_url`) — the CodesApp mark is product branding only.
+
 ### Frontend conventions (FE-1)
 - All API calls go through `apiFetch<T>()` / `apiFetchEnvelope<T>()` in `lib/api.ts` — unwraps the `{success,data,message,meta}` envelope, throws `ApiError` with `status` + `userMessage`. Never call axios directly in components.
 - Error → UX mapping: 401 handled by the axios interceptor (refresh→retry→/login); 412 → redirect to `/onboarding`; 403 → toast `message`; 5xx → toast generic + `console.error`.

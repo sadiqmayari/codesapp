@@ -15,6 +15,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
+import { CodesAppLogo } from '@/components/brand/codesapp-logo';
 import FeatureSlider from '@/components/landing/feature-slider';
 import PricingSection from '@/components/landing/pricing-section';
 
@@ -76,12 +77,7 @@ const VALUES = [
 
 function Brand() {
   return (
-    <div className="flex items-center gap-2">
-      <span className="grid h-9 w-9 place-items-center rounded-xl bg-green-500 text-white shadow-sm">
-        <MessagesSquare size={20} />
-      </span>
-      <span className="text-lg font-bold tracking-tight text-gray-900">CodesApp</span>
-    </div>
+    <CodesAppLogo size={34} />
   );
 }
 

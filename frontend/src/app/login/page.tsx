@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
+import { CodesAppLogo } from '@/components/brand/codesapp-logo';
 
 const schema = z.object({
   email: z.string().email('Invalid email'),
@@ -60,7 +61,9 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="w-full max-w-md bg-white rounded-2xl shadow p-8">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">CodesApp</h1>
+          <h1 className="flex justify-center">
+            <CodesAppLogo size={40} />
+          </h1>
           <p className="text-gray-500 mt-1">Sign in to your account</p>
         </div>
 
