@@ -214,6 +214,12 @@ export function TemplateFormModal({
       toast.error('Add an example URL for each dynamic-URL button.');
       return;
     }
+    if (category === 'authentication') {
+      toast.error(
+        'Authentication templates use Meta’s fixed passcode format and can’t be built here. Choose Utility for order messages, or create the passcode template in WhatsApp Manager.',
+      );
+      return;
+    }
     setSubmitting(true);
     try {
       await apiFetch('/templates', {
@@ -296,6 +302,13 @@ export function TemplateFormModal({
                 <option value="utility">Utility</option>
                 <option value="authentication">Authentication</option>
               </select>
+              {category === 'authentication' && (
+                <p className="mt-1.5 text-xs text-amber-700">
+                  Authentication is only for one-time passcodes, in Meta&apos;s fixed format.
+                  Create those in WhatsApp Manager. For order, payment or delivery messages,
+                  choose <strong>Utility</strong>.
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">

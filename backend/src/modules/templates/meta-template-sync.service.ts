@@ -22,6 +22,39 @@ interface MetaTemplateResponse {
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
+/** `templates.rejection_reason` is VARCHAR(191). Longer values crash the update. */
+export const REJECTION_REASON_MAX = 191;
+
+export function clampReason(reason: string | null | undefined): string | null {
+  if (!reason) return null;
+  const r = reason.trim();
+  return r.length > REJECTION_REASON_MAX ? `${r.slice(0, REJECTION_REASON_MAX - 1)}…` : r;
+}
+
+/**
+ * Turn a raw Graph failure ("Meta template POST /v25.0/… → 400 {json}") into the
+ * sentence Meta wrote for humans (`error_user_title: error_user_msg`), falling back
+ * to `error.message`, then to the raw text.
+ */
+export function readableMetaError(raw: string): string {
+  const start = raw.indexOf('{');
+  if (start >= 0) {
+    try {
+      const parsed = JSON.parse(raw.slice(start)) as {
+        error?: { message?: string; error_user_title?: string; error_user_msg?: string };
+      };
+      const e = parsed.error;
+      if (e?.error_user_msg) {
+        return e.error_user_title ? `${e.error_user_title}: ${e.error_user_msg}` : e.error_user_msg;
+      }
+      if (e?.message) return e.message;
+    } catch {
+      /* not JSON — fall through */
+    }
+  }
+  return raw;
+}
+
 @Injectable()
 export class MetaTemplateSyncService {
   private readonly logger = new Logger(MetaTemplateSyncService.name);
@@ -76,7 +109,7 @@ export class MetaTemplateSyncService {
             language: t.language,
             components: t.components ?? [],
           } as unknown as object,
-          rejection_reason: t.rejected_reason ?? null,
+          rejection_reason: clampReason(t.rejected_reason),
         };
         if (existing) {
           if (
@@ -164,7 +197,7 @@ export class MetaTemplateSyncService {
       return { id: res.id ?? null };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return { id: null, error: msg };
+      return { id: null, error: readableMetaError(msg) };
     }
   }
 

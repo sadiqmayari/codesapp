@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -78,13 +79,16 @@ export class TemplatesService {
       return updated;
     }
 
-    return this.prisma.template.update({
-      where: { id: tpl.id },
-      data: {
-        status: 'rejected',
-        rejection_reason: result.error ?? 'Meta API rejected template',
-      },
+    // Meta refused the submission outright (invalid template, bad token…), so
+    // nothing is under review. Drop the draft row instead of listing a fake
+    // "rejected" template, and give the user Meta's own reason so the form can
+    // be fixed and resubmitted.
+    await this.prisma.template.deleteMany({
+      where: { id: tpl.id, company_id: companyId },
     });
+    throw new BadRequestException(
+      `Meta did not accept this template. ${result.error ?? 'No reason was given.'}`,
+    );
   }
 
   async softDelete(companyId: number, id: number) {

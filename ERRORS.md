@@ -19,6 +19,12 @@
 
 ## Entries
 
+### [Templates] Creating a template Meta refuses → "Something went wrong" (2026-11-20)
+**Error message:** `Invalid prisma.template.update() invocation: The provided value for the column is too long for the column's type. Column: rejection_reason` (after Meta 400 `Component HEADER is not supported for AUTHENTICATION templates…`).
+**Cause:** `TemplatesService.create` stored the RAW Graph error ("Meta template POST /v25.0/… → 400 {json}", ~400 chars) in `templates.rejection_reason` (VARCHAR(191)) → the update threw a 500, so the user saw a generic error, and the row was left stuck "pending" with no Meta id. The form also offered Authentication in the free-form builder, which Meta never accepts (auth templates use Meta's fixed passcode format).
+**Fix:** `readableMetaError()` extracts Meta's `error_user_title: error_user_msg`; on an outright refusal `create` deletes the draft row and throws 400 with that reason (form stays open, toast shows it); `clampReason()` caps every `rejection_reason` write (also template sync) at 191. Form now explains Authentication and blocks submitting it (create those in WhatsApp Manager). The orphan Sois row #14 was soft-deleted.
+**Rule:** never write an external error string into a VARCHAR column without clamping it.
+
 ### [Ops] Bulk-cancel progress bar stuck + sync-suppress flag ignored after the web/worker split (2026-11-15)
 **Symptom:** Cancel-booking popup's bar never finished although the booking WAS cancelled at the courier, in CodesApp and Shopify (found on the first RapidXpk cancel).
 **Root cause:** progress lived in an in-process `Map` on `ShipmentService`. Since APP_ROLE web/worker (2026-11-13) the WEB container creates the batch + answers polls, the WORKER runs the job and updated its own copy. Same class of bug: `shopify-sync-suppress` (CacheService) was set by status-sync / statement-apply in the worker and read by the Shopify fulfillment webhook in web — so backfilled courier statuses could WhatsApp customers again.
