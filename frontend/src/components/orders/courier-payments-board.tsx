@@ -84,6 +84,7 @@ import { Modal, ConfirmDialog } from '@/components/ui/modal';
 import { PeriodSelect } from '@/components/orders/period-select';
 import { periodRange, PeriodKey } from '@/lib/date-period';
 import {
+  courierInvoicePdf,
   loadsheetStaging,
   listShipments,
   listLoadsheets,
@@ -864,6 +865,27 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [deleteTarget, setDeleteTarget] = useState<CourierInvoice | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [erpBusy, setErpBusy] = useState<number | null>(null);
+  // Regenerate the settlement PDF on every download. The stored pdf_url is a
+  // snapshot from apply time, so courier invoice numbers uploaded later (Invoice
+  // import) never showed on it. Fresh render = current numbers. The tab is opened
+  // synchronously (popup blockers) and pointed at the new file once it's ready;
+  // on failure we fall back to the stored copy.
+  const [pdfBusy, setPdfBusy] = useState<number | null>(null);
+  const downloadPdf = async (iv: CourierInvoice) => {
+    const win = window.open('', '_blank');
+    setPdfBusy(iv.id);
+    try {
+      const { url } = await courierInvoicePdf(iv.id);
+      if (win) win.location.href = url;
+      else window.open(url, '_blank');
+    } catch (e) {
+      if (iv.pdfUrl && win) win.location.href = iv.pdfUrl;
+      else win?.close();
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not generate the PDF.');
+    } finally {
+      setPdfBusy(null);
+    }
+  };
   const toggleErpPosted = async (iv: CourierInvoice, posted: boolean) => {
     setErpBusy(iv.id);
     try {
@@ -1073,15 +1095,14 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                       <Eye size={14} />
                     </button>
                     {iv.pdfUrl && (
-                      <a
-                        href={iv.pdfUrl}
-                        target="_blank"
-                        rel="noreferrer"
+                      <button
+                        onClick={() => void downloadPdf(iv)}
+                        disabled={pdfBusy === iv.id}
                         title="Download"
                         className={cn(STMT_ICON_BTN, 'border-transparent bg-gray-50 text-green-700')}
                       >
-                        <Download size={14} />
-                      </a>
+                        {pdfBusy === iv.id ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                      </button>
                     )}
                     {canDelete && (
                       <button
@@ -1177,15 +1198,14 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                             <Eye size={14} />
                           </button>
                           {iv.pdfUrl ? (
-                            <a
-                              href={iv.pdfUrl}
-                              target="_blank"
-                              rel="noreferrer"
+                            <button
+                              onClick={() => void downloadPdf(iv)}
+                              disabled={pdfBusy === iv.id}
                               title="Download"
                               className={cn(STMT_ICON_BTN, 'border-transparent bg-gray-50 text-green-700')}
                             >
-                              <Download size={14} />
-                            </a>
+                              {pdfBusy === iv.id ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                            </button>
                           ) : (
                             <span className="w-7" />
                           )}

@@ -699,8 +699,16 @@ export class CourierInvoiceService implements OnModuleInit {
     // Join the Invoice-import courier invoice number by order name, so the
     // DOWNLOADED statement prints it beside each order. (The in-app View stays
     // number-free — this is download-only, per the tenant's request.)
+    // A line that didn't match a shipment has no orderName, but the courier's own
+    // order ref (clientOrderId, e.g. "39533") still identifies the order — use it
+    // as "#39533" so those rows get their invoice number too.
+    const nameOf = (l: ReconciledLine): string | null => {
+      if (l.orderName) return l.orderName;
+      const ref = (l.clientOrderId ?? '').replace(/^#+/, '').trim();
+      return ref ? `#${ref}` : null;
+    };
     const orderNames = showInvoice
-      ? [...new Set(lines.map((l) => l.orderName).filter((n): n is string => !!n))]
+      ? [...new Set(lines.map(nameOf).filter((n): n is string => !!n))]
       : [];
     const invByOrder = new Map<string, string>();
     if (orderNames.length) {
@@ -736,7 +744,10 @@ export class CourierInvoiceService implements OnModuleInit {
       lines: lines.map((l) => ({
         ...l,
         createdAt: l.createdAt ? new Date(l.createdAt) : null,
-        courierInvoiceNumber: l.orderName ? invByOrder.get(l.orderName) ?? null : null,
+        courierInvoiceNumber: (() => {
+          const n = nameOf(l);
+          return n ? invByOrder.get(n) ?? null : null;
+        })(),
       })),
       summary,
     });

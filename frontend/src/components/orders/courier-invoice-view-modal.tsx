@@ -5,6 +5,7 @@ import { Download, Loader2 } from 'lucide-react';
 import { Modal } from '@/components/ui/modal';
 import { fmtDate } from '@/lib/utils';
 import {
+  courierInvoicePdf,
   getCourierInvoice,
   type CourierDeductionComponent,
   type CourierInvoiceAdjustment,
@@ -32,6 +33,24 @@ interface InvoiceView {
 export function CourierInvoiceViewModal({ id, onClose }: { id: number; onClose: () => void }) {
   const [inv, setInv] = useState<InvoiceView | null>(null);
   const [err, setErr] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+
+  // Re-render the PDF on download so courier invoice numbers imported after the
+  // statement was applied show up (the stored pdf_url is an apply-time snapshot).
+  const downloadPdf = async () => {
+    const win = window.open('', '_blank');
+    setPdfBusy(true);
+    try {
+      const { url } = await courierInvoicePdf(id);
+      if (win) win.location.href = url;
+      else window.open(url, '_blank');
+    } catch {
+      if (inv?.pdfUrl && win) win.location.href = inv.pdfUrl;
+      else win?.close();
+    } finally {
+      setPdfBusy(false);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -122,14 +141,13 @@ export function CourierInvoiceViewModal({ id, onClose }: { id: number; onClose: 
 
           <div className="flex justify-end gap-2 pt-1">
             {inv.pdfUrl && (
-              <a
-                href={inv.pdfUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              <button
+                onClick={() => void downloadPdf()}
+                disabled={pdfBusy}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
               >
-                <Download size={14} /> Download full PDF
-              </a>
+                {pdfBusy ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Download full PDF
+              </button>
             )}
             <button
               onClick={onClose}
