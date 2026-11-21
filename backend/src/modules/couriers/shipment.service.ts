@@ -2830,11 +2830,17 @@ export class ShipmentService implements OnModuleInit {
         payment_gateway: string | null;
         total_price: string | number | null;
         currency: string | null;
+        statement_number: string | null;
+        statement_date: Date | null;
       }>
     >(Prisma.sql`
       SELECT s.id, s.shopify_order_name, o.order_number, s.courier_type,
         s.destination_city, s.status, s.delivered_at, o.phone,
-        o.payment_gateway, o.total_price, o.currency
+        o.payment_gateway, o.total_price, o.currency,
+        (SELECT ci.invoice_number FROM courier_invoices ci
+          WHERE ci.id = s.courier_invoice_id AND ci.company_id = s.company_id) AS statement_number,
+        (SELECT ci.report_date FROM courier_invoices ci
+          WHERE ci.id = s.courier_invoice_id AND ci.company_id = s.company_id) AS statement_date
       ${where}
       ORDER BY (s.status = 'delivered') DESC, s.updated_at DESC
       LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
@@ -2851,6 +2857,9 @@ export class ShipmentService implements OnModuleInit {
       value: n(r.total_price),
       currency: r.currency,
       deliveredAt: r.delivered_at,
+      // Courier statement that confirmed delivery of this prepaid parcel.
+      statementNumber: r.statement_number,
+      statementDate: r.statement_date,
     }));
     return { rows: out, total, page, pageSize };
   }

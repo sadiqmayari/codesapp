@@ -736,6 +736,9 @@ export interface PrepaidPaymentRow {
   value: number;
   currency: string | null;
   deliveredAt: string | null;
+  /** Courier statement that confirmed this prepaid parcel's delivery. */
+  statementNumber?: string | null;
+  statementDate?: string | null;
 }
 
 /** Bank Deposit + Card Payments summary cards (prepaid orders). */
@@ -906,6 +909,14 @@ export interface CourierDeductionComponent {
   amount: number;
   /** false = show in the breakup only, not as a card. */
   card?: boolean;
+  /** Service charges vs taxes (absent = inferred from the label). */
+  group?: 'charges' | 'taxes';
+}
+
+/** Service charge or tax? Explicit `group` wins; else inferred from the label. */
+export function deductionGroup(c: CourierDeductionComponent): 'charges' | 'taxes' {
+  if (c.group) return c.group;
+  return /(^|[^a-z])(tax|gst|sst|wht|withholding)([^a-z]|$)/i.test(c.label) ? 'taxes' : 'charges';
 }
 
 export interface CourierInvoice {

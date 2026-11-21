@@ -162,12 +162,18 @@ function Settlement({ d, hasCOD, money }: { d: OrderDetail; hasCOD: boolean; mon
   if (sh.courierType === 'manual') {
     title = 'No courier settlement';
     sub = 'Fulfilled manually, so no courier owes money on this order.';
+  } else if (!hasCOD && sh.settledAt) {
+    title = `Prepaid · on ${courier} statement${sh.statementNumber ? ` ${sh.statementNumber}` : ''}`;
+    sub = `${courier} confirmed delivery on a settlement statement${
+      sh.statementDate ? ` dated ${fmtDate(sh.statementDate)}` : ''
+    } (settled ${fmtDate(sh.settledAt)}). No cash to collect.`;
+    tone = 'good';
   } else if (!hasCOD) {
     title = 'Nothing to settle';
     sub = 'Prepaid order. The courier collects no cash.';
   } else if (sh.settledAt) {
     title = `Settled ${fmtDate(sh.settledAt)}`;
-    sub = `${courier} paid ${money(o.totalPrice)} on a settlement statement${o.courierInvoiceNumber ? ` (invoice #${o.courierInvoiceNumber})` : ''}.`;
+    sub = `${courier} paid ${money(o.totalPrice)} on statement${sh.statementNumber ? ` ${sh.statementNumber}` : ''}${o.courierInvoiceNumber ? ` (invoice #${o.courierInvoiceNumber})` : ''}.`;
     tone = 'good';
   } else if (delivered) {
     const days = daysSince(sh.deliveredAt ?? o.deliveredAt);

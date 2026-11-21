@@ -239,6 +239,9 @@ export interface OrderDetail {
     cancelledAt: string | null;
     settledAt: string | null;
     invoiceId: number | null;
+    /** Courier settlement statement that confirmed this parcel (COD or prepaid). */
+    statementNumber?: string | null;
+    statementDate?: string | null;
     loadsheetBatchId: number | null;
     lastStatusRaw: string | null;
     shipperAdvice: string | null;

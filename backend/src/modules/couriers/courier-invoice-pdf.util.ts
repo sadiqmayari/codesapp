@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-import { ReconciledLine, ReconcileSummary } from './invoices/courier-invoice.types';
+import { DeductionComponent, ReconciledLine, ReconcileSummary } from './invoices/courier-invoice.types';
 
 const A4 = { w: 595.28, h: 841.89 };
 
@@ -254,9 +254,27 @@ export async function buildCourierInvoicePdf(
     y -= 22;
     const brk: Array<[string, string, boolean]> = [
       [`COD collected (${paidLines.length} delivered parcels)`, money(opts.totals.codCollected), false],
-      ...tb.map(
-        (t) => [t.sublabel ? `${t.label} (${t.sublabel})` : t.label, `- ${money(t.amount)}`, false] as [string, string, boolean],
-      ),
+      // Service charges first, then taxes — each with its own subtotal.
+      ...(['charges', 'taxes'] as const).flatMap((g) => {
+        const items = tb.filter((t) => groupOf(t) === g);
+        if (!items.length) return [];
+        const title = g === 'charges' ? 'Service charges' : 'Taxes';
+        return [
+          ...items.map(
+            (t) =>
+              [`   ${t.sublabel ? `${t.label} (${t.sublabel})` : t.label}`, `- ${money(t.amount)}`, false] as [
+                string,
+                string,
+                boolean,
+              ],
+          ),
+          [`Total ${title.toLowerCase()}`, `- ${money(items.reduce((x, t) => x + t.amount, 0))}`, true] as [
+            string,
+            string,
+            boolean,
+          ],
+        ];
+      }),
       ['Total deductions', `- ${money(opts.totals.deductions)}`, true],
     ];
     for (const [k, v, strong] of brk) {
@@ -595,6 +613,12 @@ export async function buildCourierInvoicePdf(
   }
 
   return Buffer.from(await doc.save());
+}
+
+/** Service charge or tax? Explicit `group` wins; else inferred from the label. */
+function groupOf(t: DeductionComponent): 'charges' | 'taxes' {
+  if (t.group) return t.group;
+  return /(^|[^a-z])(tax|gst|sst|wht|withholding)([^a-z]|$)/i.test(t.label) ? 'taxes' : 'charges';
 }
 
 /** dd-MMM (compact, for the line table). */

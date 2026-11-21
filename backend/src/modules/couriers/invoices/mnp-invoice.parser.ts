@@ -65,6 +65,8 @@ export class MnpInvoiceParser implements CourierInvoiceParser {
   private static readonly FALLBACK_MULT = 1.1 * 1.15;
   private static readonly FUEL_RATE = 0.1;
   private static readonly GST_RATE = 0.15;
+  /** M&P deducts a FLAT Rs 100 inter-bank transfer (IBFT) fee on every payout. */
+  private static readonly IBFT_FEE = 100;
 
   private cellStr(cell: ExcelJS.Cell | undefined): string {
     const v = cell?.value as unknown;
@@ -99,10 +101,30 @@ export class MnpInvoiceParser implements CourierInvoiceParser {
     return m ? m[1] : null;
   }
 
+  /**
+   * M&P prints "13 Nov 2026" (also ISO from the filename). `new Date()` parsed it
+   * at LOCAL midnight → in PKT that's the previous day in UTC, so the PDF showed
+   * 12-Nov. Parse the calendar day explicitly and anchor to NOON UTC.
+   */
   private parseDate(raw: string): Date | null {
-    if (!raw) return null;
-    const d = new Date(raw);
-    return Number.isNaN(d.getTime()) ? null : d;
+    const s = (raw ?? '').trim();
+    if (!s) return null;
+    const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const mk = (y: number, m: number, d: number): Date | null => {
+      if (y < 100) y += 2000;
+      const dt = new Date(Date.UTC(y, m - 1, d, 12));
+      return m >= 1 && m <= 12 && dt.getUTCMonth() === m - 1 ? dt : null;
+    };
+    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) return mk(+m[1], +m[2], +m[3]);
+    m = s.match(/^(\d{1,2})[\s\-/]([A-Za-z]{3,})[\s\-/,]*(\d{2,4})/);
+    if (m) {
+      const mi = MONTHS.indexOf(m[2].slice(0, 3).toLowerCase());
+      if (mi >= 0) return mk(+m[3], mi + 1, +m[1]);
+    }
+    m = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})/); // day-first
+    if (m) return mk(+m[3], +m[2], +m[1]);
+    return null;
   }
 
   async parse(buffer: Buffer, meta?: { filename?: string }): Promise<ParsedInvoice> {
@@ -257,7 +279,9 @@ export class MnpInvoiceParser implements CourierInvoiceParser {
     }
 
     const invoiceCharge = shippingTotal + fuelTotal + gstTotal; // == shippingTotal × mult
-    const deductions = invoiceCharge + whtTotal + sstTotal;
+    // + the flat IBFT fee (settlement-level; taxView derives it as deductions −
+    // itemised per-parcel charges and shows it as "Bank transfer fee (IBFT)").
+    const deductions = invoiceCharge + whtTotal + sstTotal + MnpInvoiceParser.IBFT_FEE;
     const netPayable = codCollected - deductions;
 
     // Cross-check: Σ(Shipping) × calibrated mult should equal our fuel+gst build.

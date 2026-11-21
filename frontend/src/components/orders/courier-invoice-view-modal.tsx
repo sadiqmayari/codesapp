@@ -7,6 +7,7 @@ import { fmtDate } from '@/lib/utils';
 import {
   courierInvoicePdf,
   getCourierInvoice,
+  deductionGroup,
   type CourierDeductionComponent,
   type CourierInvoiceAdjustment,
   type CourierInvoiceTotals,
@@ -65,6 +66,9 @@ export function CourierInvoiceViewModal({ id, onClose }: { id: number; onClose: 
   const cur = inv?.currency ?? 'PKR';
   const money = (v: number) => `${cur} ${Math.round(v).toLocaleString()}`;
   const cards = (inv?.taxBreakdown ?? []).filter((t) => t.card !== false);
+  const charges = (inv?.taxBreakdown ?? []).filter((t) => deductionGroup(t) === 'charges');
+  const taxes = (inv?.taxBreakdown ?? []).filter((t) => deductionGroup(t) === 'taxes');
+  const sum = (xs: CourierDeductionComponent[]) => xs.reduce((s, x) => s + x.amount, 0);
 
   return (
     <Modal open onClose={onClose} title="Settlement summary" size="md">
@@ -119,14 +123,28 @@ export function CourierInvoiceViewModal({ id, onClose }: { id: number; onClose: 
             <p className="mb-1.5 text-xs font-semibold text-gray-700">Deduction breakup</p>
             <div className="overflow-hidden rounded-lg border border-gray-200 text-sm">
               <Row label={`COD collected (${inv.totals.paidRows} delivered parcels)`} value={money(inv.totals.codCollected)} />
-              {(inv.taxBreakdown ?? []).map((c, i) => (
-                <Row
-                  key={i}
-                  label={c.sublabel ? `${c.label} (${c.sublabel})` : c.label}
-                  value={`- ${money(c.amount)}`}
-                  amber
-                />
-              ))}
+              {[
+                { title: 'Service charges', items: charges },
+                { title: 'Taxes', items: taxes },
+              ]
+                .filter((g) => g.items.length)
+                .map((g) => (
+                  <div key={g.title}>
+                    <div className="border-t border-gray-100 bg-gray-50/70 px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      {g.title}
+                    </div>
+                    {g.items.map((c, i) => (
+                      <Row
+                        key={i}
+                        label={c.sublabel ? `${c.label} (${c.sublabel})` : c.label}
+                        value={`- ${money(c.amount)}`}
+                        amber
+                        indent
+                      />
+                    ))}
+                    <Row label={`Total ${g.title.toLowerCase()}`} value={`- ${money(sum(g.items))}`} strong />
+                  </div>
+                ))}
               <Row label="Total deductions" value={`- ${money(inv.totals.deductions)}`} strong />
               {inv.adjustment && inv.adjustment.amount !== 0 && (
                 <Row
@@ -179,12 +197,14 @@ function Row({
   amber,
   strong,
   net,
+  indent,
 }: {
   label: string;
   value: string;
   amber?: boolean;
   strong?: boolean;
   net?: boolean;
+  indent?: boolean;
 }) {
   return (
     <div
@@ -192,7 +212,9 @@ function Row({
         net ? 'bg-green-50' : strong ? 'bg-gray-50' : 'odd:bg-white even:bg-gray-50/40'
       }`}
     >
-      <span className={`${strong || net ? 'font-semibold text-gray-800' : 'text-gray-600'}`}>{label}</span>
+      <span className={`${strong || net ? 'font-semibold text-gray-800' : 'text-gray-600'} ${indent ? 'pl-3' : ''}`}>
+        {label}
+      </span>
       <span
         className={`font-medium ${net ? 'text-green-700' : amber ? 'text-amber-700' : 'text-gray-800'} ${
           strong || net ? 'font-bold' : ''

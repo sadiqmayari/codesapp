@@ -778,6 +778,7 @@ function PrepaidDrilldownModal({
                   <th className="px-3 py-3 font-medium">Courier</th>
                   <th className="px-3 py-3 font-medium">Status</th>
                   <th className="px-3 py-3 font-medium">Gateway</th>
+                  <th className="px-3 py-3 font-medium">Statement</th>
                   <th className="px-3 py-3 text-right font-medium">Value</th>
                 </tr>
               </thead>
@@ -821,6 +822,18 @@ function PrepaidDrilldownModal({
                       </span>
                     </td>
                     <td className="px-3 py-2.5 text-xs text-gray-500">{r.gateway ?? '—'}</td>
+                    <td className="px-3 py-2.5 text-xs">
+                      {r.statementNumber ? (
+                        <span
+                          title={`Delivery confirmed on this courier statement${r.statementDate ? ` (${fmtDate(r.statementDate)})` : ''}`}
+                          className="rounded-full bg-indigo-50 px-2 py-0.5 font-medium text-indigo-700"
+                        >
+                          {r.statementNumber}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2.5 text-right font-medium text-gray-800">
                       {qmoney(r.value, r.currency ?? null)}
                     </td>

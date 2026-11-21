@@ -950,10 +950,18 @@ export class CourierInvoiceService implements OnModuleInit {
       // 15% on that; Advance Income Tax 2% (wht) + Withholding Sales Tax 2% (sst),
       // both on the taxable COD (COD − invoice).
       return [
-        { label: 'Service charges', sublabel: 'delivery + fuel surcharge', amount: v.shipping + v.fuel },
-        { label: 'GST', sublabel: '15% on service charges', amount: v.gst },
-        { label: 'Advance Income Tax', sublabel: '2% of taxable', amount: v.wht },
-        { label: 'Withholding Sales Tax', sublabel: '2% of taxable', amount: v.sst },
+        { label: 'Delivery charges', sublabel: 'all parcels on the statement', amount: v.shipping, group: 'charges' as const },
+        { label: 'Fuel surcharge', sublabel: '10% of delivery', amount: v.fuel, group: 'charges' as const },
+        {
+          label: 'Bank transfer fee (IBFT)',
+          sublabel: 'flat per statement',
+          amount: v.settlementFee ?? 0,
+          card: false,
+          group: 'charges' as const,
+        },
+        { label: 'GST', sublabel: '15% on delivery + fuel', amount: v.gst, group: 'taxes' as const },
+        { label: 'Advance Income Tax', sublabel: '2% of taxable COD', amount: v.wht, group: 'taxes' as const },
+        { label: 'Withholding Sales Tax', sublabel: '2% of taxable COD', amount: v.sst, group: 'taxes' as const },
       ].filter((r) => r.amount > 0);
     }
     if (courier === 'trax') {

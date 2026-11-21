@@ -68,6 +68,8 @@ export interface DeductionComponent {
   sublabel?: string;
   amount: number;
   card?: boolean;
+  /** Service charges vs taxes — the view/PDF subtotal each group. Absent = inferred from the label. */
+  group?: 'charges' | 'taxes';
 }
 
 /** A courier statement, normalized. */

@@ -11418,6 +11418,7 @@ export class ShopifyService implements OnModuleInit {
           cancelled_at: true,
           courier_settled_at: true,
           courier_invoice_id: true,
+          courier_invoice: { select: { invoice_number: true, report_date: true } },
           last_courier_status_raw: true,
           shipper_advice_status: true,
           shipper_advice_required_at: true,
@@ -11599,6 +11600,9 @@ export class ShopifyService implements OnModuleInit {
             cancelledAt: shipment.cancelled_at,
             settledAt: shipment.courier_settled_at,
             invoiceId: shipment.courier_invoice_id,
+            // The courier settlement statement that confirmed this parcel (COD or prepaid).
+            statementNumber: shipment.courier_invoice?.invoice_number ?? null,
+            statementDate: shipment.courier_invoice?.report_date ?? null,
             loadsheetBatchId: shipment.loadsheet_batch_id,
             lastStatusRaw: shipment.last_courier_status_raw,
             shipperAdvice: shipment.shipper_advice_status,
