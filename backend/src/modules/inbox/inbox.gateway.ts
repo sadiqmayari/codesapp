@@ -14,6 +14,9 @@ import { WsJwtGuard } from './ws-jwt.guard';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isPrivileged as isPrivilegedRole } from '../../common/auth/roles';
 
+/** Minimum gap between two `orders.changed` pings for one company. */
+const ORDERS_CHANGED_MIN_MS = 10_000;
+
 @WebSocketGateway({
   cors: {
     origin: process.env.APP_URL,
@@ -31,6 +34,7 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly online = new Map<number, Map<number, number>>();
 
   // Per-company debounce timers for the coalesced `orders.changed` ping.
+  private readonly ordersChangedLastAt = new Map<number, number>();
   private readonly ordersChangedTimers = new Map<
     number,
     ReturnType<typeof setTimeout>
@@ -365,16 +369,25 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * Orders screen re-pulls its lane counts + KPI strip at most ~once per window.
    * Carries no data on purpose — the client refetches the authoritative figures.
    */
+  /**
+   * Coalesced "orders changed" ping. THROTTLED (not just debounced): at most
+   * one ping per company every ORDERS_CHANGED_MIN_MS. Every ping makes each
+   * open Orders board / dashboard / bell refetch heavy counts, and Shopify
+   * webhooks arrive every few seconds — a trailing debounce still fired every
+   * ~5 s under that steady stream and pinned the web container's CPU.
+   */
   emitOrdersChanged(companyId: number): void {
     if (!this.server) return;
-    const existing = this.ordersChangedTimers.get(companyId);
-    if (existing) clearTimeout(existing);
+    if (this.ordersChangedTimers.has(companyId)) return; // one already queued
+    const since = Date.now() - (this.ordersChangedLastAt.get(companyId) ?? 0);
+    const wait = Math.max(1500, ORDERS_CHANGED_MIN_MS - since);
     this.ordersChangedTimers.set(
       companyId,
       setTimeout(() => {
         this.ordersChangedTimers.delete(companyId);
+        this.ordersChangedLastAt.set(companyId, Date.now());
         this.server?.to(this.companyRoom(companyId)).emit('orders.changed', {});
-      }, 1500),
+      }, wait),
     );
   }
 

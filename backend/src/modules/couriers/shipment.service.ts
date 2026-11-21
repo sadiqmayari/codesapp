@@ -36,6 +36,14 @@ import {
 } from '../../common/utils/line-items-summary';
 import { SharedStateService } from '../../common/services/shared-state.service';
 
+const LANE_COUNTS_TTL_MS = 15_000;
+type LaneCountsResult = {
+  toBook: { total: number; confirmed: number; awaiting: number };
+  inFlight: { total: number; outForDelivery: number };
+  needsAttention: { total: number; addressIssue: number; returned: number; failed: number; shipperAdvice: number };
+  delivered: { total: number };
+};
+
 // Local contact tag added when a parcel is returned (RTO) — a visible marker in
 // the inbox + contacts that this customer didn't receive the package and it
 // came back. Same literal the Shopify CUSTOMER gets (CUSTOMER_BLACKLIST_TAG).
@@ -1357,6 +1365,15 @@ export class ShipmentService implements OnModuleInit {
    * Each figure below reuses `buildQueueWhere`, so a lane count and the rows you
    * get when you open that lane can never disagree.
    */
+  /**
+   * Lane counts = 10 heavy COUNTs (shipment-status lanes resolve big gid
+   * lists). They are asked for by every open Orders board, dashboard and
+   * navbar bell on every `orders.changed` ping, so identical requests share
+   * ONE in-flight query and a 15 s result cache (per process).
+   */
+  private readonly laneCountsInFlight = new Map<string, Promise<LaneCountsResult>>();
+  private readonly laneCountsCache = new Map<string, { at: number; value: LaneCountsResult }>();
+
   async laneCounts(
     companyId: number,
     opts: {
@@ -1366,6 +1383,42 @@ export class ShipmentService implements OnModuleInit {
       to?: Date;
       store?: number;
     } = {},
+  ): Promise<LaneCountsResult> {
+    const key = [
+      companyId,
+      (opts.search ?? '').trim(),
+      opts.courier ?? '',
+      opts.from?.getTime() ?? '',
+      opts.to?.getTime() ?? '',
+      opts.store ?? '',
+    ].join('|');
+    const hit = this.laneCountsCache.get(key);
+    if (hit && Date.now() - hit.at < LANE_COUNTS_TTL_MS) return hit.value;
+    const running = this.laneCountsInFlight.get(key);
+    if (running) return running;
+    const p = this.computeLaneCounts(companyId, opts)
+      .then((value) => {
+        this.laneCountsCache.set(key, { at: Date.now(), value });
+        if (this.laneCountsCache.size > 500) {
+          const cutoff = Date.now() - LANE_COUNTS_TTL_MS;
+          for (const [k, v] of this.laneCountsCache) if (v.at < cutoff) this.laneCountsCache.delete(k);
+        }
+        return value;
+      })
+      .finally(() => this.laneCountsInFlight.delete(key));
+    this.laneCountsInFlight.set(key, p);
+    return p;
+  }
+
+  private async computeLaneCounts(
+    companyId: number,
+    opts: {
+      search?: string;
+      courier?: CourierType;
+      from?: Date;
+      to?: Date;
+      store?: number;
+    },
   ) {
     const search = (opts.search ?? '').trim();
     const range = { from: opts.from, to: opts.to };
