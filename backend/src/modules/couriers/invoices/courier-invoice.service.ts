@@ -279,8 +279,26 @@ export class CourierInvoiceService implements OnModuleInit {
       const o = s ? orderByGid.get(s.shopify_order_gid) : undefined;
       const expectedCod = o?.total_outstanding != null ? Number(o.total_outstanding) : null;
       const alreadySettled = !!s?.courier_settled_at;
+      // Delivered-without-COD (M&P): prepaid order (nothing outstanding) → settle
+      // like a paid line; otherwise its COD is in a later transfer (or we can't
+      // find the order) → mark delivered only, never settle / mark paid.
+      let paid = l.paid;
+      let prepaid = false;
+      let deliveredUnpaid = false;
+      if (l.needsPrepaidCheck) {
+        if (s && expectedCod != null && expectedCod <= 0.5) {
+          paid = true;
+          prepaid = true;
+        } else {
+          paid = false;
+          deliveredUnpaid = true;
+        }
+      }
       return {
         ...l,
+        paid,
+        prepaid,
+        deliveredUnpaid,
         matchedBy: matchedBy as ReconciledLine['matchedBy'],
         shipmentId: s?.id ?? null,
         orderName: s?.shopify_order_name ?? null,
@@ -288,10 +306,10 @@ export class CourierInvoiceService implements OnModuleInit {
         expectedCod,
         // Only meaningful on a paid line — an undelivered parcel has no COD yet.
         codMismatch:
-          l.paid && expectedCod != null && Math.abs(l.codAmount - expectedCod) > 0.5,
-        willPromote: !!s && l.paid && s.status !== 'delivered',
-        willSettle: !!s && l.paid && !alreadySettled,
-        alreadySettled: l.paid && alreadySettled,
+          paid && expectedCod != null && Math.abs(l.codAmount - expectedCod) > 0.5,
+        willPromote: !!s && (paid || deliveredUnpaid) && s.status !== 'delivered',
+        willSettle: !!s && paid && !alreadySettled,
+        alreadySettled: paid && alreadySettled,
       };
     });
 
@@ -322,6 +340,16 @@ export class CourierInvoiceService implements OnModuleInit {
           orderName: l.orderName,
           ourStatus: l.ourStatus,
         })),
+      prepaidSettled: lines.filter((l) => l.prepaid).length,
+      deliveredUnpaid: lines.filter((l) => l.deliveredUnpaid).length,
+      deliveredUnpaidSamples: lines
+        .filter((l) => l.deliveredUnpaid)
+        .slice(0, SAMPLE_CAP)
+        .map((l) => ({
+          trackingNumber: l.trackingNumber,
+          orderName: l.orderName ?? (l.clientOrderId ? `#${l.clientOrderId}` : null),
+          expectedCod: l.expectedCod,
+        })),
     };
 
     return { lines, summary, currency };
@@ -346,7 +374,9 @@ export class CourierInvoiceService implements OnModuleInit {
     }
 
     const summary = (inv.summary as unknown as ReconcileSummary) ?? null;
-    const total = summary?.paidRows ?? 0;
+    const total = ((inv.lines as unknown as ReconciledLine[]) ?? []).filter(
+      (l) => (l.paid || l.deliveredUnpaid) && l.shipmentId,
+    ).length;
     await this.prisma.courierInvoice.update({
       where: { id: inv.id },
       data: {
@@ -382,7 +412,8 @@ export class CourierInvoiceService implements OnModuleInit {
 
     const lines = (inv.lines as unknown as ReconciledLine[]) ?? [];
     const summary = (inv.summary as unknown as ReconcileSummary) ?? ({} as ReconcileSummary);
-    const paid = lines.filter((l) => l.paid && l.shipmentId);
+    // Paid lines get the full flow; deliveredUnpaid lines are only marked delivered.
+    const paid = lines.filter((l) => (l.paid || l.deliveredUnpaid) && l.shipmentId);
 
     let processed = 0;
     let promoted = 0;
@@ -471,6 +502,10 @@ export class CourierInvoiceService implements OnModuleInit {
               promoted++;
             }
 
+            // Delivered, but its COD is NOT on this statement → stop here: no
+            // settle, no mark-paid, no archive. It stays in Pending payments.
+            if (!line.deliveredUnpaid) {
+
             // 2. Settle the COD against this statement. Same guards as
             //    settlePayments, so re-applying is a no-op.
             const res = await this.prisma.shipment.updateMany({
@@ -525,6 +560,7 @@ export class CourierInvoiceService implements OnModuleInit {
               );
               if (arch.done) archived++;
             }
+            } // end !deliveredUnpaid
           }
         } catch (err) {
           failed++;

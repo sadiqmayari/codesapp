@@ -216,6 +216,14 @@ export async function buildCourierInvoicePdf(
     .slice()
     .sort((a, b) => orderNumOf(a) - orderNumOf(b));
   const unpaidLines = opts.lines.filter((l) => !l.paid);
+  // Delivered, but the COD isn't on this statement (M&P) — listed in their own
+  // table; the rest of the unpaid lines are undelivered/returned (charges only).
+  const pendingLines = unpaidLines
+    .filter((l) => l.deliveredUnpaid)
+    .slice()
+    .sort((a, b) => orderNumOf(a) - orderNumOf(b));
+  const undeliveredCount = unpaidLines.length - pendingLines.length;
+  const pendingCharges = pendingLines.reduce((s, l) => s + chargesOf(l), 0);
   const paidCod = paidLines.reduce((s, l) => s + (l.codAmount || 0), 0);
   const paidCharges = paidLines.reduce((s, l) => s + chargesOf(l), 0);
   const unpaidCharges = unpaidLines.reduce((s, l) => s + chargesOf(l), 0);
@@ -271,10 +279,17 @@ export async function buildCourierInvoicePdf(
       [`Delivered parcels — courier charges`, `- ${money(paidCharges)}`, false],
       [`Subtotal for delivered parcels`, money(paidCod - paidCharges), true],
     ];
-    if (unpaidLines.length) {
+    if (pendingLines.length) {
       rowsBreak.push([
-        `Undelivered parcels (${unpaidLines.length}) — charges only, not listed below`,
-        `- ${money(unpaidCharges)}`,
+        `Delivered, COD not in this transfer (${pendingLines.length}) — charges only`,
+        `- ${money(pendingCharges)}`,
+        false,
+      ]);
+    }
+    if (undeliveredCount) {
+      rowsBreak.push([
+        `Undelivered parcels (${undeliveredCount}) — charges only, not listed below`,
+        `- ${money(unpaidCharges - pendingCharges)}`,
         false,
       ]);
     }
@@ -348,6 +363,16 @@ export async function buildCourierInvoicePdf(
     ['Matched to CodesApp orders', `${s.matched} of ${s.totalRows}`, s.unmatched ? amber : green],
     ['Marked delivered from this statement', String(s.toPromote), ink],
     ['Settled (COD reconciled)', String(s.toSettle), green],
+    ...(s.prepaidSettled
+      ? ([['  of which prepaid (no COD to collect)', String(s.prepaidSettled), grey]] as Array<
+          [string, string, ReturnType<typeof rgb>]
+        >)
+      : []),
+    ...(s.deliveredUnpaid
+      ? ([['Delivered, COD not in this transfer (stays pending)', String(s.deliveredUnpaid), amber]] as Array<
+          [string, string, ReturnType<typeof rgb>]
+        >)
+      : []),
     ['Already settled before this run', String(s.alreadySettled), grey],
     ['COD amount discrepancies', String(s.codMismatches), s.codMismatches ? red : green],
     ['Not found in CodesApp', String(s.unmatched), s.unmatched ? amber : green],
@@ -471,7 +496,7 @@ export async function buildCourierInvoicePdf(
   drawHead();
 
   const ROW = 15;
-  paidLines.forEach((l, i) => {
+  const drawLine = (l: ReconciledLine, i: number) => {
     if (y - ROW < M + 16) {
       newPage();
       drawHead();
@@ -506,7 +531,8 @@ export async function buildCourierInvoicePdf(
     put('charges', charges ? `- ${money(charges)}` : '—');
     put('net', money(l.netTotal), bold, l.netTotal < 0 ? red : ink);
     y -= ROW;
-  });
+  };
+  paidLines.forEach(drawLine);
 
   // total row — sums THIS table (delivered parcels only)
   if (y - 20 < M) newPage();
@@ -534,12 +560,35 @@ export async function buildCourierInvoicePdf(
     font: bold,
     color: green,
   });
+  if (pendingLines.length) {
+    y -= 30;
+    if (y < M + 80) newPage();
+    page.drawText(`Delivered — COD not in this transfer (${pendingLines.length})`, {
+      x: M,
+      y: y - 10,
+      size: 11,
+      font: bold,
+      color: amber,
+    });
+    y -= 16;
+    page.drawText('Delivered but no cash on this statement — not settled, still in Pending payments. Charges deducted.', {
+      x: M,
+      y: y - 8,
+      size: 8,
+      font,
+      color: grey,
+    });
+    y -= 16;
+    drawHead();
+    pendingLines.forEach(drawLine);
+  }
   if (unpaidLines.length) {
     y -= 22;
+    if (y < M + 16) newPage();
     // NOTE: standard Helvetica is WinAnsi-encoded — stick to characters it can
     // represent (an arrow like U+2192 throws at draw time). Em dash / middot are fine.
     page.drawText(
-      `Less charges on ${unpaidLines.length} undelivered parcels: - ${money(unpaidCharges)}` +
+      `Less charges on ${unpaidLines.length} ${pendingLines.length ? 'unsettled' : 'undelivered'} parcels: - ${money(unpaidCharges)}` +
         `   ·   Net payable ${money(opts.totals.netPayable)}`,
       { x: M + PAD, y: y - 8, size: 8, font, color: grey },
     );

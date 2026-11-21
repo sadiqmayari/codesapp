@@ -38,6 +38,13 @@ export interface ParsedInvoiceLine {
   qty: number | null;
   /** When the courier booked/created the parcel, if the statement says. */
   createdAt: Date | null;
+  /**
+   * Courier says DELIVERED but remitted no COD on this statement (M&P). Reconcile
+   * decides: our order has nothing outstanding (prepaid) → settled like a paid
+   * line; otherwise the COD isn't in this transfer → `deliveredUnpaid` (marked
+   * delivered, never settled / marked paid). Charges are deducted either way.
+   */
+  needsPrepaidCheck?: boolean;
 }
 
 /** Statement-level totals, summed by the parser from its own rows. */
@@ -102,6 +109,14 @@ export interface ReconciledLine extends ParsedInvoiceLine {
   /** Paid line not yet settled → will get courier_settled_at on apply. */
   willSettle: boolean;
   alreadySettled: boolean;
+  /** needsPrepaidCheck resolved as prepaid → settled with no COD (nothing to mark paid). */
+  prepaid?: boolean;
+  /**
+   * needsPrepaidCheck resolved as NOT prepaid (COD still owed, or no matching
+   * order): marked delivered on apply but NOT settled / marked paid / archived —
+   * it stays in Pending payments until a statement carries its cash.
+   */
+  deliveredUnpaid?: boolean;
   /** Courier invoice number stamped from an uploaded account statement (Invoice
    *  import), joined by order name at PDF time. Printed in the download only. */
   courierInvoiceNumber?: string | null;
@@ -138,6 +153,15 @@ export interface ReconcileSummary {
   }>;
   /** Order names that will be flipped to delivered (capped sample). */
   promoteSamples: Array<{ trackingNumber: string; orderName: string | null; ourStatus: string | null }>;
+  /** Delivered with no COD and the order was prepaid → settled (M&P). */
+  prepaidSettled?: number;
+  /** Delivered with no COD and the order still owes COD → stays pending (M&P). */
+  deliveredUnpaid?: number;
+  deliveredUnpaidSamples?: Array<{
+    trackingNumber: string;
+    orderName: string | null;
+    expectedCod: number | null;
+  }>;
   /** Cheque/payment reference carried through for display (e.g. Leopards). */
   chequeNumber?: string | null;
   /** Settlement-level deduction components (see ParsedInvoice.extraDeductions). */

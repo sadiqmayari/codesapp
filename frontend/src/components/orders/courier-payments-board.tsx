@@ -62,6 +62,7 @@ import {
   listPayfastSettlements,
   payfastStatementPdf,
   deletePayfastSettlement,
+  setPayfastErpPosted,
   type PayfastSettlement,
 } from '@/lib/payfast';
 import { OrderNameButton } from '@/components/orders/order-detail-view';
@@ -307,6 +308,25 @@ function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
   };
 
   const [pfDelTarget, setPfDelTarget] = useState<PayfastSettlement | null>(null);
+  const [pfErpBusy, setPfErpBusy] = useState<number | null>(null);
+  const togglePfErpPosted = async (s: PayfastSettlement, posted: boolean) => {
+    setPfErpBusy(s.id);
+    try {
+      await setPayfastErpPosted(s.id, posted);
+      setPfList((prev) =>
+        prev.map((x) =>
+          x.id === s.id
+            ? { ...x, erpPostedAt: posted ? new Date().toISOString() : null, erpPostedBy: posted ? x.erpPostedBy : null }
+            : x,
+        ),
+      );
+      toast.success(posted ? 'Marked posted' : 'Posted mark removed');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not update');
+    } finally {
+      setPfErpBusy(null);
+    }
+  };
   const [pfDelBusy, setPfDelBusy] = useState(false);
   const runPfDelete = async () => {
     if (!pfDelTarget) return;
@@ -453,6 +473,7 @@ function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
                   <th className="px-2 py-1.5 text-right">Txns</th>
                   <th className="px-2 py-1.5 text-right">Received</th>
                   <th className="px-2 py-1.5">Status</th>
+                  <th className="px-2 py-1.5">ERP</th>
                   <th className="px-3 py-1.5 text-right">Actions</th>
                 </tr>
               </thead>
@@ -481,6 +502,35 @@ function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
                       >
                         {s.status}
                       </span>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      {s.erpPostedAt ? (
+                        <span className="inline-flex items-center gap-1">
+                          <span
+                            title={`Posted to ERP${s.erpPostedBy ? ` by ${s.erpPostedBy}` : ''} · ${fmtDate(s.erpPostedAt)}`}
+                            className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700"
+                          >
+                            Posted
+                          </span>
+                          <button
+                            onClick={() => togglePfErpPosted(s, false)}
+                            disabled={pfErpBusy === s.id}
+                            title="Undo — not posted"
+                            className="text-gray-300 hover:text-rose-600 disabled:opacity-50"
+                          >
+                            <X size={13} />
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => togglePfErpPosted(s, true)}
+                          disabled={pfErpBusy === s.id}
+                          title="Mark this settlement posted in your ERP"
+                          className="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                        >
+                          Mark posted
+                        </button>
+                      )}
                     </td>
                     <td className="px-3 py-1.5 text-right">
                       <div className="flex items-center justify-end gap-3">

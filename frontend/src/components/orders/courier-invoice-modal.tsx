@@ -304,6 +304,12 @@ export function CourierInvoiceModal({
                 ['Will be marked delivered', String(summary.toPromote), summary.toPromote ? 'green' : ''],
                 ['Will be settled (COD reconciled)', String(summary.toSettle), 'green'],
                 ['Will be marked paid + archived in Shopify', String(summary.toSettle), 'green'],
+                ...(summary.prepaidSettled
+                  ? [['  of which prepaid (no COD to collect)', String(summary.prepaidSettled), '']]
+                  : []),
+                ...(summary.deliveredUnpaid
+                  ? [['Delivered, COD not in this transfer (stays pending)', String(summary.deliveredUnpaid), 'amber']]
+                  : []),
                 ['Already settled', String(summary.alreadySettled), ''],
                 ['COD amount discrepancies', String(summary.codMismatches), summary.codMismatches ? 'red' : ''],
                 ['Not found in CodesApp', String(summary.unmatched), summary.unmatched ? 'amber' : ''],
@@ -338,6 +344,23 @@ export function CourierInvoiceModal({
                 {summary.promoteSamples.map((p) => (
                   <li key={p.trackingNumber}>
                     {p.orderName ?? p.trackingNumber} — currently {p.ourStatus ?? 'unknown'}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
+          {(summary.deliveredUnpaidSamples?.length ?? 0) > 0 && (
+            <details className="rounded-lg border border-amber-200 bg-amber-50/40 px-3 py-2 text-xs">
+              <summary className="cursor-pointer font-medium text-amber-800">
+                {summary.deliveredUnpaid} delivered but COD not in this transfer — marked delivered, NOT settled or
+                marked paid
+              </summary>
+              <ul className="mt-2 space-y-0.5 text-amber-900">
+                {summary.deliveredUnpaidSamples!.map((p) => (
+                  <li key={p.trackingNumber}>
+                    {p.orderName ?? p.trackingNumber}
+                    {p.expectedCod != null ? ` — ${money(p.expectedCod)} still owed` : ' — order not found in CodesApp'}
                   </li>
                 ))}
               </ul>

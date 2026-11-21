@@ -32,7 +32,11 @@ import { ParsedInvoice, ParsedInvoiceLine } from './courier-invoice.types';
  *      gst = 15% of (Shipping + fuel). Fuel + GST ride as `extraDeductions` (not
  *      per-paid-parcel), mirroring Leopards.
  *
- *   2. `paid` (= delivered → promote + flow) is `CN Status === 'DELIVERED'` (EXACT —
+ *   2. (Revised 2026-11-21) `paid` = COD > 0 ONLY. A DELIVERED parcel with COD 0
+ *      carries `needsPrepaidCheck`: reconcile settles it only when our order is
+ *      prepaid (nothing outstanding); otherwise it's marked delivered but stays in
+ *      Pending payments (its cash comes in a later transfer). Charges are deducted
+ *      on every row regardless. Historical note — "delivered" is `CN Status === 'DELIVERED'` (EXACT —
  *      a loose /deliver/ would catch "UNDELIVERED") OR `COD Amount > 0`. The file has
  *      a parcel marked UNDELIVERED that still remitted ₨4,499 COD with full tax — the
  *      cash column is the truth, so COD>0 overrides the status. The status side also
@@ -185,6 +189,12 @@ export class MnpInvoiceParser implements CourierInvoiceParser {
       // (status DELIVERED, COD 0) that a COD-only rule was dropping. COD is still
       // only settled where there's cash (codAmount drives mark-paid downstream).
       const delivered = statusRaw.trim().toUpperCase() === 'DELIVERED' || cod > 0;
+      // Only a parcel whose COD is ON this statement is paid here. A delivered
+      // parcel with no COD is either prepaid (settle it) or a COD order whose cash
+      // comes in a later transfer (mark delivered only) — the parser can't tell,
+      // so reconcile checks our order's outstanding balance (needsPrepaidCheck).
+      const paid = cod > 0;
+      const needsPrepaidCheck = delivered && !paid;
       raw.push({
         shipping,
         invoiceCol,
@@ -192,7 +202,8 @@ export class MnpInvoiceParser implements CourierInvoiceParser {
           trackingNumber: cn,
           clientOrderId: this.normalizeRef(this.cellStr(at(row, cOrder))),
           status: statusRaw || null,
-          paid: delivered,
+          paid,
+          needsPrepaidCheck,
           codAmount: cod,
           shippingCharge: shipping,
           fuelSurcharge: 0, // set below once the multiplier is known

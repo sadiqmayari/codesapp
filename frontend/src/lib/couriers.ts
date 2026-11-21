@@ -875,6 +875,15 @@ export interface CourierInvoiceSummary {
     orderName: string | null;
     ourStatus: string | null;
   }>;
+  /** M&P: delivered with no COD and the order was prepaid → settled. */
+  prepaidSettled?: number;
+  /** M&P: delivered with no COD and COD still owed → marked delivered, stays pending. */
+  deliveredUnpaid?: number;
+  deliveredUnpaidSamples?: Array<{
+    trackingNumber: string;
+    orderName: string | null;
+    expectedCod: number | null;
+  }>;
   progress?: {
     processed: number;
     total: number;
