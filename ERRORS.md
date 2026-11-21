@@ -1089,3 +1089,8 @@ The old `/ad-report` had these defects; each is fixed by the Growth module (see 
 ## [Attendance] Auto-absent never ran in prod (fixed 2026-11-21)
 - Cause: the sweep only ran when an external scheduler called `/cron/attendance/daily-sweep`, and that entry was never added to the VPS crontab (0 system-marked absent rows ever).
 - Fix: the worker runs the sweep hourly (`AutoCheckoutService`); only tenants that use attendance; never earlier than 2026-11-20.
+
+## [Courier statements] Leopards statement filed under the wrong date/month (fixed 2026-11-21)
+- **Symptom:** an uploaded Leopards Cheque Detail statement showed the wrong statement date (e.g. 11 Aug shown as 8 Nov) or none, so it sat in the wrong month (history, monthly rollup, Courier payments statement date).
+- **Cause:** `LeopardsInvoiceParser.parseDate` used `new Date(s)`. Leopards prints Pakistani DAY-FIRST dates; JS reads `11/08/2026` as US MM/DD (8 Nov) and `11-08-2026` as invalid (NULL). Same bug hit each row's booking date.
+- **Fix:** explicit day-first parser (DD/MM/YYYY, DD-MM-YYYY, ISO, DD-Mon-YYYY), anchored to noon UTC; fallback to the date inside the invoice number (`20260811-…`). Migration `20261124000000_leopards_statement_dates` re-dates existing non-rollup Leopards statements from their invoice number. Rollups built before the fix may need re-generating for the affected months.

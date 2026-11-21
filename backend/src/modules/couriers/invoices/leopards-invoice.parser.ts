@@ -45,11 +45,47 @@ export class LeopardsInvoiceParser implements CourierInvoiceParser {
   private cellsOf(tr: string): string[] {
     return (tr.match(/<t[dh][^>]*>[\s\S]*?<\/t[dh]>/gi) ?? []).map((c) => this.strip(c));
   }
+  /**
+   * Leopards prints Pakistani DAY-FIRST dates ("11/08/2026", "11-08-2026",
+   * "11-Aug-2026"). `new Date()` reads a slashed date as US MM/DD — 11/08 became
+   * 8 Nov instead of 11 Aug, and dashed DD-MM-YYYY failed outright — so the
+   * statement landed in the wrong month. Parse explicitly; anchor to NOON UTC so
+   * the tenant-tz display stays on the printed calendar day.
+   */
   private parseDate(raw: string): Date | null {
-    const s = (raw ?? '').replace(/,/g, '').trim();
+    const s = (raw ?? '').replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
     if (!s) return null;
-    const d = new Date(s);
-    return Number.isNaN(d.getTime()) ? null : d;
+    const mk = (y: number, m: number, d: number): Date | null => {
+      if (y < 100) y += 2000;
+      if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+      const dt = new Date(Date.UTC(y, m - 1, d, 12));
+      return dt.getUTCMonth() === m - 1 ? dt : null;
+    };
+    // YYYY-MM-DD / YYYY/MM/DD (ISO, year first)
+    let m = s.match(/^(\d{4})[/.\-](\d{1,2})[/.\-](\d{1,2})/);
+    if (m) return mk(+m[1], +m[2], +m[3]);
+    // DD/MM/YYYY, DD-MM-YYYY, DD.MM.YY (day first — Leopards' format)
+    m = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})/);
+    if (m) return mk(+m[3], +m[2], +m[1]);
+    // DD-Mon-YYYY / DD Mon YYYY / Mon DD YYYY
+    const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    m = s.match(/^(\d{1,2})[\s\-/]([A-Za-z]{3,})[\s\-/](\d{2,4})/);
+    if (m) {
+      const mi = MONTHS.indexOf(m[2].slice(0, 3).toLowerCase());
+      if (mi >= 0) return mk(+m[3], mi + 1, +m[1]);
+    }
+    m = s.match(/^([A-Za-z]{3,})[\s\-/](\d{1,2})[\s\-/](\d{2,4})/);
+    if (m) {
+      const mi = MONTHS.indexOf(m[1].slice(0, 3).toLowerCase());
+      if (mi >= 0) return mk(+m[3], mi + 1, +m[2]);
+    }
+    return null;
+  }
+
+  /** Invoice numbers carry the statement day: "20260811-3309426" → 11 Aug 2026. */
+  private dateFromInvoiceNumber(inv: string | null): Date | null {
+    const m = (inv ?? '').match(/^(20\d{2})(\d{2})(\d{2})/);
+    return m ? this.parseDate(`${m[1]}-${m[2]}-${m[3]}`) : null;
   }
 
   async parse(buffer: Buffer): Promise<ParsedInvoice> {
@@ -67,7 +103,9 @@ export class LeopardsInvoiceParser implements CourierInvoiceParser {
     const chequeNumber = flat.match(/CHEQUE NO\.?:?\s*([A-Za-z0-9]+)/i)?.[1] ?? null;
     const summaryNet = flat.match(/Net Payable Amount\s*:?\s*([\d.,]+)/i)?.[1];
     const netFromSummary = summaryNet ? this.num(summaryNet) : null;
-    const reportDate = this.parseDate(flat.match(/Payment Date:?\s*([\d/.\-]+)/i)?.[1] ?? '');
+    const reportDate =
+      this.parseDate(flat.match(/Payment Date\s*:?\s*([0-9A-Za-z][0-9A-Za-z/.\- ]{5,14}\d)/i)?.[1] ?? '') ??
+      this.dateFromInvoiceNumber(invoiceNumber);
 
     // --- tables (direct row/cell parse — DO NOT use pandas-style inference) ---
     const trs = html.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) ?? [];
