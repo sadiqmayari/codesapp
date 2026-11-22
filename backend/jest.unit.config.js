@@ -3,7 +3,7 @@
 //   npx jest -c jest.unit.config.js
 module.exports = {
   rootDir: 'src',
-  testRegex: '(team-v4|memory|roles-modules|inventory-core)\\.spec\\.ts$',
+  testRegex: '(team-v4|memory|roles-modules|inventory-core|completed-entities)\\.spec\\.ts$',
   moduleFileExtensions: ['js', 'json', 'ts'],
   transform: { '^.+\\.ts$': ['ts-jest', { isolatedModules: true }] },
   testEnvironment: 'node',

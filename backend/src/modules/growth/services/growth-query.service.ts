@@ -493,16 +493,22 @@ export class GrowthQueryService {
           select: { level: true, external_id: true, name: true, status: true, objective: true, daily_budget: true,
             creative_thumb_url: true, platform: true, parent_external_id: true, campaign_id: true,
             configured_status: true, budget_owner: true, budget_type: true, lifetime_budget: true, bid_strategy: true,
-            bid_amount: true, roas_floor: true, optimization_goal: true, start_time: true },
+            bid_amount: true, roas_floor: true, optimization_goal: true, start_time: true, end_time: true },
         }),
       ]);
       const ent = new Map(entities.map((e) => [`${e.level}:${e.external_id}`, e]));
+      // Meta keeps effective_status ACTIVE on objects whose end date has passed
+      // (Ads Manager shows them as "Completed"). Derive that here so ended
+      // campaigns never count as active.
+      const ended = completedEntityKeys(entities, Date.now());
+      const statusOf = (level: string, id: string, raw: string | null | undefined) =>
+        raw && ended.has(`${level}:${id}`) && /^ACTIVE$/i.test(raw) ? 'COMPLETED' : raw ?? null;
       const newNode = (level: 'campaign' | 'adset' | 'ad', id: string, platform: string): Node => {
         const e = ent.get(`${level}:${id}`);
         return {
           level, id, platform,
           name: e?.name ?? (id.startsWith('name:') ? id.slice(5) : id.startsWith('c:') ? id.slice(2) : id),
-          status: e?.status ?? null, objective: e?.objective ?? null,
+          status: statusOf(level, id, e?.status), objective: e?.objective ?? null,
           dailyBudget: e?.daily_budget != null ? Number(e.daily_budget) : null,
           configuredStatus: e?.configured_status ?? null,
           budgetOwner: e?.budget_owner ?? null,
@@ -584,6 +590,7 @@ export class GrowthQueryService {
         if (e.platform == null) continue;
         const fresh = e.start_time != null && e.start_time.getTime() >= recent;
         if (e.configured_status !== 'ACTIVE' && !fresh) continue;
+        if (ended.has(`${e.level}:${e.external_id}`)) continue;
         if (e.level === 'campaign') {
           if (!camps.has(e.external_id)) nodeFor(e.platform, e.external_id, null, null);
         } else if (e.level === 'adset' && e.parent_external_id && byKey('campaign', e.parent_external_id)) {
@@ -861,4 +868,38 @@ function estimatePayback(ncac: number, ltv0: number, ltv90: number) {
   if (ltv0 >= ncac) return 0;
   const perDay = (ltv90 - ltv0) / 60;
   return perDay > 0 ? Math.round((ncac - ltv0) / perDay) : null;
+}
+
+/**
+ * Keys (`level:external_id`) of ad objects that have finished delivering:
+ * an ad set whose end date passed, a campaign whose stop date passed or whose
+ * every ad set has ended, and every ad under an ended ad set. Pure.
+ */
+export function completedEntityKeys(
+  entities: Array<{ level: string; external_id: string; parent_external_id: string | null; campaign_id: string | null; end_time: Date | null }>,
+  now: number,
+): Set<string> {
+  const out = new Set<string>();
+  const past = (d: Date | null) => d != null && d.getTime() < now;
+  const setsByCampaign = new Map<string, boolean[]>();
+  for (const e of entities) {
+    if (e.level !== 'adset') continue;
+    if (past(e.end_time)) out.add(`adset:${e.external_id}`);
+    const camp = e.parent_external_id ?? e.campaign_id;
+    if (!camp) continue;
+    if (!setsByCampaign.has(camp)) setsByCampaign.set(camp, []);
+    setsByCampaign.get(camp)!.push(past(e.end_time));
+  }
+  for (const e of entities) {
+    if (e.level !== 'campaign') continue;
+    const sets = setsByCampaign.get(e.external_id);
+    if (past(e.end_time) || (sets && sets.length > 0 && sets.every(Boolean))) out.add(`campaign:${e.external_id}`);
+  }
+  for (const e of entities) {
+    if (e.level !== 'ad') continue;
+    if ((e.parent_external_id && out.has(`adset:${e.parent_external_id}`)) || (e.campaign_id && out.has(`campaign:${e.campaign_id}`))) {
+      out.add(`ad:${e.external_id}`);
+    }
+  }
+  return out;
 }
