@@ -23,9 +23,14 @@ import { BarcodeFormat, DecodeHintType } from '@zxing/library';
 export default function ScanToFind({
   onScan,
   className,
+  product,
+  label = 'Scan',
 }: {
   onScan: (code: string) => void;
   className?: string;
+  /** Product barcodes (EAN/UPC) — inventory counts + receiving. */
+  product?: boolean;
+  label?: string;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -34,12 +39,13 @@ export default function ScanToFind({
         type="button"
         onClick={() => setOpen(true)}
         className={className}
-        title="Scan a courier label to find its order"
+        title={product ? 'Scan a product barcode' : 'Scan a courier label to find its order'}
       >
-        <ScanLine size={14} /> Scan
+        <ScanLine size={14} /> {label}
       </button>
       {open && (
         <ScannerSheet
+          product={product}
           onClose={() => setOpen(false)}
           onScan={(code) => {
             setOpen(false);
@@ -54,9 +60,11 @@ export default function ScanToFind({
 function ScannerSheet({
   onScan,
   onClose,
+  product,
 }: {
   onScan: (code: string) => void;
   onClose: () => void;
+  product?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
@@ -70,12 +78,12 @@ function ScannerSheet({
     // decoder does far less work per frame, so a scan resolves faster. The
     // retail-only formats (EAN-13 / ITF / Codabar) were dropped — they never
     // appear on a courier label and were slowing every frame.
-    hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-      BarcodeFormat.CODE_128,
-      BarcodeFormat.QR_CODE,
-      BarcodeFormat.CODE_39,
-      BarcodeFormat.DATA_MATRIX,
-    ]);
+    hints.set(
+      DecodeHintType.POSSIBLE_FORMATS,
+      product
+        ? [BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E, BarcodeFormat.CODE_128, BarcodeFormat.QR_CODE]
+        : [BarcodeFormat.CODE_128, BarcodeFormat.QR_CODE, BarcodeFormat.CODE_39, BarcodeFormat.DATA_MATRIX],
+    );
     // Don't spend extra CPU on the exhaustive TRY_HARDER pass — a courier label
     // held at reading distance decodes on the fast path.
     hints.set(DecodeHintType.TRY_HARDER, false);
@@ -119,7 +127,7 @@ function ScannerSheet({
       controlsRef.current?.stop();
       controlsRef.current = null;
     };
-  }, [onScan]);
+  }, [onScan, product]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

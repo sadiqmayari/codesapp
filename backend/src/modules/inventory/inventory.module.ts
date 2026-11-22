@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { InventoryController } from './inventory.controller';
 import { InventoryService } from './inventory.service';
+import { StockOpsController } from './stock-ops.controller';
+import { StockOpsService } from './stock-ops.service';
 
 /**
  * Inventory module — a local mirror of the Shopify catalogue enriched with
@@ -13,7 +15,7 @@ import { InventoryService } from './inventory.service';
  */
 @Module({
   imports: [AuthModule],
-  controllers: [InventoryController],
-  providers: [InventoryService],
+  controllers: [InventoryController, StockOpsController],
+  providers: [InventoryService, StockOpsService],
 })
 export class InventoryModule {}

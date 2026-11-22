@@ -113,6 +113,7 @@ export class InventoryController {
   }
 
   @Get('locations')
+  @Roles(...PRIVILEGED, 'fulfillment', 'member')
   locations(@CurrentUser() u: CU) {
     return this.inventory.locations(u.companyId);
   }

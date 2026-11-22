@@ -65,12 +65,15 @@ export function buildNav(user: AuthUser | null): NavSection[] {
   const has = (k: string) => (mods ? mods[k] === true : true);
 
   if (role === 'hr_manager') return flat([TEAM]);
+  // Warehouse floor work (counts, transfers, receiving POs) when the tenant runs inventory.
+  const stock: NavItem[] =
+    user?.company?.inventoryEnabled && has('inventory') ? [{ href: '/inventory/counts', label: 'Stock', icon: Boxes }] : [];
   if (role === 'member')
-    return flat([TEAM, ...(has('pack') ? [{ href: '/orders/pack', label: 'Pack station', icon: PackageCheck }] : [])]);
+    return flat([TEAM, ...(has('pack') ? [{ href: '/orders/pack', label: 'Pack station', icon: PackageCheck }] : []), ...stock]);
   if (role === 'finance')
     return flat([{ href: '/finance', label: 'Finance', icon: Wallet }, TEAM]);
   if (role === 'fulfillment')
-    return flat([{ href: '/orders', label: 'Orders', icon: ShoppingBag }, TEAM]);
+    return flat([{ href: '/orders', label: 'Orders', icon: ShoppingBag }, ...stock, TEAM]);
   if (role === 'content_manager')
     return flat([
       { href: '/content', label: 'Content', icon: Clapperboard },
@@ -199,8 +202,12 @@ export interface LockedAccess {
  * Locked roles: their home + allow-list. `null` = a full-nav role (owner,
  * admin, agent) that goes through the normal onboarding gate.
  */
+/** Inventory screens the warehouse roles (fulfillment, member) may open. */
+export const WAREHOUSE_INVENTORY_PATHS = ['/inventory/counts', '/inventory/transfers', '/inventory/purchase-orders'];
+
 export function lockedAccessFor(role: string | undefined): LockedAccess | null {
   const self = (p: string) => isSelfServicePath(p);
+  const warehouse = (p: string) => WAREHOUSE_INVENTORY_PATHS.some((w) => under(p, w)) && !under(p, '/inventory/purchase-orders/new');
   switch (role) {
     case 'finance':
       return { home: '/finance', allowed: (p) => self(p) || under(p, '/finance') };
@@ -209,6 +216,7 @@ export function lockedAccessFor(role: string | undefined): LockedAccess | null {
         home: '/orders',
         allowed: (p) =>
           self(p) ||
+          warehouse(p) ||
           (under(p, '/orders') && !FULFILLMENT_BLOCKED_ORDER_PATHS.some((b) => under(p, b))),
       };
     case 'content_manager':
@@ -222,7 +230,7 @@ export function lockedAccessFor(role: string | undefined): LockedAccess | null {
       return { home: '/content', allowed: (p) => self(p) || under(p, '/content') || under(p, '/pr') };
     case 'member':
       // Warehouse packers are often members.
-      return { home: '/team-chat', allowed: (p) => self(p) || p === '/orders/pack' };
+      return { home: '/team-chat', allowed: (p) => self(p) || p === '/orders/pack' || warehouse(p) };
     case 'hr_manager':
       return { home: '/team-chat', allowed: (p) => self(p) };
     default:
