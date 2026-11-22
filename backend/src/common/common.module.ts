@@ -15,6 +15,7 @@ import { AgentActivityService } from './services/agent-activity.service';
 import { SipTrunkAuthService } from './services/sip-trunk-auth.service';
 import { SharedStateService } from './services/shared-state.service';
 import { OrderAttributionService } from './services/order-attribution.service';
+import { InventoryLedgerService } from '../modules/inventory/core/inventory-ledger.service';
 
 @Global()
 @Module({
@@ -35,6 +36,7 @@ import { OrderAttributionService } from './services/order-attribution.service';
     SipTrunkAuthService,
     SharedStateService,
     OrderAttributionService,
+    InventoryLedgerService,
   ],
   exports: [
     EncryptionService,
@@ -53,6 +55,7 @@ import { OrderAttributionService } from './services/order-attribution.service';
     SipTrunkAuthService,
     SharedStateService,
     OrderAttributionService,
+    InventoryLedgerService,
   ],
 })
 export class CommonModule {}

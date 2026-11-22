@@ -3570,9 +3570,9 @@ export class ShipmentService implements OnModuleInit {
     if (source === 'manual' && shipment.received_at == null) {
       await this.jobQueue
         .enqueue(
-          'shopify',
+          'inventory',
           { kind: 'restockReturn', companyId, shipmentId: shipment.id },
-          { dedupKey: `restock-return:${shipment.id}` },
+          { dedupKey: `inv2-restock:${shipment.id}` },
         )
         .catch(() => undefined);
     }

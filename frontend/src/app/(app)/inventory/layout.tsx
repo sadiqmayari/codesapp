@@ -4,50 +4,48 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
-const TABS = [
-  { href: '/inventory', label: 'Catalogue', exact: true },
-  { href: '/inventory/analytics', label: 'Analytics', exact: false },
+/**
+ * Inventory module shell — one tab bar for every inventory screen. Hidden on
+ * full-page editors (new / edit product) and the legacy /inventory/<id>
+ * deep-link redirect.
+ */
+const TABS: Array<{ href: string; label: string }> = [
+  { href: '/inventory', label: 'Catalogue' },
+  { href: '/inventory/purchase-orders', label: 'Purchase orders' },
+  { href: '/inventory/counts', label: 'Counts' },
+  { href: '/inventory/transfers', label: 'Transfers' },
+  { href: '/inventory/ledger', label: 'Ledger' },
+  { href: '/inventory/suppliers', label: 'Suppliers' },
+  { href: '/inventory/analytics', label: 'Analytics' },
 ];
 
-export default function InventoryLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const pathname = usePathname();
-  // Hide the tab bar on the variant drill-down (/inventory/<id>).
-  const onDetail = /^\/inventory\/\d+$/.test(pathname);
-
-  if (onDetail) return <>{children}</>;
-
+export default function InventoryLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname() ?? '';
+  const hide = /^\/inventory\/\d+$/.test(pathname) || pathname.startsWith('/inventory/products/');
+  const active = (href: string) =>
+    href === '/inventory' ? pathname === '/inventory' : pathname === href || pathname.startsWith(`${href}/`);
   return (
-    <div>
-      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pt-4">
-        <div className="border-b border-gray-200">
-          <nav className="-mb-px flex gap-1 overflow-x-auto">
-            {TABS.map((t) => {
-              const active = t.exact
-                ? pathname === t.href
-                : pathname === t.href || pathname.startsWith(`${t.href}/`);
-              return (
-                <Link
-                  key={t.href}
-                  href={t.href}
-                  className={cn(
-                    'whitespace-nowrap px-4 py-2 text-sm font-medium border-b-2 transition-colors',
-                    active
-                      ? 'border-green-600 text-green-700'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
-                  )}
-                >
-                  {t.label}
-                </Link>
-              );
-            })}
-          </nav>
-        </div>
-      </div>
-      {children}
+    <div className="flex min-h-full flex-col">
+      {!hide && (
+        <nav aria-label="Inventory sections" className="border-b border-line bg-surface">
+          <div className="mx-auto flex max-w-[1400px] gap-1 overflow-x-auto px-4 sm:px-6">
+            {TABS.map((t) => (
+              <Link
+                key={t.href}
+                href={t.href}
+                aria-current={active(t.href) ? 'page' : undefined}
+                className={cn(
+                  'whitespace-nowrap border-b-2 px-3 py-3 text-sm font-semibold transition-colors',
+                  active(t.href) ? 'border-brand-600 text-ink' : 'border-transparent text-muted hover:text-ink',
+                )}
+              >
+                {t.label}
+              </Link>
+            ))}
+          </div>
+        </nav>
+      )}
+      <div className="flex-1">{children}</div>
     </div>
   );
 }

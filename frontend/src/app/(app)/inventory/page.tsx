@@ -1,1011 +1,879 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import {
-  Boxes,
-  RefreshCw,
-  Download,
-  Search,
-  Package,
-  Layers,
-  AlertTriangle,
-  XCircle,
-  Wallet,
-  ArrowUp,
-  ArrowUpCircle,
-  Loader2,
-  ChevronLeft,
-  ChevronRight,
-  Check,
-  Clock,
-  X,
-  ArrowUpDown,
-} from 'lucide-react';
-import { apiFetch, ApiError } from '@/lib/api';
+import { AlertTriangle, Boxes, Download, MapPin, Plus, RefreshCw, Store, Tags, Upload } from 'lucide-react';
+import { useSocket } from '@/context/socket-context';
 import { useToast } from '@/components/toast';
-import { fmtDateTime } from '@/lib/utils';
+import { ApiError, apiFetch } from '@/lib/api';
+import { cn, fmtDateTime } from '@/lib/utils';
+import { useLatestRequest, useSearchBox, useUrlFilters } from '@/lib/use-list-query';
+import { DataTable, type Column, type SortState } from '@/components/ui/data-table';
+import { SearchInput } from '@/components/ui/search-input';
+import { ActiveFilters, FilterSelect, StatusChips } from '@/components/ui/filter-bar';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { NoResults, EmptyState } from '@/components/ui/empty-state';
+import { Modal } from '@/components/ui/modal';
+import { StorePill } from '@/components/store-pill';
 import {
-  InventoryStats,
-  InventoryVariant,
-  InventorySortKey,
-  PushStatus,
-  STOCK_STATUS_META,
-  listInventory,
-  getInventoryStats,
-  getInventoryCategories,
-  getInventorySyncStatus,
+  ADJUST_REASONS,
+  bulkInventory,
+  downloadInventoryCsv,
+  getCategories,
+  getConflicts,
   getInventoryPushHealth,
-  syncInventory,
-  pushChanged as pushChangedApi,
-  updateInventoryVariant,
-  pushInventoryVariant,
-  exportInventory,
+  getLocations,
+  getSummary,
+  getSyncStatus,
+  listItems,
+  requestInventorySync,
+  resolveConflict,
+  setItemAvailable,
+  updateItem,
+  type Conflict,
+  type InventoryItem,
+  type InventoryLocation,
+  type InventorySummary,
 } from '@/lib/inventory';
-import { SkeletonRows } from '@/components/ui/skeleton';
-import { NoResults } from '@/components/ui/empty-state';
+import { ItemSheet } from '@/components/inventory/item-sheet';
+import { BundleBadge, inputCls, itemName, money, parseMoney, PushChip, setInventoryCurrency, StockBadge, Thumb } from '@/components/inventory/shared';
 
 interface StoreRow {
   id: number;
   label: string | null;
-  shopDomain: string;
-  isPrimary: boolean;
-  provider?: 'shopify' | 'woocommerce';
+  shopDomain?: string | null;
+  provider?: string;
+  isPrimary?: boolean;
 }
 
-const FILTERS = [
-  { key: 'all', label: 'All' },
-  { key: 'in', label: 'In stock' },
-  { key: 'low', label: 'Low' },
-  { key: 'out', label: 'Out' },
-];
-const LIMIT = 50;
-const money = (n: number | null) =>
-  n == null ? '—' : 'Rs ' + Math.round(n).toLocaleString('en-PK');
+const STATUS_OPTIONS = [
+  { value: '', label: 'All' },
+  { value: 'low', label: 'Low' },
+  { value: 'out', label: 'Out' },
+  { value: 'in', label: 'In stock' },
+  { value: 'incoming', label: 'Incoming' },
+  { value: 'unlinked', label: 'In one store only' },
+  { value: 'attention', label: 'Push failed' },
+  { value: 'bundle', label: 'Bundles' },
+  { value: 'untracked', label: 'Not tracked' },
+] as const;
+
+const SORT_KEYS: Record<string, string> = { product: 'title', available: 'available', committed: 'committed', incoming: 'incoming', cost: 'cost', sku: 'sku' };
 
 export default function InventoryPage() {
   const toast = useToast();
+  const { on, reconnectSeq } = useSocket();
+  const { values, set, clearAll, ready } = useUrlFilters({
+    q: '',
+    status: '',
+    store: '',
+    loc: '',
+    category: '',
+    sort: '',
+    dir: '',
+    page: '1',
+    item: '',
+  });
+  const [input, setInput] = useSearchBox(values.q, ready, (q) => set({ q }));
+  const run = useLatestRequest();
+  const runSummary = useLatestRequest();
 
-  const [stores, setStores] = useState<StoreRow[]>([]);
-  const [storeId, setStoreId] = useState<number | undefined>(undefined);
-
-  const [rows, setRows] = useState<InventoryVariant[]>([]);
+  const [rows, setRows] = useState<InventoryItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [stats, setStats] = useState<InventoryStats | null>(null);
-  const [categories, setCategories] = useState<string[]>([]);
-  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
-
-  const [filter, setFilter] = useState('all');
-  const [category, setCategory] = useState('');
-  const [search, setSearch] = useState('');
-  const [debounced, setDebounced] = useState('');
-  const [page, setPage] = useState(1);
-  const [sort, setSort] = useState<InventorySortKey>('product');
-  const [dir, setDir] = useState<'asc' | 'desc'>('asc');
-
-  // Pre-fill the search box from ?q= (deep-link from the Analytics tab) and
-  // the store from ?store= (Analytics spans all stores; without it a
-  // secondary-store product was searched in the primary store and not found).
-  const urlStoreRef = useRef<number | null>(null);
-  useEffect(() => {
-    const sp = new URLSearchParams(window.location.search);
-    const q = sp.get('q');
-    if (q) {
-      setSearch(q);
-      setDebounced(q.trim());
-    }
-    const st = Number(sp.get('store'));
-    if (st > 0) urlStoreRef.current = st;
-  }, []);
-  // The first fetch waits until the store list resolved, so the page doesn't
-  // flash "all stores" and then switch to the primary store.
-  const [storesReady, setStoresReady] = useState(false);
-  const loadSeq = useRef(0);
-
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [summary, setSummary] = useState<InventorySummary | null>(null);
+  const [stores, setStores] = useState<StoreRow[]>([]);
+  const [locations, setLocations] = useState<InventoryLocation[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [missingScopes, setMissingScopes] = useState<string[]>([]);
   const [syncing, setSyncing] = useState(false);
-  const [pushingAll, setPushingAll] = useState(false);
-  // Scope health (drives the "can't push" banner). write_inventory = qty+cost,
-  // write_products = price/compare-at.
-  const [writeInventory, setWriteInventory] = useState<boolean | null>(null);
-  const [writeProducts, setWriteProducts] = useState<boolean | null>(null);
-  const [healthDismissed, setHealthDismissed] = useState(false);
+  const [lastSync, setLastSync] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string | number>>(new Set());
+  const [bulk, setBulk] = useState<null | 'adjust' | 'category' | 'reorder'>(null);
+  const [conflictsOpen, setConflictsOpen] = useState(false);
+  const [sheetVersion, setSheetVersion] = useState(0);
+  const limit = 50;
+  const page = Math.max(1, Number(values.page) || 1);
 
-  // debounce search
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(search.trim()), 350);
-    return () => clearTimeout(t);
-  }, [search]);
-  useEffect(() => setPage(1), [debounced, filter, category, storeId, sort, dir]);
+  const query = useMemo(
+    () => ({
+      search: values.q,
+      status: values.status,
+      category: values.category,
+      storeId: Number(values.store) || undefined,
+      locationId: Number(values.loc) || undefined,
+      sort: values.sort || undefined,
+      dir: (values.dir as 'asc' | 'desc') || undefined,
+      page,
+      limit,
+    }),
+    [values.q, values.status, values.category, values.store, values.loc, values.sort, values.dir, page],
+  );
 
-  const toggleSort = (k: InventorySortKey) => {
-    if (k === sort) setDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-    else {
-      setSort(k);
-      // sensible first direction: text asc, numbers desc
-      setDir(['price', 'cost', 'shopify', 'codesapp'].includes(k) ? 'desc' : 'asc');
+  const load = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
+      try {
+        const r = await run((signal) => listItems(query, signal));
+        if (r === undefined) return;
+        setRows(r.rows);
+        setTotal(r.total);
+        setLoaded(true);
+      } catch (e) {
+        toast.error(e instanceof ApiError ? e.userMessage : 'Could not load inventory');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [query, run, toast],
+  );
+
+  const loadSummary = useCallback(async () => {
+    const s = await runSummary((signal) => getSummary(query.storeId, query.locationId, signal)).catch(() => undefined);
+    if (s) {
+      setInventoryCurrency(s.currency);
+      setSummary(s);
     }
-  };
+  }, [query.storeId, query.locationId, runSummary]);
 
-  // connected stores (selector only shows when >1)
+  // first load waits for URL hydrate
+  useEffect(() => {
+    if (!ready) return;
+    void load();
+  }, [ready, load]);
+  useEffect(() => {
+    if (ready) void loadSummary();
+  }, [ready, loadSummary]);
+
+  // aux data once
   useEffect(() => {
     apiFetch<StoreRow[]>('/shopify/stores')
-      .then((list) => {
-        const arr = Array.isArray(list) ? list : [];
-        setStores(arr);
-        const fromUrl = arr.find((s) => s.id === urlStoreRef.current);
-        const primary = fromUrl ?? arr.find((s) => s.isPrimary) ?? arr[0];
-        if (primary) setStoreId(primary.id);
+      .then((s) => {
+        setStores(s);
+        // scope banner: any Shopify store missing a write scope
+        Promise.all(
+          s.filter((x) => (x.provider ?? 'shopify') === 'shopify').map((x) =>
+            getInventoryPushHealth(x.id)
+              .then((h) => [
+                ...(h.writeInventory === false ? [`write_inventory (${x.label || x.shopDomain})`] : []),
+                ...(h.writeProducts === false ? [`write_products (${x.label || x.shopDomain})`] : []),
+              ])
+              .catch(() => [] as string[]),
+          ),
+        ).then((all) => setMissingScopes(all.flat()));
       })
-      .catch(() => undefined)
-      .finally(() => setStoresReady(true));
-  }, []);
-  // Categories are per store: a stale category from the previous store would
-  // silently filter the new store to nothing.
-  const prevStoreRef = useRef(storeId);
-  useEffect(() => {
-    if (prevStoreRef.current !== storeId) setCategory('');
-    prevStoreRef.current = storeId;
-  }, [storeId]);
-
-  const loadAux = useCallback(() => {
-    getInventoryStats(storeId).then(setStats).catch(() => undefined);
-    getInventoryCategories(storeId).then(setCategories).catch(() => undefined);
-    getInventorySyncStatus(storeId)
-      .then((s) => setLastSyncedAt(s.lastSyncedAt))
+      .catch(() => setStores([]));
+    getLocations().then(setLocations).catch(() => setLocations([]));
+    getCategories().then(setCategories).catch(() => setCategories([]));
+    getSyncStatus()
+      .then((s) => {
+        setSyncing(s.running);
+        const last = s.stores.map((x) => x.lastSyncedAt).filter(Boolean).sort().pop() ?? null;
+        setLastSync(last);
+      })
       .catch(() => undefined);
-    getInventoryPushHealth(storeId)
-      .then((h) => {
-        setWriteInventory(h.writeInventory);
-        setWriteProducts(h.writeProducts);
-      })
-      .catch(() => {
-        setWriteInventory(null);
-        setWriteProducts(null);
-      });
-  }, [storeId]);
+  }, []);
 
-  const load = useCallback(async () => {
-    if (!storesReady) return;
-    const my = ++loadSeq.current;
-    setLoading(true);
-    try {
-      const { rows: r, total: t } = await listInventory({
-        storeId,
-        search: debounced,
-        status: filter,
-        category,
-        page,
-        limit: LIMIT,
-        sort,
-        dir,
-      });
-      if (my !== loadSeq.current) return; // superseded by a newer filter
-      setRows(r);
-      setTotal(t);
-    } catch (e) {
-      if (my !== loadSeq.current) return;
-      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load inventory');
-    } finally {
-      if (my === loadSeq.current) setLoading(false);
-    }
-  }, [storesReady, storeId, debounced, filter, category, page, sort, dir, toast]);
-
+  // live: any stock change / push result / sync → silent refresh (coalesced)
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  const summaryRef = useRef(loadSummary);
+  summaryRef.current = loadSummary;
   useEffect(() => {
-    void load();
-  }, [load]);
+    return on('inventory.changed', (p: { sync?: boolean; bootstrap?: boolean }) => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      refreshTimer.current = setTimeout(() => {
+        void loadRef.current(true);
+        void summaryRef.current();
+        setSheetVersion((v) => v + 1);
+        if (p?.sync || p?.bootstrap) {
+          setSyncing(false);
+          setLastSync(new Date().toISOString());
+          getLocations().then(setLocations).catch(() => undefined);
+        }
+      }, 700);
+    });
+  }, [on]);
+  const seq0 = useRef(reconnectSeq);
   useEffect(() => {
-    if (storesReady) loadAux();
-  }, [loadAux, storesReady]);
+    if (reconnectSeq === seq0.current) return;
+    void loadRef.current(true);
+    void summaryRef.current();
+  }, [reconnectSeq]);
 
-  const patchRow = (id: number, patch: Partial<InventoryVariant>) =>
-    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-
-  const saveField = async (
-    row: InventoryVariant,
-    field: 'item_code' | 'alias',
-    value: string,
-  ) => {
-    const current = field === 'item_code' ? row.itemCode : row.alias;
-    if ((current ?? '') === value) return;
-    try {
-      const updated = await updateInventoryVariant(row.id, { [field]: value || null });
-      patchRow(row.id, { itemCode: updated.itemCode, alias: updated.alias });
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Could not save');
-    }
-  };
-
-  const saveQty = async (row: InventoryVariant, value: number) => {
-    if (value === row.localQty) return;
-    try {
-      const updated = await updateInventoryVariant(row.id, { local_qty: value });
-      patchRow(row.id, {
-        localQty: updated.localQty,
-        status: updated.status,
-        dirty: updated.dirty,
-        qtyPushStatus: updated.qtyPushStatus,
-        qtyPushError: updated.qtyPushError,
-      });
-      loadAux();
-      toast.success('Saved — queued push to Shopify');
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Could not update quantity');
-    }
-  };
-
-  const saveCost = async (row: InventoryVariant, value: number | null) => {
-    if ((row.costPrice ?? null) === value) return;
-    try {
-      const updated = await updateInventoryVariant(row.id, { cost_price: value });
-      patchRow(row.id, {
-        costPrice: updated.costPrice,
-        costPushStatus: updated.costPushStatus,
-        costPushError: updated.costPushError,
-      });
-      toast.success('Saved — queued cost push to Shopify');
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Could not update cost');
-    }
-  };
-
-  const savePrice = async (row: InventoryVariant, value: number | null) => {
-    // Shopify requires a price — ignore a blank/removed sale price.
-    if (value == null) return;
-    if (value === row.price) return;
-    if (!(value > 0)) {
-      toast.error('Sale price must be more than 0');
-      return;
-    }
-    try {
-      const updated = await updateInventoryVariant(row.id, { price: value });
-      patchRow(row.id, {
-        price: updated.price,
-        pricePushStatus: updated.pricePushStatus,
-        pricePushError: updated.pricePushError,
-      });
-      toast.success('Saved — queued price push to Shopify');
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Could not update price');
-    }
-  };
-
-  const saveCompareAt = async (row: InventoryVariant, value: number | null) => {
-    if ((row.compareAtPrice ?? null) === value) return;
-    if (value != null && value > 0 && row.price != null && value <= row.price) {
-      toast.error('Compare-at price must be higher than the sale price');
-      return;
-    }
-    try {
-      const updated = await updateInventoryVariant(row.id, { compare_at_price: value });
-      patchRow(row.id, {
-        compareAtPrice: updated.compareAtPrice,
-        pricePushStatus: updated.pricePushStatus,
-        pricePushError: updated.pricePushError,
-      });
-      toast.success('Saved — queued price push to Shopify');
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Could not update compare-at price');
-    }
-  };
-
-  const [pushingId, setPushingId] = useState<number | null>(null);
-  const pushOne = async (row: InventoryVariant) => {
-    setPushingId(row.id);
-    try {
-      await pushInventoryVariant(row.id);
-      // Optimistic: the push job will set Shopify to localQty.
-      patchRow(row.id, {
-        shopifyQty: row.localQty,
-        dirty: false,
-        qtyPushStatus: 'pending',
-        qtyPushError: null,
-      });
-      toast.success('Queued push to Shopify');
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Push failed');
-    } finally {
-      setPushingId(null);
-    }
-  };
+  const sortState: SortState = values.sort
+    ? { key: Object.keys(SORT_KEYS).find((k) => SORT_KEYS[k] === values.sort) ?? 'product', dir: (values.dir as 'asc' | 'desc') || 'asc' }
+    : null;
 
   const doSync = async () => {
     setSyncing(true);
     try {
-      await syncInventory(storeId);
-      toast.info('Sync started — pulling your catalogue from Shopify…');
-      // Give the background job a head start, then refresh.
-      setTimeout(() => {
-        void load();
-        loadAux();
-        setSyncing(false);
-      }, 4000);
+      const r = await requestInventorySync(query.storeId);
+      toast.info(r.bootstrap ? 'Setting up shared stock — this takes a minute' : 'Syncing stores in the background');
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Could not start sync');
       setSyncing(false);
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not start the sync');
     }
   };
 
-  const doPushChanged = async () => {
-    setPushingAll(true);
+  const saveAvailable = async (row: InventoryItem, value: number) => {
+    if (value === row.available) return;
     try {
-      const { queued } = await pushChangedApi(storeId);
-      setRows((rs) => rs.map((r) => ({ ...r, shopifyQty: r.localQty, dirty: false })));
-      toast.success(
-        queued > 0 ? `Queued ${queued} change${queued === 1 ? '' : 's'} to Shopify` : 'Nothing to push',
-      );
+      await setItemAvailable(row.id, { available: value, seen: row.available, locationId: query.locationId });
+      setRows((rs) => rs.map((r) => (r.id === row.id ? { ...r, available: value, status: value <= 0 ? 'out' : value <= r.reorderLevel ? 'low' : 'in' } : r)));
+      void loadSummary();
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Push failed');
-    } finally {
-      setPushingAll(false);
+      if (e instanceof ApiError && e.status === 409) {
+        toast.error(e.userMessage);
+        void load(true);
+        throw e;
+      }
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not update stock');
+      throw e;
     }
   };
 
-  const doExport = async () => {
+  const saveCost = async (row: InventoryItem, value: number | null) => {
+    if (value === row.avgCost) return;
     try {
-      const { filename, csv } = await exportInventory(storeId);
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
+      await updateItem(row.id, { avg_cost: value });
+      setRows((rs) => rs.map((r) => (r.id === row.id ? { ...r, avgCost: value } : r)));
+      void loadSummary();
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Export failed');
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not save cost');
+      throw e;
     }
   };
 
-  const dirtyCount = rows.filter((r) => r.dirty).length;
-  const totalPages = Math.max(1, Math.ceil(total / LIMIT));
+  const storeOptions = stores.map((s) => ({ value: String(s.id), label: s.label || s.shopDomain || `Store ${s.id}` }));
+  const multiStore = stores.length > 1;
+  const activeFilters = [
+    ...(values.q ? [{ key: 'q', label: `Search: ${values.q}`, onRemove: () => set({ q: '' }) }] : []),
+    ...(values.status ? [{ key: 'status', label: STATUS_OPTIONS.find((o) => o.value === values.status)?.label ?? values.status, onRemove: () => set({ status: '' }) }] : []),
+    ...(values.store ? [{ key: 'store', label: `Store: ${storeOptions.find((o) => o.value === values.store)?.label ?? values.store}`, onRemove: () => set({ store: '' }) }] : []),
+    ...(values.loc ? [{ key: 'loc', label: `Location: ${locations.find((l) => String(l.id) === values.loc)?.name ?? values.loc}`, onRemove: () => set({ loc: '' }) }] : []),
+    ...(values.category ? [{ key: 'category', label: `Category: ${values.category}`, onRemove: () => set({ category: '' }) }] : []),
+  ];
+  const filtered = activeFilters.length > 0;
 
-  return (
-    <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-6 space-y-6">
-      {/* Title row */}
-      <div className="flex flex-wrap items-start gap-3 justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Boxes className="w-6 h-6 text-green-600" />
-            Inventory
-          </h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Products synced from Shopify, enriched with your own codes &amp; stock.
-            {lastSyncedAt && (
-              <span className="ml-1 text-gray-400">
-                Last synced {fmtDateTime(lastSyncedAt)}.
-              </span>
-            )}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {stores.length > 1 && (
-            <select
-              value={storeId ?? ''}
-              onChange={(e) => setStoreId(Number(e.target.value) || undefined)}
-              className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-green-500"
-            >
-              {stores.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label || s.shopDomain}
-                  {s.isPrimary ? ' — primary' : ''}
-                </option>
-              ))}
-            </select>
-          )}
-          <button
-            onClick={doSync}
-            disabled={syncing}
-            className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white rounded-lg px-4 py-2 text-sm font-medium"
-          >
-            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-            {syncing ? 'Syncing…' : 'Sync from Shopify'}
-          </button>
-          <button
-            onClick={doExport}
-            className="inline-flex items-center gap-2 bg-white border border-gray-300 hover:bg-gray-50 rounded-lg px-3 py-2 text-sm font-medium text-gray-700"
-          >
-            <Download className="w-4 h-4" />
-            Export
-          </button>
-        </div>
-      </div>
-
-      {/* Scope banner — pushes can't reach Shopify without the write scopes */}
-      {(writeInventory === false || writeProducts === false) && !healthDismissed && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
-          <div className="text-sm">
-            <div className="font-semibold text-red-800">
-              Some changes can’t reach Shopify
-            </div>
-            <div className="text-red-700 mt-0.5">
-              Your Shopify Admin token is missing{' '}
-              {writeInventory === false && (
-                <><code className="bg-red-100 px-1 rounded">write_inventory</code> (stock &amp; cost)</>
-              )}
-              {writeInventory === false && writeProducts === false && ' and '}
-              {writeProducts === false && (
-                <><code className="bg-red-100 px-1 rounded">write_products</code> (price &amp; compare-at)</>
-              )}
-              . Reconnect the store in <b>Settings → Shopify</b> with Products +
-              Inventory write access, then re-push.
+  const columns: Column<InventoryItem>[] = [
+    {
+      key: 'product',
+      header: 'Product / variant',
+      sortable: true,
+      render: (r) => (
+        <div className="flex min-w-[220px] items-center gap-3">
+          <Thumb src={r.image} alt="" />
+          <div className="min-w-0">
+            <div className="truncate font-bold text-ink">{r.title}</div>
+            <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted">
+              {r.variantTitle && r.variantTitle !== 'Default Title' && <span>{r.variantTitle}</span>}
+              {r.itemCode && <span className="rounded bg-sunken px-1.5 font-semibold text-ink">#{r.itemCode}</span>}
+              {r.shelfLocation && <span>Shelf {r.shelfLocation}</span>}
+              {r.isBundle && <BundleBadge />}
+              {!r.track && <Badge tone="neutral">Not tracked</Badge>}
             </div>
           </div>
-          <button
-            onClick={() => setHealthDismissed(true)}
-            className="ml-auto text-red-400 hover:text-red-600 shrink-0"
-            aria-label="Dismiss"
-          >
-            <X className="w-4 h-4" />
-          </button>
+        </div>
+      ),
+    },
+    {
+      key: 'sku',
+      header: 'SKU',
+      sortable: true,
+      render: (r) => <span className="font-mono text-xs text-muted">{r.sku ?? '—'}</span>,
+    },
+    ...(multiStore
+      ? [
+          {
+            key: 'stores',
+            header: 'Stores',
+            render: (r: InventoryItem) => (
+              <div className="flex flex-wrap items-center gap-1">
+                {r.listings.map((l) => (
+                  <StorePill key={l.id} storeId={l.storeId} label={l.storeLabel} size="xs" />
+                ))}
+                {r.listings.length > 1 && <span className="text-xs font-bold text-brand-700">shared</span>}
+                {r.conflict && (
+                  <span title="The stores show different stock than CodesApp" className="text-amber-700">
+                    <AlertTriangle className="h-3.5 w-3.5" aria-label="Stores disagree" />
+                  </span>
+                )}
+              </div>
+            ),
+          } as Column<InventoryItem>,
+        ]
+      : []),
+    {
+      key: 'available',
+      header: 'Available',
+      align: 'right',
+      sortable: true,
+      render: (r) =>
+        r.isBundle ? (
+          <span className="font-extrabold tabular-nums text-violet-700" title="Built from its parts">≈ {r.available}</span>
+        ) : (
+          <NumberCell value={r.available} label={`Available for ${itemName(r)}`} onSave={(v) => saveAvailable(r, v)} disabled={!r.track} />
+        ),
+    },
+    { key: 'committed', header: 'Committed', align: 'right', sortable: true, render: (r) => <span className="tabular-nums text-muted">{r.isBundle ? '—' : r.committed}</span> },
+    {
+      key: 'incoming',
+      header: 'Incoming',
+      align: 'right',
+      sortable: true,
+      render: (r) => <span className="tabular-nums text-sky-700">{r.incoming ? `+${r.incoming}` : ''}</span>,
+    },
+    {
+      key: 'cost',
+      header: 'Cost',
+      align: 'right',
+      sortable: true,
+      render: (r) => <MoneyCell value={r.avgCost} label={`Unit cost for ${itemName(r)}`} onSave={(v) => saveCost(r, v)} />,
+    },
+    {
+      key: 'price',
+      header: 'Price',
+      align: 'right',
+      render: (r) => (
+        <span className="tabular-nums">
+          {r.priceMin == null ? '—' : r.priceMin === r.priceMax ? money(r.priceMin) : `${money(r.priceMin)}–${money(r.priceMax)}`}
+        </span>
+      ),
+    },
+    { key: 'status', header: 'Status', render: (r) => (r.track ? <StockBadge status={r.status} /> : <span className="text-xs text-muted">—</span>) },
+    { key: 'sync', header: 'Sync', render: (r) => <PushChip listings={r.listings} compact /> },
+  ];
+
+  const selectedIds = Array.from(selected).map(Number);
+
+  return (
+    <div className="mx-auto flex max-w-[1400px] flex-col gap-4 px-4 py-5 sm:px-6">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-extrabold text-ink">
+            <Boxes className="h-6 w-6 text-brand-600" aria-hidden="true" /> Inventory
+          </h1>
+          <p className="mt-1 text-sm text-muted">
+            {stores.length} store{stores.length === 1 ? '' : 's'} · {locations.length} location{locations.length === 1 ? '' : 's'}
+            {lastSync && <> · synced {fmtDateTime(lastSync)}</>}
+            {syncing && <> · syncing…</>}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/inventory/counts?import=1">
+            <Button variant="secondary"><Upload className="h-4 w-4" aria-hidden="true" /> Import CSV</Button>
+          </Link>
+          <Button variant="secondary" onClick={() => void downloadInventoryCsv({ ...query, page: undefined, limit: undefined })}>
+            <Download className="h-4 w-4" aria-hidden="true" /> Export view
+          </Button>
+          <Button variant="secondary" onClick={doSync} loading={syncing}>
+            <RefreshCw className="h-4 w-4" aria-hidden="true" /> {multiStore ? 'Sync all stores' : 'Sync store'}
+          </Button>
+          <Link href="/inventory/products/new">
+            <Button variant="secondary"><Plus className="h-4 w-4" aria-hidden="true" /> New product</Button>
+          </Link>
+          <Link href="/inventory/purchase-orders/new">
+            <Button>New purchase order</Button>
+          </Link>
+        </div>
+      </header>
+
+      {summary && !summary.ready && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+          <span>
+            <b>Inventory is moving to shared stock.</b> CodesApp links the same product across your stores and keeps one stock count per location.
+          </span>
+          <Button size="sm" onClick={doSync} loading={syncing}>Set up now</Button>
         </div>
       )}
 
-      {/* Stat tiles */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <StatTile icon={Package} label="SKUs" value={stats?.skus ?? 0} />
-        <StatTile icon={Layers} label="In stock" value={stats?.units ?? 0} />
-        <StatTile
-          icon={AlertTriangle}
-          label="Low"
-          value={stats?.lowCount ?? 0}
-          tone="amber"
-        />
-        <StatTile icon={XCircle} label="Out" value={stats?.outCount ?? 0} tone="red" />
-        <div className="bg-white rounded-xl border border-gray-200 p-4 col-span-2 lg:col-span-1">
-          <div className="flex items-center gap-2 text-gray-500 text-xs font-medium uppercase tracking-wide">
-            <Wallet className="w-4 h-4" />
-            Stock value
-          </div>
-          <div className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
-            {money(stats?.stockValue ?? 0)}
-          </div>
-        </div>
-      </div>
-
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-2 justify-between">
-        <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-lg p-1">
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              onClick={() => setFilter(f.key)}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                filter === f.key
-                  ? 'bg-green-600 text-white'
-                  : 'text-gray-600 hover:bg-gray-100'
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-2">
-          {categories.length > 0 && (
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-            >
-              <option value="">All categories</option>
-              {categories.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          )}
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search sku / item code / alias"
-              className="w-64 max-w-[55vw] bg-white border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Table */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50 text-gray-500 text-left text-xs uppercase tracking-wide">
-                <th className="font-semibold px-4 py-3 w-14"></th>
-                <SortTh label="Product / Variant" col="product" sort={sort} dir={dir} onSort={toggleSort} />
-                <SortTh label="SKU" col="sku" sort={sort} dir={dir} onSort={toggleSort} />
-                <SortTh label="Item Code" col="item_code" sort={sort} dir={dir} onSort={toggleSort} className="text-green-700" />
-                <SortTh label="Alias" col="alias" sort={sort} dir={dir} onSort={toggleSort} className="text-green-700" />
-                <SortTh label="Price" col="price" sort={sort} dir={dir} onSort={toggleSort} align="right" className="text-green-700" />
-                <th className="font-semibold px-2 py-3 text-right text-green-700">Compare&nbsp;at</th>
-                <SortTh label="Cost" col="cost" sort={sort} dir={dir} onSort={toggleSort} align="right" className="text-green-700" />
-                <SortTh label="Shopify" col="shopify" sort={sort} dir={dir} onSort={toggleSort} align="center" />
-                <SortTh label="CodesApp" col="codesapp" sort={sort} dir={dir} onSort={toggleSort} align="center" />
-                <th className="font-semibold px-2 py-3">Status</th>
-                <th className="font-semibold px-2 py-3 text-right pr-4">Sync</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {loading && rows.length === 0 ? (
-                <tr>
-                  <td colSpan={12} className="p-0">
-                    <SkeletonRows rows={8} />
-                  </td>
-                </tr>
-              ) : rows.length === 0 ? (
-                <tr>
-                  <td colSpan={12} className="px-4 py-16 text-center text-gray-500">
-                    {debounced || filter !== 'all' || category ? (
-                      // Filtered empty: never tell the user to Sync from Shopify
-                      // when the real cause is their search / filter.
-                      <NoResults
-                        compact
-                        query={debounced}
-                        noun="products"
-                        hint="Searched title, SKU, item code, alias, barcode and variant."
-                        onClear={() => {
-                          setSearch('');
-                          setDebounced('');
-                          setFilter('all');
-                          setCategory('');
-                        }}
-                      />
-                    ) : (
-                      <>
-                        No products yet. Click <b>Sync from Shopify</b> to import your
-                        catalogue.
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ) : (
-                rows.map((row) => {
-                  const meta = STOCK_STATUS_META[row.status];
-                  return (
-                    <tr key={row.id} className="hover:bg-gray-50/70">
-                      <td className="px-4 py-3">
-                        <Link href={`/inventory/${row.id}`}>
-                          {row.image ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={row.image}
-                              alt=""
-                              className="w-9 h-9 rounded-lg object-cover bg-gray-100"
-                            />
-                          ) : (
-                            <span className="w-9 h-9 rounded-lg bg-gray-100 grid place-items-center text-gray-300">
-                              <Package className="w-4 h-4" />
-                            </span>
-                          )}
-                        </Link>
-                      </td>
-                      <td className="px-2 py-3">
-                        <Link
-                          href={`/inventory/${row.id}`}
-                          className="font-medium text-gray-900 hover:text-green-700"
-                        >
-                          {row.productTitle}
-                        </Link>
-                        <div className="text-gray-400 text-xs flex items-center gap-1.5">
-                          {row.isBundle && (
-                            <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 bg-violet-50 border border-violet-200">
-                              <Boxes className="w-3 h-3" />
-                              Bundle
-                            </span>
-                          )}
-                          <span>
-                            {[row.variantTitle, row.category].filter(Boolean).join(' · ') ||
-                              '—'}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-2 py-3 text-gray-500 tabular-nums">
-                        {row.sku || '—'}
-                      </td>
-                      <td className="px-2 py-3">
-                        <EditableCell
-                          value={row.itemCode ?? ''}
-                          placeholder="—"
-                          className="w-28 font-medium text-gray-900"
-                          onSave={(v) => saveField(row, 'item_code', v)}
-                        />
-                      </td>
-                      <td className="px-2 py-3">
-                        <EditableCell
-                          value={row.alias ?? ''}
-                          placeholder="—"
-                          className="w-24 text-gray-600"
-                          onSave={(v) => saveField(row, 'alias', v)}
-                        />
-                      </td>
-                      <td className="px-2 py-3 text-right">
-                        <CostCell
-                          value={row.price}
-                          state={
-                            row.pricePushStatus === 'error'
-                              ? 'error'
-                              : row.pricePushStatus === 'pending'
-                              ? 'pending'
-                              : null
-                          }
-                          title={row.pricePushError ?? undefined}
-                          onSave={(v) => savePrice(row, v)}
-                        />
-                      </td>
-                      <td className="px-2 py-3 text-right">
-                        <CostCell
-                          value={row.compareAtPrice}
-                          state={
-                            row.pricePushStatus === 'error'
-                              ? 'error'
-                              : row.pricePushStatus === 'pending'
-                              ? 'pending'
-                              : null
-                          }
-                          title={row.pricePushError ?? undefined}
-                          onSave={(v) => saveCompareAt(row, v)}
-                        />
-                      </td>
-                      <td className="px-2 py-3 text-right">
-                        <CostCell
-                          value={row.costPrice}
-                          state={
-                            row.costPushStatus === 'error'
-                              ? 'error'
-                              : row.costPushStatus === 'pending'
-                              ? 'pending'
-                              : null
-                          }
-                          title={row.costPushError ?? undefined}
-                          onSave={(v) => saveCost(row, v)}
-                        />
-                      </td>
-                      <td className="px-2 py-3 text-center tabular-nums text-gray-500">
-                        {row.isBundle ? '—' : row.shopifyQty}
-                      </td>
-                      <td className="px-2 py-3 text-center">
-                        {row.isBundle ? (
-                          <span
-                            className="inline-block tabular-nums text-violet-700 font-semibold"
-                            title="Buildable from component stock"
-                          >
-                            ≈{row.buildable ?? 0}
-                          </span>
-                        ) : (
-                          <QtyCell
-                            value={row.localQty}
-                            dirty={row.dirty}
-                            onSave={(v) => saveQty(row, v)}
-                          />
-                        )}
-                      </td>
-                      <td className="px-2 py-3">
-                        <span
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium border ${meta.chip}`}
-                        >
-                          <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />
-                          {meta.label}
-                        </span>
-                      </td>
-                      <td className="px-2 py-3 text-right pr-4">
-                        {row.isBundle ? (
-                          <span className="text-xs text-gray-400" title="Shopify derives a bundle's stock from its components — nothing to push">
-                            auto
-                          </span>
-                        ) : (
-                          <div className="inline-flex items-center gap-2 justify-end">
-                            <PushStatusChip row={row} />
-                            <button
-                              onClick={() => pushOne(row)}
-                              disabled={pushingId === row.id}
-                              className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium ${
-                                row.dirty
-                                  ? 'bg-green-600 text-white hover:bg-green-700'
-                                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                              }`}
-                            >
-                              {pushingId === row.id ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              ) : (
-                                <ArrowUp className="w-3.5 h-3.5" />
-                              )}
-                              Push
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 text-sm text-gray-500">
+      {missingScopes.length > 0 && (
+        <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
           <span>
-            <b className="text-green-700">Item Code</b> &amp;{' '}
-            <b className="text-green-700">Alias</b> are CodesApp-only — never sent to
-            Shopify.
+            CodesApp can’t update Shopify for some stores: the token is missing <b>{missingScopes.join(', ')}</b>. Re-issue the token with
+            those scopes in <Link href="/settings/stores" className="font-bold underline">Settings → Stores</Link>.
           </span>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={doPushChanged}
-              disabled={pushingAll || dirtyCount === 0}
-              className="inline-flex items-center gap-2 bg-gray-900 hover:bg-black disabled:opacity-40 text-white rounded-lg px-3 py-1.5 text-xs font-medium"
-            >
-              {pushingAll ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <ArrowUpCircle className="w-4 h-4" />
-              )}
-              Push changed{dirtyCount > 0 ? ` (${dirtyCount})` : ''}
-            </button>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1}
-                className="w-8 h-8 grid place-items-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="px-2 tabular-nums">
-                {page} / {totalPages}
-              </span>
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages}
-                className="w-8 h-8 grid place-items-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
         </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <Tile label="Available units" value={summary?.availableUnits} sub={`${summary?.skus ?? 0} items`} onClick={() => set({ status: '' })} />
+        <Tile
+          label="Stock value"
+          value={summary ? money(summary.stockValue) : undefined}
+          sub={summary?.itemsWithoutCost ? `${summary.itemsWithoutCost} items have no cost` : 'at unit cost'}
+        />
+        <Tile label="Low stock" tone="warn" value={summary?.lowCount} sub="at or under reorder point" onClick={() => set({ status: 'low' })} active={values.status === 'low'} />
+        <Tile label="Out of stock" tone="danger" value={summary?.outCount} sub="tracked items at 0" onClick={() => set({ status: 'out' })} active={values.status === 'out'} />
+        <Tile label="Incoming" tone="info" value={summary?.incomingUnits} sub="on open purchase orders" onClick={() => set({ status: 'incoming' })} active={values.status === 'incoming'} />
+        <Tile
+          label="Needs attention"
+          tone="danger"
+          value={summary ? summary.pushFailed + summary.conflicts : undefined}
+          sub={summary ? `${summary.pushFailed} push failed · ${summary.conflicts} disagree` : ''}
+          onClick={() => (summary?.conflicts ? setConflictsOpen(true) : set({ status: 'attention' }))}
+          active={values.status === 'attention'}
+        />
       </div>
+
+      {summary && summary.conflicts > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <span>
+            <b>{summary.conflicts} linked item{summary.conflicts === 1 ? '' : 's'} show different stock in your stores.</b> Pick the right number once and
+            CodesApp pushes it everywhere.
+          </span>
+          <Button size="sm" variant="secondary" onClick={() => setConflictsOpen(true)}>Review</Button>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-3 rounded-2xl border border-line bg-surface p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <SearchInput
+            value={input}
+            onChange={setInput}
+            slashShortcut
+            loading={loading && loaded}
+            placeholder="Search title, SKU, item code, barcode, shelf"
+            aria-label="Search inventory"
+            className="min-w-[220px] flex-1"
+          />
+          {multiStore && (
+            <FilterSelect icon={Store} label="Store" value={values.store} options={[{ value: '', label: 'All stores' }, ...storeOptions]} onChange={(v) => set({ store: v })} />
+          )}
+          {locations.length > 1 && (
+            <FilterSelect
+              icon={MapPin}
+              label="Location"
+              value={values.loc}
+              options={[{ value: '', label: 'All locations' }, ...locations.map((l) => ({ value: String(l.id), label: l.name }))]}
+              onChange={(v) => set({ loc: v })}
+            />
+          )}
+          {categories.length > 0 && (
+            <FilterSelect
+              icon={Tags}
+              label="Category"
+              value={values.category}
+              options={[{ value: '', label: 'All categories' }, ...categories.map((c) => ({ value: c, label: c }))]}
+              onChange={(v) => set({ category: v })}
+            />
+          )}
+        </div>
+        <StatusChips
+          options={STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+          value={values.status as (typeof STATUS_OPTIONS)[number]['value']}
+          onChange={(v) => set({ status: v })}
+        />
+        {filtered && <ActiveFilters filters={activeFilters} onClearAll={() => clearAll(['item'])} />}
+
+        <DataTable
+          rows={rows}
+          columns={columns}
+          rowKey={(r) => r.id}
+          rowLabel={(r) => itemName(r)}
+          loading={loading && !loaded}
+          onRowClick={(r) => set({ item: String(r.id), page: values.page })}
+          selectable
+          selectedKeys={selected}
+          onSelectedKeysChange={setSelected}
+          sortState={sortState}
+          onSortChange={(s) => set({ sort: s ? SORT_KEYS[s.key] ?? '' : '', dir: s?.dir ?? '' })}
+          maxHeight="none"
+          emptyNode={
+            filtered ? (
+              <NoResults query={values.q} noun="items" onClear={() => clearAll(['item'])} />
+            ) : (
+              <EmptyState
+                icon={Boxes}
+                title="No products yet"
+                description="Sync your store to bring in products and stock, or create a product here."
+                action={<Button onClick={doSync} loading={syncing}>Sync store</Button>}
+              />
+            )
+          }
+          bulkActions={(sel, clear) => (
+            <>
+              <Button size="sm" onClick={() => setBulk('adjust')}>Adjust stock…</Button>
+              <Button size="sm" variant="ghost" className="text-white hover:bg-white/10" onClick={() => setBulk('category')}>Category</Button>
+              <Button size="sm" variant="ghost" className="text-white hover:bg-white/10" onClick={() => setBulk('reorder')}>Reorder point</Button>
+              <Link href={`/inventory/purchase-orders/new?items=${sel.map((s) => s.id).join(',')}`}>
+                <Button size="sm" variant="ghost" className="text-white hover:bg-white/10">Add to PO</Button>
+              </Link>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-white hover:bg-white/10"
+                onClick={async () => {
+                  await bulkInventory({ itemIds: sel.map((s) => s.id), action: 'push' }).catch(() => undefined);
+                  toast.info(`Pushing ${sel.length} items to every store`);
+                  clear();
+                }}
+              >
+                Push now
+              </Button>
+            </>
+          )}
+        />
+
+        {total > limit && (
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-sm text-muted">
+            <span>
+              {(page - 1) * limit + 1}–{Math.min(page * limit, total)} of {total}
+            </span>
+            <span className="flex gap-2">
+              <Button size="sm" variant="secondary" disabled={page <= 1} aria-label="Previous page" onClick={() => set({ page: String(page - 1) })}>Previous</Button>
+              <Button size="sm" variant="secondary" disabled={page * limit >= total} aria-label="Next page" onClick={() => set({ page: String(page + 1) })}>Next</Button>
+            </span>
+          </div>
+        )}
+      </div>
+
+      <ItemSheet
+        itemId={values.item ? Number(values.item) : null}
+        onClose={() => set({ item: '', page: values.page })}
+        onChanged={() => {
+          void load(true);
+          void loadSummary();
+        }}
+        version={sheetVersion}
+      />
+
+      <BulkModal
+        kind={bulk}
+        itemIds={selectedIds}
+        locations={locations}
+        categories={categories}
+        onClose={() => setBulk(null)}
+        onDone={() => {
+          setBulk(null);
+          setSelected(new Set());
+          void load(true);
+          void loadSummary();
+        }}
+      />
+
+      <ConflictsModal
+        open={conflictsOpen}
+        stores={stores}
+        onClose={() => setConflictsOpen(false)}
+        onResolved={() => {
+          void load(true);
+          void loadSummary();
+        }}
+      />
     </div>
   );
 }
 
-function SortTh({
-  label,
-  col,
-  sort,
-  dir,
-  onSort,
-  align,
-  className,
-}: {
-  label: string;
-  col: InventorySortKey;
-  sort: InventorySortKey;
-  dir: 'asc' | 'desc';
-  onSort: (k: InventorySortKey) => void;
-  align?: 'right' | 'center';
-  className?: string;
-}) {
-  const active = sort === col;
-  const alignCls = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
-  const justify = align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start';
-  return (
-    <th className={`font-semibold px-2 py-3 ${alignCls} ${className ?? ''}`}>
-      <button
-        onClick={() => onSort(col)}
-        className={`inline-flex items-center gap-1 uppercase tracking-wide hover:text-gray-700 ${justify} ${
-          active ? 'text-gray-800' : ''
-        }`}
-      >
-        {label}
-        <ArrowUpDown className={`w-3 h-3 ${active ? 'opacity-100' : 'opacity-30'}`} />
-        {active && <span className="sr-only">{dir === 'asc' ? 'ascending' : 'descending'}</span>}
-      </button>
-    </th>
-  );
-}
-
-function StatTile({
-  icon: Icon,
+function Tile({
   label,
   value,
+  sub,
   tone,
+  onClick,
+  active,
 }: {
-  icon: React.ElementType;
   label: string;
-  value: number;
-  tone?: 'amber' | 'red';
+  value: React.ReactNode;
+  sub?: React.ReactNode;
+  tone?: 'warn' | 'danger' | 'info';
+  onClick?: () => void;
+  active?: boolean;
 }) {
-  const border =
-    tone === 'amber'
-      ? 'border-amber-200 bg-amber-50/40'
-      : tone === 'red'
-      ? 'border-red-200 bg-red-50/40'
-      : 'border-gray-200';
-  const labelColor =
-    tone === 'amber' ? 'text-amber-600' : tone === 'red' ? 'text-red-600' : 'text-gray-500';
-  const valueColor =
-    tone === 'amber' ? 'text-amber-700' : tone === 'red' ? 'text-red-700' : 'text-gray-900';
-  return (
-    <div className={`bg-white rounded-xl border p-4 ${border}`}>
-      <div
-        className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wide ${labelColor}`}
-      >
-        <Icon className="w-4 h-4" />
-        {label}
-      </div>
-      <div className={`text-2xl font-bold mt-1 tabular-nums ${valueColor}`}>
-        {value.toLocaleString('en-PK')}
-      </div>
-    </div>
+  const color = tone === 'warn' ? 'text-amber-700' : tone === 'danger' ? 'text-red-700' : tone === 'info' ? 'text-sky-700' : 'text-ink';
+  const body = (
+    <>
+      <span className="text-xs font-semibold text-muted">{label}</span>
+      <span className={cn('text-xl font-extrabold tabular-nums', color)}>{value ?? '—'}</span>
+      {sub && <span className="text-xs text-muted">{sub}</span>}
+    </>
+  );
+  const cls = cn(
+    'flex flex-col gap-1 rounded-2xl border bg-surface p-3 text-left',
+    active ? 'border-brand-500 ring-2 ring-brand-500/20' : 'border-line',
+  );
+  return onClick ? (
+    <button type="button" onClick={onClick} className={cn(cls, 'hover:border-brand-300')}>
+      {body}
+    </button>
+  ) : (
+    <div className={cls}>{body}</div>
   );
 }
 
-function EditableCell({
-  value,
-  placeholder,
-  className,
-  onSave,
-}: {
-  value: string;
-  placeholder?: string;
-  className?: string;
-  onSave: (v: string) => void | Promise<void>;
-}) {
-  const [v, setV] = useState(value);
-  const cur = useRef(value);
-  cur.current = value;
-  useEffect(() => setV(value), [value]);
-  return (
-    <input
-      value={v}
-      aria-label={placeholder}
-      placeholder={placeholder}
-      onChange={(e) => setV(e.target.value)}
-      onBlur={() => {
-        // Always fall back to the server value afterwards: a failed save
-        // used to leave the unsaved text showing as if it had been stored.
-        void Promise.resolve(onSave(v.trim())).finally(() => setV(cur.current));
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-        if (e.key === 'Escape') {
-          setV(cur.current);
-          requestAnimationFrame(() => (e.target as HTMLInputElement).blur());
-        }
-      }}
-      className={`bg-transparent border border-transparent hover:border-gray-200 focus:border-green-500 focus:bg-white rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/15 ${className ?? ''}`}
-    />
-  );
-}
-
-function QtyCell({
-  value,
-  dirty,
-  onSave,
-}: {
-  value: number;
-  dirty: boolean;
-  onSave: (v: number) => void | Promise<void>;
-}) {
+/** Inline integer edit: Enter/blur save, Esc cancels, failed save reverts, "Saving…" state. */
+function NumberCell({ value, label, onSave, disabled }: { value: number; label: string; onSave: (v: number) => Promise<void>; disabled?: boolean }) {
   const [v, setV] = useState(String(value));
+  const [state, setState] = useState<'idle' | 'saving' | 'error'>('idle');
   const cur = useRef(value);
   cur.current = value;
   useEffect(() => setV(String(value)), [value]);
+  const commit = async () => {
+    const t = v.trim();
+    if (t === '' || !/^\d+$/.test(t)) return setV(String(cur.current));
+    const n = Number(t);
+    if (n === cur.current) return;
+    setState('saving');
+    try {
+      await onSave(n);
+      setState('idle');
+    } catch {
+      setState('error');
+      setV(String(cur.current));
+      setTimeout(() => setState('idle'), 2500);
+    }
+  };
   return (
-    <input
-      value={v}
-      aria-label="CodesApp quantity"
-      inputMode="numeric"
-      onChange={(e) => setV(e.target.value.replace(/[^0-9]/g, ''))}
-      onBlur={() => {
-        // Blank = cancel (it used to save 0 and push zero stock to Shopify).
-        if (v.trim() === '') return setV(String(cur.current));
-        void Promise.resolve(onSave(Math.max(0, parseInt(v, 10)))).finally(() =>
-          setV(String(cur.current)),
-        );
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-        if (e.key === 'Escape') {
-          setV(String(cur.current));
-          requestAnimationFrame(() => (e.target as HTMLInputElement).blur());
-        }
-      }}
-      className={`w-16 text-center tabular-nums font-semibold bg-transparent border border-transparent hover:border-gray-200 focus:border-green-500 focus:bg-white rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/15 ${
-        dirty ? 'text-amber-700' : 'text-gray-900'
-      }`}
-    />
+    <span onClick={(e) => e.stopPropagation()} className="inline-flex flex-col items-end">
+      <input
+        value={v}
+        disabled={disabled || state === 'saving'}
+        aria-label={label}
+        inputMode="numeric"
+        onChange={(e) => setV(e.target.value.replace(/[^0-9]/g, ''))}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          if (e.key === 'Escape') {
+            setV(String(cur.current));
+            requestAnimationFrame(() => (e.target as HTMLInputElement).blur());
+          }
+        }}
+        className={cn(
+          'w-20 rounded-lg border bg-surface px-2 py-1 text-right text-sm font-extrabold tabular-nums text-ink focus:outline-none focus:ring-2 focus:ring-brand-500/20',
+          state === 'error' ? 'border-red-400' : 'border-transparent hover:border-line focus:border-brand-500',
+        )}
+      />
+      {state === 'saving' && <span className="text-xs text-sky-700">Saving…</span>}
+      {state === 'error' && <span className="text-xs text-red-700">Not saved</span>}
+    </span>
   );
 }
 
-function CostCell({
-  value,
-  state,
-  title,
-  onSave,
-}: {
-  value: number | null;
-  state: 'pending' | 'error' | null;
-  title?: string;
-  onSave: (v: number | null) => void | Promise<void>;
-}) {
+function MoneyCell({ value, label, onSave }: { value: number | null; label: string; onSave: (v: number | null) => Promise<void> }) {
   const fmt = (x: number | null) => (x == null ? '' : String(x));
   const [v, setV] = useState(fmt(value));
+  const [state, setState] = useState<'idle' | 'saving' | 'error'>('idle');
   const cur = useRef(value);
   cur.current = value;
   useEffect(() => setV(fmt(value)), [value]);
-  const tone =
-    state === 'error' ? 'text-red-700' : state === 'pending' ? 'text-amber-700' : 'text-gray-900';
+  const commit = async () => {
+    const p = parseMoney(v);
+    if (p === 'invalid') return setV(fmt(cur.current));
+    if (p === cur.current) return;
+    setState('saving');
+    try {
+      await onSave(p);
+      setState('idle');
+    } catch {
+      setState('error');
+      setV(fmt(cur.current));
+      setTimeout(() => setState('idle'), 2500);
+    }
+  };
   return (
-    <input
-      value={v}
-      inputMode="decimal"
-      placeholder="—"
-      title={title}
-      onChange={(e) => setV(e.target.value.replace(/[^0-9.]/g, ''))}
-      onBlur={() => {
-        const t = v.trim();
-        // Reject malformed numbers ("1.2.3", ".") instead of saving 0.
-        if (t !== '' && !/^\d+(\.\d{0,2})?$|^\.\d{1,2}$/.test(t)) return setV(fmt(cur.current));
-        void Promise.resolve(onSave(t === '' ? null : Number(t))).finally(() =>
-          setV(fmt(cur.current)),
-        );
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-        if (e.key === 'Escape') {
-          setV(fmt(cur.current));
-          requestAnimationFrame(() => (e.target as HTMLInputElement).blur());
-        }
-      }}
-      className={`w-20 text-right tabular-nums bg-transparent border border-transparent hover:border-gray-200 focus:border-green-500 focus:bg-white rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/15 ${tone}`}
-    />
+    <span onClick={(e) => e.stopPropagation()} className="inline-flex flex-col items-end">
+      <input
+        value={v}
+        aria-label={label}
+        placeholder="—"
+        inputMode="decimal"
+        disabled={state === 'saving'}
+        onChange={(e) => setV(e.target.value.replace(/[^0-9.,]/g, ''))}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          if (e.key === 'Escape') {
+            setV(fmt(cur.current));
+            requestAnimationFrame(() => (e.target as HTMLInputElement).blur());
+          }
+        }}
+        className={cn(
+          'w-24 rounded-lg border bg-surface px-2 py-1 text-right text-sm tabular-nums text-ink focus:outline-none focus:ring-2 focus:ring-brand-500/20',
+          state === 'error' ? 'border-red-400' : 'border-transparent hover:border-line focus:border-brand-500',
+        )}
+      />
+      {state === 'saving' && <span className="text-xs text-sky-700">Saving…</span>}
+    </span>
   );
 }
 
-/**
- * Per-row push outcome chip (stock + cost). Error wins, then pending, then ok;
- * nothing shown before the first push. Hover an error for the Shopify message.
- */
-function PushStatusChip({ row }: { row: InventoryVariant }) {
-  const statuses: (PushStatus | null)[] = [
-    row.qtyPushStatus,
-    row.costPushStatus,
-    row.pricePushStatus,
-  ];
-  const err = row.qtyPushError || row.costPushError || row.pricePushError || undefined;
-  if (statuses.includes('error')) {
-    return (
-      <span
-        title={err}
-        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-red-50 text-red-700 border border-red-200 cursor-help"
-      >
-        <XCircle className="w-3 h-3" />
-        failed
-      </span>
-    );
-  }
-  if (statuses.includes('pending')) {
-    return (
-      <span
-        title="Queued — syncing to Shopify"
-        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200"
-      >
-        <Clock className="w-3 h-3" />
-        pending
-      </span>
-    );
-  }
-  if (statuses.includes('ok')) {
-    return (
-      <span
-        title="Pushed to Shopify"
-        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-green-50 text-green-700 border border-green-200"
-      >
-        <Check className="w-3 h-3" />
-        synced
-      </span>
-    );
-  }
-  return null;
+function BulkModal({
+  kind,
+  itemIds,
+  locations,
+  categories,
+  onClose,
+  onDone,
+}: {
+  kind: null | 'adjust' | 'category' | 'reorder';
+  itemIds: number[];
+  locations: InventoryLocation[];
+  categories: string[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const toast = useToast();
+  const [locationId, setLocationId] = useState<number>(0);
+  const [delta, setDelta] = useState('');
+  const [reason, setReason] = useState('adjust_recount');
+  const [note, setNote] = useState('');
+  const [category, setCategory] = useState('');
+  const [reorder, setReorder] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (kind) {
+      setLocationId(locations.find((l) => l.isDefault)?.id ?? locations[0]?.id ?? 0);
+      setDelta('');
+      setNote('');
+    }
+  }, [kind, locations]);
+  const title = kind === 'adjust' ? `Adjust ${itemIds.length} items` : kind === 'category' ? `Set category for ${itemIds.length} items` : `Set reorder point for ${itemIds.length} items`;
+  const submit = async () => {
+    setBusy(true);
+    try {
+      if (kind === 'adjust') {
+        const d = Number(delta);
+        if (!/^-?\d+$/.test(delta.trim()) || !d) throw new Error('Type how many to add (5) or remove (-2).');
+        await bulkInventory({ itemIds, action: 'adjust', locationId, delta: d, reason, note: note.trim() || undefined });
+      } else if (kind === 'category') {
+        await bulkInventory({ itemIds, action: 'category', category: category.trim() || null });
+      } else if (kind === 'reorder') {
+        await bulkInventory({ itemIds, action: 'reorder', reorderLevel: Math.max(0, Number(reorder) || 0) });
+      }
+      toast.success('Done');
+      onDone();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : (e as Error).message || 'Could not update');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      open={!!kind}
+      onClose={onClose}
+      title={title}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit} loading={busy}>Apply</Button>
+        </>
+      }
+    >
+      {kind === 'adjust' && (
+        <div className="grid gap-3">
+          <div className="flex flex-col gap-1">
+            <label htmlFor="b-loc" className="text-xs font-bold text-ink">Location</label>
+            <select id="b-loc" className={inputCls} value={locationId} onChange={(e) => setLocationId(Number(e.target.value))}>
+              {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="b-delta" className="text-xs font-bold text-ink">Change each item by</label>
+            <input id="b-delta" className={inputCls} inputMode="numeric" value={delta} onChange={(e) => setDelta(e.target.value.replace(/[^0-9-]/g, ''))} placeholder="-2 or 5" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="b-reason" className="text-xs font-bold text-ink">Reason</label>
+            <select id="b-reason" className={inputCls} value={reason} onChange={(e) => setReason(e.target.value)}>
+              {ADJUST_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="b-note" className="text-xs font-bold text-ink">Note (optional)</label>
+            <input id="b-note" className={inputCls} value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} />
+          </div>
+        </div>
+      )}
+      {kind === 'category' && (
+        <div className="flex flex-col gap-1">
+          <label htmlFor="b-cat" className="text-xs font-bold text-ink">Category (leave blank to clear)</label>
+          <input id="b-cat" list="b-cat-list" className={inputCls} value={category} onChange={(e) => setCategory(e.target.value)} />
+          <datalist id="b-cat-list">{categories.map((c) => <option key={c} value={c} />)}</datalist>
+        </div>
+      )}
+      {kind === 'reorder' && (
+        <div className="flex flex-col gap-1">
+          <label htmlFor="b-reorder" className="text-xs font-bold text-ink">Show as Low at or below</label>
+          <input id="b-reorder" className={inputCls} inputMode="numeric" value={reorder} onChange={(e) => setReorder(e.target.value.replace(/[^0-9]/g, ''))} />
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function ConflictsModal({ open, stores, onClose, onResolved }: { open: boolean; stores: StoreRow[]; onClose: () => void; onResolved: () => void }) {
+  const toast = useToast();
+  const [rows, setRows] = useState<Conflict[] | null>(null);
+  const [pick, setPick] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!open) return;
+    setRows(null);
+    getConflicts()
+      .then((r) => {
+        setRows(r);
+        setPick(Object.fromEntries(r.map((c) => [`${c.itemId}:${c.locationId}`, String(Math.min(c.pool, ...c.stores.map((s) => s.qty)))])));
+      })
+      .catch(() => setRows([]));
+  }, [open]);
+  const label = (id: number) => stores.find((s) => s.id === id)?.label || stores.find((s) => s.id === id)?.shopDomain || `Store ${id}`;
+  return (
+    <Modal open={open} onClose={onClose} title="Stores that disagree" size="lg">
+      <p className="mb-3 text-sm text-muted">
+        These items are linked across stores but the stores show different stock. Choose the real number — CodesApp saves it and pushes it to
+        every store. The lowest number is picked by default so you never oversell.
+      </p>
+      {!rows ? (
+        <p className="text-sm text-muted">Loading…</p>
+      ) : rows.length === 0 ? (
+        <EmptyState compact title="All stores agree" />
+      ) : (
+        <div className="flex flex-col gap-2">
+          {rows.map((c) => {
+            const k = `${c.itemId}:${c.locationId}`;
+            return (
+              <div key={k} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line p-3 text-sm">
+                <div className="min-w-0">
+                  <div className="font-bold">{c.title}</div>
+                  <div className="text-xs text-muted">
+                    {c.location} · CodesApp {c.pool} · {c.stores.map((s) => `${label(s.storeId)} ${s.qty}`).join(' · ')}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label htmlFor={`cf-${k}`} className="sr-only">Real stock for {c.title}</label>
+                  <input
+                    id={`cf-${k}`}
+                    className={cn(inputCls, 'w-20 text-right')}
+                    inputMode="numeric"
+                    value={pick[k] ?? ''}
+                    onChange={(e) => setPick((p) => ({ ...p, [k]: e.target.value.replace(/[^0-9]/g, '') }))}
+                  />
+                  <Button
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        await resolveConflict({ itemId: c.itemId, locationId: c.locationId, available: Number(pick[k] || 0) });
+                        setRows((rs) => (rs ?? []).filter((x) => `${x.itemId}:${x.locationId}` !== k));
+                        toast.success('Saved — pushing to every store');
+                        onResolved();
+                      } catch (e) {
+                        toast.error(e instanceof ApiError ? e.userMessage : 'Could not save');
+                      }
+                    }}
+                  >
+                    Use this
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Modal>
+  );
 }

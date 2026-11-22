@@ -1,145 +1,219 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  ParseIntPipe,
-  Patch,
-  Post,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import type { Response } from 'express';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { ModuleGuard } from '../../common/guards/module.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { RequireModule } from '../../common/decorators/require-module.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { InventoryService } from './inventory.service';
-import { StoreScopedDto, UpdateVariantDto } from './dto/inventory.dto';
+import { INBOX_ROLES, PRIVILEGED } from '../../common/auth/roles';
+import { InventoryService, ItemFilters } from './inventory.service';
+import {
+  AdjustDto,
+  AvailabilityDto,
+  BulkDto,
+  InventorySettingsDto,
+  LinkListingDto,
+  LinkUpdateDto,
+  LocationDto,
+  ResolveConflictDto,
+  SetAvailableDto,
+  StoreScopedDto,
+  UpdateItemDto,
+  UpdateListingDto,
+} from './dto/inventory.dto';
 
 type CU = { companyId: number; userId: number; role: string };
 
-// The Inventory board + management is owner/admin (class gate). The `lookup`
-// route (consumed by the inbox create-order modal) is widened to agents so they
-// can add a product by its CodesApp item code when placing an order.
-const MANAGE_ROLES = ['owner', 'admin'];
-const LOOKUP_ROLES = ['owner', 'admin', 'agent'];
+/** Selling surfaces (create-order modal, item editor) read stock too. */
+const SELL_ROLES = [...INBOX_ROLES, 'fulfillment'];
 
 const toInt = (v?: string): number | undefined => {
   if (v == null || v === '') return undefined;
   const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
+  return Number.isInteger(n) ? n : undefined;
 };
 
+const filtersOf = (q: Record<string, string | undefined>): ItemFilters => ({
+  storeId: toInt(q.storeId),
+  locationId: toInt(q.locationId),
+  search: q.search,
+  status: q.status,
+  category: q.category,
+  page: toInt(q.page),
+  limit: toInt(q.limit),
+  sort: q.sort,
+  dir: q.dir,
+});
+
 @Controller('inventory')
-@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
-@Roles(...MANAGE_ROLES)
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard, ModuleGuard)
+@RequireModule('inventory')
+@Roles(...PRIVILEGED)
 export class InventoryController {
   constructor(private readonly inventory: InventoryService) {}
 
-  // ── Static routes FIRST (so "stats" / "lookup" aren't parsed as an :id) ──
+  // ── Static routes FIRST ──
 
-  @Get()
-  async list(
-    @CurrentUser() user: CU,
-    @Query('storeId') storeId?: string,
-    @Query('search') search?: string,
-    @Query('status') status?: string,
-    @Query('category') category?: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-    @Query('sort') sort?: string,
-    @Query('dir') dir?: string,
-  ) {
-    await this.inventory.assertEnabled(user.companyId);
-    return this.inventory.list(user.companyId, {
-      storeId: toInt(storeId),
-      search,
-      status,
-      category,
-      page: toInt(page),
-      limit: toInt(limit),
-      sort,
-      dir,
-    });
+  @Get('items')
+  list(@CurrentUser() u: CU, @Query() q: Record<string, string>) {
+    return this.inventory.list(u.companyId, filtersOf(q));
   }
 
-  @Get('stats')
-  async stats(@CurrentUser() user: CU, @Query('storeId') storeId?: string) {
-    await this.inventory.assertEnabled(user.companyId);
-    return this.inventory.stats(user.companyId, toInt(storeId));
+  @Get('summary')
+  summary(@CurrentUser() u: CU, @Query('storeId') storeId?: string, @Query('locationId') locationId?: string) {
+    return this.inventory.summary(u.companyId, toInt(storeId), toInt(locationId));
   }
 
   @Get('categories')
-  async categories(@CurrentUser() user: CU, @Query('storeId') storeId?: string) {
-    await this.inventory.assertEnabled(user.companyId);
-    return this.inventory.categories(user.companyId, toInt(storeId));
+  categories(@CurrentUser() u: CU) {
+    return this.inventory.categories(u.companyId);
   }
 
-  @Get('lookup')
-  @UseGuards(RolesGuard)
-  @Roles(...LOOKUP_ROLES)
-  async lookup(
-    @CurrentUser() user: CU,
-    @Query('q') q: string,
-    @Query('storeId') storeId?: string,
-  ) {
-    await this.inventory.assertEnabled(user.companyId);
-    return this.inventory.lookup(user.companyId, q ?? '', toInt(storeId));
+  @Get('conflicts')
+  conflicts(@CurrentUser() u: CU) {
+    return this.inventory.conflicts(u.companyId);
   }
 
-  @Get('sync-status')
-  async syncStatus(@CurrentUser() user: CU, @Query('storeId') storeId?: string) {
-    await this.inventory.assertEnabled(user.companyId);
-    return this.inventory.syncStatus(user.companyId, toInt(storeId));
+  @Post('conflicts/resolve')
+  resolve(@CurrentUser() u: CU, @Body() dto: ResolveConflictDto) {
+    return this.inventory.resolveConflict(u.companyId, dto, u.userId);
+  }
+
+  @Post('bulk')
+  bulk(@CurrentUser() u: CU, @Body() dto: BulkDto) {
+    return this.inventory.bulk(u.companyId, dto, u.userId);
+  }
+
+  @Get('ledger')
+  ledger(@CurrentUser() u: CU, @Query() q: Record<string, string>) {
+    return this.inventory.movements(u.companyId, {
+      itemId: toInt(q.itemId), locationId: toInt(q.locationId), reason: q.reason, from: q.from, to: q.to,
+      page: toInt(q.page), limit: toInt(q.limit),
+    });
+  }
+
+  @Get('ledger/export')
+  async ledgerExport(@CurrentUser() u: CU, @Query() q: Record<string, string>, @Res() res: Response) {
+    const csv = await this.inventory.exportMovements(u.companyId, {
+      itemId: toInt(q.itemId), locationId: toInt(q.locationId), reason: q.reason, from: q.from, to: q.to,
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="stock-ledger.csv"');
+    res.send(csv);
   }
 
   @Get('export')
-  async export(@CurrentUser() user: CU, @Query('storeId') storeId?: string) {
-    await this.inventory.assertEnabled(user.companyId);
-    const csv = await this.inventory.exportCsv(user.companyId, toInt(storeId));
-    return { filename: `inventory-${Date.now()}.csv`, csv };
+  async export(@CurrentUser() u: CU, @Query() q: Record<string, string>, @Res() res: Response) {
+    const csv = await this.inventory.exportItems(u.companyId, filtersOf(q));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="inventory.csv"');
+    res.send(csv);
+  }
+
+  @Get('locations')
+  locations(@CurrentUser() u: CU) {
+    return this.inventory.locations(u.companyId);
+  }
+
+  @Post('locations')
+  createLocation(@CurrentUser() u: CU, @Body() dto: LocationDto) {
+    return this.inventory.saveLocation(u.companyId, null, dto);
+  }
+
+  @Patch('locations/:id')
+  updateLocation(@CurrentUser() u: CU, @Param('id', ParseIntPipe) id: number, @Body() dto: LocationDto) {
+    return this.inventory.saveLocation(u.companyId, id, dto);
+  }
+
+  @Patch('location-links/:id')
+  updateLink(@CurrentUser() u: CU, @Param('id', ParseIntPipe) id: number, @Body() dto: LinkUpdateDto) {
+    return this.inventory.updateLink(u.companyId, id, dto);
   }
 
   @Post('sync')
-  async sync(@CurrentUser() user: CU, @Body() dto: StoreScopedDto) {
-    await this.inventory.assertEnabled(user.companyId);
-    return this.inventory.requestSync(user.companyId, dto.storeId);
+  sync(@CurrentUser() u: CU, @Body() dto: StoreScopedDto) {
+    return this.inventory.requestSync(u.companyId, dto.storeId);
   }
 
-  @Post('push-changed')
-  async pushChanged(@CurrentUser() user: CU, @Body() dto: StoreScopedDto) {
-    await this.inventory.assertEnabled(user.companyId);
-    return this.inventory.pushChanged(user.companyId, dto.storeId);
+  @Get('sync-status')
+  syncStatus(@CurrentUser() u: CU) {
+    return this.inventory.syncStatus(u.companyId);
+  }
+
+  @Get('settings')
+  settings(@CurrentUser() u: CU) {
+    return this.inventory.settings(u.companyId);
+  }
+
+  @Patch('settings')
+  saveSettings(@CurrentUser() u: CU, @Body() dto: InventorySettingsDto) {
+    return this.inventory.saveSettings(u.companyId, dto as Record<string, unknown>);
+  }
+
+  /** Stock for selling surfaces (agents/fulfilment too). */
+  @Post('availability')
+  @Roles(...SELL_ROLES)
+  availability(@CurrentUser() u: CU, @Body() dto: AvailabilityDto) {
+    return this.inventory.availability(u.companyId, dto);
+  }
+
+  @Get('lookup')
+  @Roles(...SELL_ROLES)
+  lookup(@CurrentUser() u: CU, @Query('q') q?: string, @Query('storeId') storeId?: string) {
+    return this.inventory.availability(u.companyId, { q, storeId: toInt(storeId) }).then((r) => r.items);
   }
 
   // ── Param routes LAST ──
 
-  @Get('variants/:id')
-  async getVariant(
-    @CurrentUser() user: CU,
-    @Param('id', ParseIntPipe) id: number,
-  ) {
-    await this.inventory.assertEnabled(user.companyId);
-    return this.inventory.getVariant(user.companyId, id);
+  @Get('variants/:id/item')
+  itemForVariant(@CurrentUser() u: CU, @Param('id', ParseIntPipe) id: number) {
+    return this.inventory.itemForVariant(u.companyId, id);
   }
 
-  @Patch('variants/:id')
-  async updateVariant(
-    @CurrentUser() user: CU,
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateVariantDto,
-  ) {
-    await this.inventory.assertEnabled(user.companyId);
-    return this.inventory.updateVariant(user.companyId, id, dto, user.userId);
+  @Patch('listings/:id')
+  updateListing(@CurrentUser() u: CU, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateListingDto) {
+    return this.inventory.updateListing(u.companyId, id, dto);
   }
 
-  @Post('variants/:id/push')
-  async pushVariant(
-    @CurrentUser() user: CU,
-    @Param('id', ParseIntPipe) id: number,
-  ) {
-    await this.inventory.assertEnabled(user.companyId);
-    return this.inventory.pushVariant(user.companyId, id);
+  @Delete('listings/:id/link')
+  unlink(@CurrentUser() u: CU, @Param('id', ParseIntPipe) id: number) {
+    return this.inventory.unlinkListing(u.companyId, id);
+  }
+
+  @Get('items/:id')
+  getItem(@CurrentUser() u: CU, @Param('id', ParseIntPipe) id: number) {
+    return this.inventory.getItem(u.companyId, id);
+  }
+
+  @Patch('items/:id')
+  updateItem(@CurrentUser() u: CU, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateItemDto) {
+    return this.inventory.updateItem(u.companyId, id, dto, u.userId);
+  }
+
+  @Post('items/:id/adjust')
+  adjust(@CurrentUser() u: CU, @Param('id', ParseIntPipe) id: number, @Body() dto: AdjustDto) {
+    return this.inventory.adjust(u.companyId, id, dto, u.userId);
+  }
+
+  @Post('items/:id/set')
+  set(@CurrentUser() u: CU, @Param('id', ParseIntPipe) id: number, @Body() dto: SetAvailableDto) {
+    return this.inventory.setAvailable(u.companyId, id, dto, u.userId);
+  }
+
+  @Post('items/:id/push')
+  push(@CurrentUser() u: CU, @Param('id', ParseIntPipe) id: number) {
+    return this.inventory.pushNow(u.companyId, id);
+  }
+
+  @Get('items/:id/link-candidates')
+  candidates(@CurrentUser() u: CU, @Param('id', ParseIntPipe) id: number, @Query('q') q?: string) {
+    return this.inventory.linkCandidates(u.companyId, id, q);
+  }
+
+  @Post('items/:id/link')
+  link(@CurrentUser() u: CU, @Param('id', ParseIntPipe) id: number, @Body() dto: LinkListingDto) {
+    return this.inventory.linkListing(u.companyId, id, dto.listingId);
   }
 }

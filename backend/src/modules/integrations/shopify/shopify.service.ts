@@ -237,7 +237,7 @@ type ShopifyJob =
 
 /** A ProductVariant node as the inventory sync reads it (main pass + bundle
  *  component backfill share this shape, so the upsert lives in one helper). */
-interface InvSyncVariantNode {
+export interface InvSyncVariantNode {
   id: string;
   title: string | null;
   sku: string | null;
@@ -257,7 +257,7 @@ interface InvSyncVariantNode {
   } | null;
 }
 /** A Product node (without its variants edge) for the shared product upsert. */
-interface InvSyncProductNode {
+export interface InvSyncProductNode {
   id: string;
   title: string | null;
   handle: string | null;
@@ -525,7 +525,13 @@ export class ShopifyService implements OnModuleInit {
     } else if (job.kind === 'pushPrice') {
       await this.pushVariantPrice(job.companyId, job.variantId);
     } else if (job.kind === 'restockReturn') {
-      await this.restockFromShipment(job.companyId, job.shipmentId);
+      // Inventory v2 owns return restocking (ledger, per location). Forward
+      // any legacy job still sitting on this queue.
+      await this.jobQueue.enqueue(
+        'inventory',
+        { kind: 'restockReturn', companyId: job.companyId, shipmentId: job.shipmentId },
+        { dedupKey: `inv2-restock:${job.shipmentId}` },
+      );
     }
   }
 
@@ -536,7 +542,7 @@ export class ShopifyService implements OnModuleInit {
   // ──────────────────────────────────────────────────────────────────────────
 
   /** numeric id out of a `gid://shopify/<Type>/<id>` string. */
-  private gidNumericId(gid: string | null | undefined): bigint | null {
+  gidNumericId(gid: string | null | undefined): bigint | null {
     if (!gid) return null;
     const m = /\/(\d+)(?:\?.*)?$/.exec(gid);
     return m ? BigInt(m[1]) : null;
@@ -646,7 +652,7 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /** Upsert an inventory product row from a Shopify product node. */
-  private async upsertInventoryProductNode(
+  async upsertInventoryProductNode(
     companyId: number,
     sid: number,
     now: Date,
@@ -691,7 +697,7 @@ export class ShopifyService implements OnModuleInit {
    * (requiresComponents / has components) keeps local_qty == shopify_qty so it
    * never looks dirty and is never pushed.
    */
-  private async upsertInventoryVariantNode(
+  async upsertInventoryVariantNode(
     companyId: number,
     sid: number,
     now: Date,
@@ -909,7 +915,7 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /** Short, column-sized failure text for the board's push-status cells. */
-  private pushErrText(err: unknown): string {
+  pushErrText(err: unknown): string {
     const m = err instanceof Error ? err.message : String(err);
     return m.slice(0, 500);
   }
@@ -920,7 +926,7 @@ export class ShopifyService implements OnModuleInit {
    * mislabelled "needs write_…" (which sent us chasing scopes for a 2026-04 API
    * change). See ERRORS "[Inventory] Qty push fails on 2025+ stores".
    */
-  private scopeHint(msg: string, scope: string): string {
+  scopeHint(msg: string, scope: string): string {
     return /access denied|not authoriz|unauthoriz|permission|requires? .*scope|\bwrite_|\bread_/i.test(
       msg,
     )
@@ -1487,7 +1493,7 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /** Mark a store's token invalid on a 401 (drives the reconnect prompt). */
-  private async flagTokenMaybeInvalid(
+  async flagTokenMaybeInvalid(
     storeId: number | null,
     err: unknown,
   ): Promise<void> {
@@ -4700,7 +4706,7 @@ export class ShopifyService implements OnModuleInit {
    * the UI instead of returning null (unlike `resolveShopifyApi`, which is
    * for the silent worker path).
    */
-  private async requireAdminApi(
+  async requireAdminApi(
     companyId: number,
     storeId?: number | null,
   ): Promise<{
@@ -9551,7 +9557,7 @@ export class ShopifyService implements OnModuleInit {
    * caller's existing error handling is preserved (no behavior change when not
    * throttled). Cap each wait so a hung bucket can't stall a worker indefinitely.
    */
-  private async shopifyGraphql<T>(
+  async shopifyGraphql<T>(
     shopDomain: string,
     apiVersion: string,
     token: string,
@@ -10665,24 +10671,56 @@ export class ShopifyService implements OnModuleInit {
         await this.requestKnowledgeSync(company.id, storeId, { delayMs: 10 * 60_000 }).catch(
           () => undefined,
         );
+        // Inventory v2: mirror the product (new / changed / deleted listing,
+        // status, price) for THIS store. Debounced per product.
+        try {
+          const p = JSON.parse(rawBody.toString('utf8')) as { id?: number | string; admin_graphql_api_id?: string };
+          const gid = p.admin_graphql_api_id ?? (p.id != null ? `gid://shopify/Product/${p.id}` : null);
+          if (gid && (await this.featureService.inventoryEnabled(company.id))) {
+            await this.jobQueue.enqueue(
+              'inventory',
+              { kind: 'productWebhook', companyId: company.id, storeId, productGid: gid, deleted: topic === 'products/delete' },
+              { dedupKey: `inv2-prod:${storeId}:${gid}`, delayMs: 20_000 },
+            );
+          }
+        } catch {
+          /* unparseable — ignore */
+        }
       }
       return { received: true };
     }
 
-    // Inventory module — mirror a stock-level change (the two-way sync pull).
-    // Updates the matching variant's qty; our push-echo is skipped internally.
+    // Inventory v2 — a store-side stock change at ONE location. Queued (fast
+    // ACK) and serialised per inventory item × location; the worker measures
+    // the delta against what we last saw, so our own push echo is a no-op and a
+    // sale in one store is applied once to the shared pool.
     if (topic === 'inventory_levels/update' || topic === 'inventory_levels/connect') {
       if (storeId != null) {
         try {
           const p = JSON.parse(rawBody.toString('utf8')) as {
             inventory_item_id?: number | string | null;
+            location_id?: number | string | null;
             available?: number | null;
+            updated_at?: string | null;
           };
-          if (p.inventory_item_id != null && p.available != null) {
-            await this.applyInventoryLevelWebhook(
-              storeId,
-              BigInt(p.inventory_item_id),
-              Number(p.available) || 0,
+          if (
+            p.inventory_item_id != null &&
+            p.location_id != null &&
+            p.available != null &&
+            (await this.featureService.inventoryEnabled(company.id))
+          ) {
+            await this.jobQueue.enqueue(
+              'inventory',
+              {
+                kind: 'levelWebhook',
+                companyId: company.id,
+                storeId,
+                inventoryItemId: String(p.inventory_item_id),
+                locationGid: `gid://shopify/Location/${p.location_id}`,
+                available: Number(p.available) || 0,
+                at: p.updated_at ?? null,
+              },
+              { serialKey: `inv2-lvl:${storeId}:${p.inventory_item_id}` },
             );
           }
         } catch {

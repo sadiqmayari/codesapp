@@ -422,6 +422,10 @@ model Company {
   // inventory_restock_returns = auto add stock back + push to Shopify when an RTO
   // parcel is physically received (processReturn). Idempotent per shipment.
   inventory_enabled                 Boolean           @default(false)
+  // Inventory v2 settings JSON (inventory/settings.ts resolveInventorySettings).
+  inventory_settings                Json?
+  // set once the v2 bootstrap (items/locations/levels backfill) has run
+  inventory_v2_at                   DateTime?
   inventory_restock_returns         Boolean           @default(true)
   // Per-tenant Google Drive OAuth connection (drive.file scope). The refresh
   // token is AES-GCM encrypted at rest (base64(iv||tag||ciphertext)); content
@@ -1153,8 +1157,15 @@ model InventoryProduct {
   product_type        String?   @db.VarChar(160)
   vendor              String?   @db.VarChar(160)
   image_url           String?   @db.VarChar(1000)
-  // active | draft | archived (Shopify status, lowercased)
+  // active | draft | archived | unlisted (Shopify status, lowercased).
+  // v2: editable in CodesApp → pushed to the store (status_push_*).
   status              String?   @db.VarChar(16)
+  status_push_status  String?   @db.VarChar(12)
+  status_push_error   String?   @db.VarChar(500)
+  // Shopify sales-channel publication ids the product is live on (mirrored).
+  publications        Json?
+  description_html    String?   @db.MediumText
+  tags                Json?
   synced_at           DateTime?
   created_at          DateTime  @default(now())
   updated_at          DateTime  @updatedAt
@@ -1174,6 +1185,13 @@ model InventoryVariant {
   company_id                 Int
   shopify_store_id           Int
   product_id                 Int
+  // Inventory v2: the master physical item this store LISTING sells. Several
+  // listings (one per store) can point at one item → shared stock pool.
+  item_id                    Int?
+  // shopify | woocommerce
+  provider                   String    @default("shopify") @db.VarChar(16)
+  // How the listing was linked to its item: sku | barcode | title | manual | created
+  link_source                String?   @db.VarChar(12)
   // gid://shopify/ProductVariant/..
   shopify_variant_gid        String    @db.VarChar(120)
   // gid://shopify/InventoryItem/.. (needed for inventorySetQuantities)
@@ -1231,9 +1249,12 @@ model InventoryVariant {
 
   company   Company             @relation(fields: [company_id], references: [id])
   product   InventoryProduct    @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  item      InventoryItem?      @relation(fields: [item_id], references: [id], onDelete: SetNull)
   movements InventoryMovement[]
+  pushState ListingPushState[]
 
   @@unique([company_id, shopify_store_id, shopify_variant_gid])
+  @@index([company_id, item_id])
   @@index([company_id, item_code])
   @@index([company_id, sku])
   @@index([company_id, shopify_inventory_item_id])
@@ -1249,21 +1270,381 @@ model InventoryMovement {
   id               Int      @id @default(autoincrement())
   company_id       Int
   shopify_store_id Int?
-  variant_id       Int
+  // Legacy rows carry variant_id; v2 rows carry item_id + location_id (the
+  // pool) and variant_id only when a store listing caused the change.
+  variant_id       Int?
+  item_id          Int?
+  location_id      Int?
   delta            Int
   qty_after        Int
-  // order_sale | order_cancel | return_restock | manual_adjust | sync | push
+  // v2 reasons: inventory/stock-math.ts MOVEMENT_REASONS. Legacy:
+  // order_sale | order_cancel | return_restock | manual_adjust
   reason           String   @db.VarChar(24)
   ref              String?  @db.VarChar(120)
+  // order | po | count | transfer | return | replacement | webhook | import | manual
+  ref_type         String?  @db.VarChar(16)
+  note             String?  @db.VarChar(500)
+  // Exactly-once key: a retried apply with the same key is a no-op.
+  idem_key         String?  @db.VarChar(191)
   actor_user_id    Int?
   created_at       DateTime @default(now())
 
-  company Company          @relation(fields: [company_id], references: [id])
-  variant InventoryVariant @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+  company Company           @relation(fields: [company_id], references: [id])
+  variant InventoryVariant? @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+  item    InventoryItem?    @relation(fields: [item_id], references: [id], onDelete: Cascade)
 
+  @@unique([company_id, idem_key])
   @@index([company_id, variant_id])
+  @@index([company_id, item_id, created_at])
   @@index([company_id, reason, ref])
+  @@index([company_id, created_at])
   @@map("inventory_movements")
+}
+
+// ── Inventory v2 ────────────────────────────────────────────────────────────
+// ONE master item per physical product; store listings (inventory_variants)
+// link to it. Stock lives per (item, location) in inventory_levels — the single
+// stock truth, written ONLY by InventoryLedgerService.
+model InventoryItem {
+  id                Int       @id @default(autoincrement())
+  company_id        Int
+  // normalized (trim + lowercase) SKU — the cross-store link key when present
+  sku               String?   @db.VarChar(160)
+  barcode           String?   @db.VarChar(160)
+  title             String    @db.VarChar(400)
+  variant_title     String?   @db.VarChar(255)
+  image_url         String?   @db.VarChar(1000)
+  item_code         String?   @db.VarChar(80)
+  alias             String?   @db.VarChar(120)
+  category          String?   @db.VarChar(120)
+  shelf_location    String?   @db.VarChar(120)
+  reorder_level     Int       @default(0)
+  reorder_qty       Int?
+  lead_time_days    Int?
+  // weighted-average unit cost (CodesApp source of truth for COGS)
+  avg_cost          Decimal?  @db.Decimal(12, 2)
+  track             Boolean   @default(true)
+  allow_backorder   Boolean   @default(false)
+  is_bundle         Boolean   @default(false)
+  // [{ itemId, quantity }] for a bundle item
+  bundle_components Json?
+  supplier_id       Int?
+  notes             String?   @db.Text
+  archived_at       DateTime?
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+
+  listings  InventoryVariant[]
+  levels    InventoryLevel[]
+  movements InventoryMovement[]
+  supplier  Supplier?           @relation(fields: [supplier_id], references: [id], onDelete: SetNull)
+
+  @@index([company_id, sku])
+  @@index([company_id, barcode])
+  @@index([company_id, item_code])
+  @@index([company_id, title])
+  @@map("inventory_items")
+}
+
+model InventoryLocation {
+  id         Int      @id @default(autoincrement())
+  company_id Int
+  name       String   @db.VarChar(120)
+  address    String?  @db.VarChar(500)
+  is_active  Boolean  @default(true)
+  is_default Boolean  @default(false)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  links  InventoryLocationLink[]
+  levels InventoryLevel[]
+
+  @@index([company_id])
+  @@map("inventory_locations")
+}
+
+// Maps a store's own location (Shopify location gid; Woo = "default") onto one
+// of our locations. Two stores can feed from the same physical warehouse.
+model InventoryLocationLink {
+  id                    Int      @id @default(autoincrement())
+  company_id            Int
+  location_id           Int
+  store_id              Int
+  external_location_gid String   @db.VarChar(120)
+  external_name         String?  @db.VarChar(160)
+  // false = CodesApp never pushes to / reads from this store location
+  sync_enabled          Boolean  @default(true)
+  created_at            DateTime @default(now())
+
+  location  InventoryLocation  @relation(fields: [location_id], references: [id], onDelete: Cascade)
+  pushState ListingPushState[]
+
+  @@unique([company_id, store_id, external_location_gid])
+  @@index([company_id, location_id])
+  @@map("inventory_location_links")
+}
+
+// available = sellable now (pushed to every linked store); committed =
+// mirrored from the stores (ordered, unfulfilled); incoming = open PO qty.
+// on_hand = available + committed.
+model InventoryLevel {
+  id          Int      @id @default(autoincrement())
+  company_id  Int
+  item_id     Int
+  location_id Int
+  available   Int      @default(0)
+  committed   Int      @default(0)
+  incoming    Int      @default(0)
+  version     Int      @default(0)
+  updated_at  DateTime @updatedAt
+
+  item     InventoryItem     @relation(fields: [item_id], references: [id], onDelete: Cascade)
+  location InventoryLocation @relation(fields: [location_id], references: [id], onDelete: Cascade)
+
+  @@unique([item_id, location_id])
+  @@index([company_id, location_id])
+  @@map("inventory_levels")
+}
+
+// Per (listing, store location) push bookkeeping — replaces the never-reset
+// last_pushed_qty echo guard. last_seen = what the store holds as far as we
+// know (our push or its webhook); a webhook delta is measured against it.
+model ListingPushState {
+  id               Int       @id @default(autoincrement())
+  company_id       Int
+  variant_id       Int
+  location_link_id Int
+  last_seen        Int?
+  committed        Int       @default(0)
+  last_pushed      Int?
+  pushed_at        DateTime?
+  status           String?   @db.VarChar(12)
+  error            String?   @db.VarChar(500)
+  updated_at       DateTime  @updatedAt
+
+  variant InventoryVariant      @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+  link    InventoryLocationLink @relation(fields: [location_link_id], references: [id], onDelete: Cascade)
+
+  @@unique([variant_id, location_link_id])
+  @@index([company_id, status])
+  @@map("listing_push_state")
+}
+
+model Supplier {
+  id             Int       @id @default(autoincrement())
+  company_id     Int
+  name           String    @db.VarChar(160)
+  contact_name   String?   @db.VarChar(120)
+  phone          String?   @db.VarChar(40)
+  email          String?   @db.VarChar(160)
+  address        String?   @db.VarChar(500)
+  notes          String?   @db.Text
+  lead_time_days Int?
+  archived_at    DateTime?
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
+
+  items  InventoryItem[]
+  orders PurchaseOrder[]
+
+  @@index([company_id])
+  @@map("suppliers")
+}
+
+// draft → sent → partial → received → closed | cancelled
+model PurchaseOrder {
+  id          Int       @id @default(autoincrement())
+  company_id  Int
+  number      String    @db.VarChar(32)
+  supplier_id Int?
+  location_id Int
+  status      String    @default("draft") @db.VarChar(12)
+  expected_at DateTime?
+  sent_at     DateTime?
+  notes       String?   @db.Text
+  freight     Decimal   @default(0) @db.Decimal(12, 2)
+  paid_amount Decimal   @default(0) @db.Decimal(14, 2)
+  created_by  Int?
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  supplier Supplier?           @relation(fields: [supplier_id], references: [id], onDelete: SetNull)
+  lines    PurchaseOrderLine[]
+  receipts GoodsReceipt[]
+
+  @@unique([company_id, number])
+  @@index([company_id, status])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderLine {
+  id           Int     @id @default(autoincrement())
+  company_id   Int
+  po_id        Int
+  item_id      Int
+  qty_ordered  Int
+  qty_received Int     @default(0)
+  unit_cost    Decimal @db.Decimal(12, 2)
+
+  po PurchaseOrder @relation(fields: [po_id], references: [id], onDelete: Cascade)
+
+  @@unique([po_id, item_id])
+  @@index([company_id, item_id])
+  @@map("purchase_order_lines")
+}
+
+model GoodsReceipt {
+  id          Int      @id @default(autoincrement())
+  company_id  Int
+  po_id       Int
+  number      String   @db.VarChar(32)
+  freight     Decimal  @default(0) @db.Decimal(12, 2)
+  received_by Int?
+  note        String?  @db.VarChar(500)
+  created_at  DateTime @default(now())
+
+  po    PurchaseOrder      @relation(fields: [po_id], references: [id], onDelete: Cascade)
+  lines GoodsReceiptLine[]
+
+  @@unique([company_id, number])
+  @@map("goods_receipts")
+}
+
+model GoodsReceiptLine {
+  id          Int     @id @default(autoincrement())
+  company_id  Int
+  receipt_id  Int
+  item_id     Int
+  qty         Int
+  unit_cost   Decimal @db.Decimal(12, 2)
+  landed_cost Decimal @db.Decimal(12, 2)
+
+  receipt GoodsReceipt @relation(fields: [receipt_id], references: [id], onDelete: Cascade)
+
+  @@map("goods_receipt_lines")
+}
+
+// draft → applied | cancelled. blind = expected hidden from the counter.
+model StockCount {
+  id          Int       @id @default(autoincrement())
+  company_id  Int
+  number      String    @db.VarChar(32)
+  location_id Int
+  status      String    @default("draft") @db.VarChar(12)
+  blind       Boolean   @default(true)
+  scope       String?   @db.VarChar(160)
+  started_by  Int?
+  applied_by  Int?
+  applied_at  DateTime?
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  lines StockCountLine[]
+
+  @@unique([company_id, number])
+  @@index([company_id, status])
+  @@map("stock_counts")
+}
+
+model StockCountLine {
+  id         Int      @id @default(autoincrement())
+  company_id Int
+  count_id   Int
+  item_id    Int
+  // on_hand snapshot when the line was first counted
+  expected   Int
+  counted    Int?
+  reason     String?  @db.VarChar(24)
+  updated_at DateTime @updatedAt
+
+  count StockCount @relation(fields: [count_id], references: [id], onDelete: Cascade)
+
+  @@unique([count_id, item_id])
+  @@map("stock_count_lines")
+}
+
+// draft → in_transit → received | cancelled
+model StockTransfer {
+  id               Int       @id @default(autoincrement())
+  company_id       Int
+  number           String    @db.VarChar(32)
+  from_location_id Int
+  to_location_id   Int
+  status           String    @default("draft") @db.VarChar(12)
+  note             String?   @db.VarChar(500)
+  created_by       Int?
+  sent_at          DateTime?
+  received_at      DateTime?
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+
+  lines StockTransferLine[]
+
+  @@unique([company_id, number])
+  @@map("stock_transfers")
+}
+
+model StockTransferLine {
+  id          Int @id @default(autoincrement())
+  company_id  Int
+  transfer_id Int
+  item_id     Int
+  qty         Int
+
+  transfer StockTransfer @relation(fields: [transfer_id], references: [id], onDelete: Cascade)
+
+  @@unique([transfer_id, item_id])
+  @@map("stock_transfer_lines")
+}
+
+model InventoryCostHistory {
+  id            Int      @id @default(autoincrement())
+  company_id    Int
+  item_id       Int
+  old_cost      Decimal? @db.Decimal(12, 2)
+  new_cost      Decimal? @db.Decimal(12, 2)
+  source        String   @db.VarChar(16)
+  ref           String?  @db.VarChar(120)
+  actor_user_id Int?
+  created_at    DateTime @default(now())
+
+  @@index([company_id, item_id])
+  @@map("inventory_cost_history")
+}
+
+// Back-in-stock waitlist: a contact asked for an out-of-stock item.
+model StockWaitlist {
+  id          Int       @id @default(autoincrement())
+  company_id  Int
+  item_id     Int
+  contact_id  Int
+  added_by    Int?
+  notified_at DateTime?
+  created_at  DateTime  @default(now())
+
+  @@unique([company_id, item_id, contact_id])
+  @@index([company_id, item_id, notified_at])
+  @@map("stock_waitlist")
+}
+
+// One row per (create/edit product, store) write — status chips + retry.
+model ProductPublishJob {
+  id          Int      @id @default(autoincrement())
+  company_id  Int
+  // groups the per-store rows of one "Create product" submit
+  batch_key   String   @db.VarChar(40)
+  store_id    Int
+  action      String   @db.VarChar(12)
+  payload     Json
+  status      String   @default("pending") @db.VarChar(12)
+  error       String?  @db.VarChar(1000)
+  product_gid String?  @db.VarChar(120)
+  created_by  Int?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@index([company_id, batch_key])
+  @@map("product_publish_jobs")
 }
 
 // ── PR module: influencer outreach ──────────────────────────────────────────

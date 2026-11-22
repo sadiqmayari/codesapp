@@ -54,6 +54,33 @@ interface WooApi {
  *    shipping zones/methods (a documented parity gap vs Shopify);
  *  - webhook auth is base64 HMAC-SHA256 of the raw body in x-wc-webhook-signature.
  */
+
+export interface WooCatalogueRow {
+  productId: number;
+  variationId: number | null;
+  productTitle: string;
+  variantTitle: string | null;
+  handle: string | null;
+  productType: string | null;
+  image: string | null;
+  status: string;
+  sku: string | null;
+  price: number | null;
+  compareAt: number | null;
+  manageStock: boolean;
+  stock: number | null;
+}
+
+export interface WooProductInput {
+  title: string;
+  descriptionHtml?: string | null;
+  status: 'active' | 'draft' | 'archived' | 'unlisted';
+  tags?: string[];
+  imageUrls?: string[];
+  options: Array<{ name: string; values: string[] }>;
+  variants: Array<{ sku?: string | null; price: number; compareAt?: number | null; qty?: number; optionValues: string[] }>;
+}
+
 @Injectable()
 export class WooCommerceService implements CommerceProvider, OnModuleInit {
   readonly kind = 'woocommerce' as const;
@@ -461,6 +488,164 @@ export class WooCommerceService implements CommerceProvider, OnModuleInit {
       productUrl: p.permalink || null,
       available: stockStatus ? stockStatus === 'instock' : true,
     };
+  }
+
+  // ── Inventory v2 (stock mirror + push, product status, product create) ────
+
+  /** Whole catalogue (every status) flattened to sellable units, for the stock mirror. */
+  async listInventoryCatalogue(companyId: number, storeId: number): Promise<WooCatalogueRow[]> {
+    const api = await this.requireApi(companyId, storeId);
+    const rows: WooCatalogueRow[] = [];
+    for (let page = 1; page <= 100; page++) {
+      const products = await this.request<any[]>(api, 'GET', 'products', {
+        per_page: 100,
+        page,
+        status: 'any',
+      });
+      if (!products?.length) break;
+      for (const p of products) {
+        const status = WooCommerceService.statusFromWoo(p.status, p.catalog_visibility);
+        const base = {
+          productId: Number(p.id),
+          productTitle: String(p.name ?? ''),
+          handle: p.slug ?? null,
+          productType: p.categories?.[0]?.name ?? null,
+          image: p.images?.[0]?.src ?? null,
+          status,
+        };
+        if (p.type === 'variable') {
+          for (let vp = 1; vp <= 20; vp++) {
+            const vars = await this.request<any[]>(api, 'GET', `products/${p.id}/variations`, {
+              per_page: 100,
+              page: vp,
+            }).catch(() => [] as any[]);
+            if (!vars?.length) break;
+            for (const v of vars) {
+              rows.push({
+                ...base,
+                variationId: Number(v.id),
+                variantTitle: (v.attributes || []).map((a: any) => a.option).filter(Boolean).join(' / ') || null,
+                sku: v.sku || null,
+                price: this.num(v.price ?? v.regular_price),
+                compareAt: this.num(v.sale_price) && this.num(v.regular_price) ? this.num(v.regular_price) : null,
+                manageStock: v.manage_stock === true,
+                stock: v.stock_quantity == null ? null : Number(v.stock_quantity),
+                image: v.image?.src ?? base.image,
+              });
+            }
+            if (vars.length < 100) break;
+          }
+        } else {
+          rows.push({
+            ...base,
+            variationId: null,
+            variantTitle: null,
+            sku: p.sku || null,
+            price: this.num(p.price ?? p.regular_price),
+            compareAt: this.num(p.sale_price) && this.num(p.regular_price) ? this.num(p.regular_price) : null,
+            manageStock: p.manage_stock === true,
+            stock: p.stock_quantity == null ? null : Number(p.stock_quantity),
+          });
+        }
+      }
+      if (products.length < 100) break;
+    }
+    return rows;
+  }
+
+  /** Set a product's / variation's stock quantity (turns stock management on). */
+  async setStock(
+    companyId: number,
+    storeId: number,
+    productId: number,
+    variationId: number | null,
+    qty: number,
+  ): Promise<void> {
+    const api = await this.requireApi(companyId, storeId);
+    const path = variationId ? `products/${productId}/variations/${variationId}` : `products/${productId}`;
+    await this.request(api, 'PUT', path, undefined, {
+      manage_stock: true,
+      stock_quantity: Math.max(0, Math.trunc(qty)),
+    });
+  }
+
+  /** CodesApp status → Woo (publish / draft / private + catalog visibility). */
+  async setProductStatus(
+    companyId: number,
+    storeId: number,
+    productId: number,
+    status: 'active' | 'draft' | 'archived' | 'unlisted',
+  ): Promise<void> {
+    const api = await this.requireApi(companyId, storeId);
+    const body =
+      status === 'active'
+        ? { status: 'publish', catalog_visibility: 'visible' }
+        : status === 'unlisted'
+          ? { status: 'publish', catalog_visibility: 'hidden' }
+          : status === 'draft'
+            ? { status: 'draft' }
+            : { status: 'private', catalog_visibility: 'hidden' };
+    await this.request(api, 'PUT', `products/${productId}`, undefined, body);
+  }
+
+  /** Create a simple or variable product. Returns the Woo product id + variation ids by SKU. */
+  async createProduct(
+    companyId: number,
+    storeId: number,
+    input: WooProductInput,
+  ): Promise<{ productId: number; variationIds: Record<string, number> }> {
+    const api = await this.requireApi(companyId, storeId);
+    const variable = input.variants.length > 1 || input.options.length > 0;
+    const status =
+      input.status === 'active' || input.status === 'unlisted' ? 'publish' : input.status === 'draft' ? 'draft' : 'private';
+    const product = await this.request<any>(api, 'POST', 'products', undefined, {
+      name: input.title,
+      type: variable ? 'variable' : 'simple',
+      status,
+      catalog_visibility: input.status === 'unlisted' || input.status === 'archived' ? 'hidden' : 'visible',
+      description: input.descriptionHtml ?? '',
+      tags: (input.tags ?? []).map((name) => ({ name })),
+      images: (input.imageUrls ?? []).map((src) => ({ src })),
+      ...(variable
+        ? {
+            attributes: input.options.map((o, i) => ({
+              name: o.name,
+              position: i,
+              visible: true,
+              variation: true,
+              options: o.values,
+            })),
+          }
+        : {
+            sku: input.variants[0]?.sku ?? undefined,
+            regular_price: String(input.variants[0]?.compareAt ?? input.variants[0]?.price ?? ''),
+            sale_price: input.variants[0]?.compareAt ? String(input.variants[0].price) : undefined,
+            manage_stock: true,
+            stock_quantity: input.variants[0]?.qty ?? 0,
+          }),
+    });
+    const variationIds: Record<string, number> = {};
+    if (variable) {
+      for (const v of input.variants) {
+        const created = await this.request<any>(api, 'POST', `products/${product.id}/variations`, undefined, {
+          sku: v.sku ?? undefined,
+          regular_price: String(v.compareAt ?? v.price),
+          sale_price: v.compareAt ? String(v.price) : undefined,
+          manage_stock: true,
+          stock_quantity: v.qty ?? 0,
+          attributes: input.options.map((o, i) => ({ name: o.name, option: v.optionValues[i] ?? '' })),
+        });
+        variationIds[v.sku ?? String(created.id)] = Number(created.id);
+      }
+    }
+    return { productId: Number(product.id), variationIds };
+  }
+
+  static statusFromWoo(status: string | null | undefined, visibility: string | null | undefined): string {
+    if (status === 'draft' || status === 'pending') return 'draft';
+    if (status === 'private' || status === 'trash') return 'archived';
+    if (visibility === 'hidden') return 'unlisted';
+    return 'active';
   }
 
   // ── Orders ─────────────────────────────────────────────────────────────────

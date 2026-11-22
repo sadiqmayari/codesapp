@@ -1,260 +1,364 @@
-import { apiFetch, apiFetchEnvelope } from '@/lib/api';
+import { api, apiFetch, apiFetchEnvelope } from './api';
+
+// ── Inventory v2 types ──────────────────────────────────────────────────────
 
 export type StockStatus = 'in' | 'low' | 'out';
-export type PushStatus = 'pending' | 'ok' | 'error' | 'skipped';
+export type ProductStatus = 'active' | 'unlisted' | 'draft' | 'archived';
 
 export interface InventoryPushHealth {
   /** true = token has the scope; false = missing; null = couldn't check. */
-  writeInventory: boolean | null; // qty + cost push
-  writeProducts: boolean | null; // price / compare-at push
+  writeInventory: boolean | null;
+  writeProducts: boolean | null;
+  writePublications?: boolean | null;
   shopDomain: string | null;
 }
 
-export interface InventoryVariant {
+export interface ItemListing {
   id: number;
   storeId: number;
-  variantGid: string;
-  productTitle: string;
-  variantTitle: string | null;
-  image: string | null;
-  handle?: string | null;
-  productType?: string | null;
-  vendor?: string | null;
-  sku: string | null;
-  barcode: string | null;
+  storeLabel: string;
+  provider: 'shopify' | 'woocommerce' | string;
+  linkSource: string | null;
+  productId: number | null;
+  productStatus: ProductStatus | string | null;
+  productStatusPush: string | null;
+  productStatusError: string | null;
   price: number | null;
   compareAtPrice: number | null;
-  shopifyQty: number;
-  localQty: number;
-  reorderLevel: number;
-  costPrice: number | null;
-  shelfLocation: string | null;
-  category: string | null;
-  notes: string | null;
-  itemCode: string | null;
-  alias: string | null;
-  status: StockStatus;
-  dirty: boolean;
-  qtySyncedAt: string | null;
-  lastPushedAt: string | null;
-  /** Per-variant Shopify push outcome: pending | ok | error | skipped. */
-  qtyPushStatus: PushStatus | null;
+  storeQty: number;
+  qtyPushStatus: string | null;
   qtyPushError: string | null;
-  costPushStatus: PushStatus | null;
-  costPushError: string | null;
-  pricePushStatus: PushStatus | null;
+  pricePushStatus: string | null;
   pricePushError: string | null;
-  /** Native Shopify bundle: no own stock, derived from components. */
-  isBundle: boolean;
-  /** For a bundle: how many can be assembled from component stock. */
-  buildable: number | null;
-  components: BundleComponentView[] | null;
+  costPushStatus: string | null;
+  costPushError: string | null;
 }
 
-export interface BundleComponentView {
-  gid: string;
-  title: string | null;
+export interface BundlePart {
+  itemId: number;
+  title: string;
   sku: string | null;
   quantity: number;
-  stock: number;
-  available: boolean;
+  available: number;
+  limiting: boolean;
 }
 
-export interface InventoryMovement {
+export interface InventoryItem {
   id: number;
+  title: string;
+  variantTitle: string | null;
+  sku: string | null;
+  barcode: string | null;
+  image: string | null;
+  itemCode: string | null;
+  alias: string | null;
+  category: string | null;
+  shelfLocation: string | null;
+  reorderLevel: number;
+  avgCost: number | null;
+  track: boolean;
+  allowBackorder: boolean;
+  isBundle: boolean;
+  available: number;
+  committed: number;
+  incoming: number;
+  onHand: number;
+  status: StockStatus;
+  components: BundlePart[] | null;
+  conflict: boolean;
+  sold30: number;
+  daysCover: number | null;
+  priceMin: number | null;
+  priceMax: number | null;
+  listings: ItemListing[];
+}
+
+export interface ItemLocation {
+  id: number;
+  name: string;
+  isActive: boolean;
+  isDefault: boolean;
+  storeIds: number[];
+  available: number;
+  committed: number;
+  incoming: number;
+  onHand: number;
+  version: number;
+}
+
+export interface ItemDetail extends InventoryItem {
+  reorderQty: number | null;
+  leadTimeDays: number | null;
+  notes: string | null;
+  supplier: { id: number; name: string } | null;
+  targetCoverDays: number;
+  locations: ItemLocation[];
+  costHistory: Array<{ at: string; oldCost: number | null; newCost: number | null; source: string; ref: string | null }>;
+}
+
+export interface InventorySummary {
+  ready: boolean;
+  currency: string | null;
+  skus: number;
+  availableUnits: number;
+  stockValue: number;
+  lowCount: number;
+  outCount: number;
+  incomingUnits: number;
+  itemsWithoutCost: number;
+  pushFailed: number;
+  conflicts: number;
+  unlinkedListings: number;
+}
+
+export interface Movement {
+  id: number;
+  at: string;
+  itemId: number | null;
+  item: string | null;
+  sku: string | null;
+  location: string | null;
   delta: number;
-  qtyAfter: number;
+  after: number;
   reason: string;
   ref: string | null;
-  actorUserId: number | null;
-  createdAt: string;
+  refType: string | null;
+  note: string | null;
+  by: string | null;
 }
 
-export interface InventoryVariantDetail extends InventoryVariant {
-  movements: InventoryMovement[];
+export interface Conflict {
+  itemId: number;
+  title: string;
+  locationId: number;
+  location: string;
+  pool: number;
+  stores: Array<{ storeId: number; listingId: number; qty: number }>;
 }
 
-export interface InventoryStats {
-  skus: number;
-  units: number;
-  outCount: number;
-  lowCount: number;
-  stockValue: number;
+export interface InventoryLocation {
+  id: number;
+  name: string;
+  address: string | null;
+  isActive: boolean;
+  isDefault: boolean;
+  links: Array<{ id: number; storeId: number; storeLabel: string; externalName: string | null; syncEnabled: boolean }>;
 }
 
-export interface InventorySyncStatus {
-  products: number;
-  variants: number;
-  lastSyncedAt: string | null;
+export interface InventorySettings {
+  allowBackorder: boolean;
+  warnOverAvailable: boolean;
+  lowStockAlerts: boolean;
+  dailyDigest: boolean;
+  adsOutOfStockAlert: boolean;
+  backInStockOffer: boolean;
+  restockReturns: boolean;
+  targetCoverDays: number;
+  defaultLeadTimeDays: number;
+  countCadenceDays: number;
+  reconcileMinutes: number;
 }
 
-export interface InventoryLookupHit {
+export interface AvailabilityHit {
   variantId: string;
+  storeId: number;
+  itemId: number;
   productTitle: string;
   variantTitle: string | null;
-  price: string | null;
   sku: string | null;
   itemCode: string | null;
   alias: string | null;
+  shelf: string | null;
   image: string | null;
-  localQty: number;
-  status: StockStatus;
-  isBundle?: boolean;
-  available: boolean;
+  price: string | null;
+  tracked: boolean;
+  available: number;
+  sellable: boolean;
+  productStatus: string | null;
 }
 
-export interface UpdateVariantInput {
-  item_code?: string | null;
-  alias?: string | null;
-  reorder_level?: number;
-  cost_price?: number | null;
-  price?: number;
-  compare_at_price?: number | null;
-  shelf_location?: string | null;
-  category?: string | null;
-  notes?: string | null;
-  local_qty?: number;
-}
-
-export type InventorySortKey =
-  | 'product' | 'sku' | 'item_code' | 'alias' | 'price' | 'cost' | 'shopify' | 'codesapp';
-
-export interface ListInventoryParams {
-  storeId?: number;
+export interface ItemQuery {
   search?: string;
   status?: string;
   category?: string;
+  storeId?: number;
+  locationId?: number;
   page?: number;
   limit?: number;
-  sort?: InventorySortKey;
+  sort?: string;
   dir?: 'asc' | 'desc';
 }
 
-export async function listInventory(
-  params: ListInventoryParams,
-): Promise<{ rows: InventoryVariant[]; total: number }> {
-  const env = await apiFetchEnvelope<InventoryVariant[]>('/inventory', {
-    params: {
-      storeId: params.storeId,
-      search: params.search || undefined,
-      status: params.status && params.status !== 'all' ? params.status : undefined,
-      category: params.category || undefined,
-      page: params.page,
-      limit: params.limit,
-      sort: params.sort,
-      dir: params.dir,
-    },
-  });
-  const meta = env.meta as { total?: number } | undefined;
-  return { rows: env.data, total: meta?.total ?? env.data.length };
-}
+// ── Labels ─────────────────────────────────────────────────────────────────
 
-export function getInventoryStats(storeId?: number): Promise<InventoryStats> {
-  return apiFetch<InventoryStats>('/inventory/stats', { params: { storeId } });
-}
+export const STOCK_STATUS_META: Record<StockStatus, { label: string; tone: 'success' | 'warn' | 'danger' }> = {
+  in: { label: 'In stock', tone: 'success' },
+  low: { label: 'Low', tone: 'warn' },
+  out: { label: 'Out', tone: 'danger' },
+};
 
-export function getInventoryCategories(storeId?: number): Promise<string[]> {
-  return apiFetch<string[]>('/inventory/categories', { params: { storeId } });
-}
-
-export function getInventorySyncStatus(
-  storeId?: number,
-): Promise<InventorySyncStatus> {
-  return apiFetch<InventorySyncStatus>('/inventory/sync-status', {
-    params: { storeId },
-  });
-}
-
-export function syncInventory(storeId?: number): Promise<{ started: boolean }> {
-  return apiFetch<{ started: boolean }>('/inventory/sync', {
-    method: 'POST',
-    body: { storeId },
-  });
-}
-
-export function pushChanged(
-  storeId?: number,
-): Promise<{ queued: number }> {
-  return apiFetch<{ queued: number }>('/inventory/push-changed', {
-    method: 'POST',
-    body: { storeId },
-  });
-}
-
-export function getInventoryVariant(
-  id: number,
-): Promise<InventoryVariantDetail> {
-  return apiFetch<InventoryVariantDetail>(`/inventory/variants/${id}`);
-}
-
-export function updateInventoryVariant(
-  id: number,
-  input: UpdateVariantInput,
-): Promise<InventoryVariantDetail> {
-  return apiFetch<InventoryVariantDetail>(`/inventory/variants/${id}`, {
-    method: 'PATCH',
-    body: input,
-  });
-}
-
-/** Whether the store's Shopify Admin token can write stock/cost (write_inventory). */
-export function getInventoryPushHealth(
-  storeId?: number,
-): Promise<InventoryPushHealth> {
-  return apiFetch<InventoryPushHealth>('/settings/shopify/inventory-push-health', {
-    params: { storeId },
-  });
-}
-
-export function pushInventoryVariant(id: number): Promise<{ queued: boolean }> {
-  return apiFetch<{ queued: boolean }>(`/inventory/variants/${id}/push`, {
-    method: 'POST',
-  });
-}
-
-export function lookupInventory(
-  q: string,
-  storeId?: number,
-): Promise<InventoryLookupHit[]> {
-  return apiFetch<InventoryLookupHit[]>('/inventory/lookup', {
-    params: { q, storeId },
-  });
-}
-
-export function exportInventory(
-  storeId?: number,
-): Promise<{ filename: string; csv: string }> {
-  return apiFetch<{ filename: string; csv: string }>('/inventory/export', {
-    params: { storeId },
-  });
-}
-
-export const STOCK_STATUS_META: Record<
-  StockStatus,
-  { label: string; dot: string; chip: string }
-> = {
-  in: {
-    label: 'In stock',
-    dot: 'bg-green-500',
-    chip: 'text-green-700 bg-green-50 border-green-200',
-  },
-  low: {
-    label: 'Low',
-    dot: 'bg-amber-500',
-    chip: 'text-amber-700 bg-amber-50 border-amber-200',
-  },
-  out: {
-    label: 'Out',
-    dot: 'bg-red-500',
-    chip: 'text-red-700 bg-red-50 border-red-200',
-  },
+export const PRODUCT_STATUS_META: Record<ProductStatus, { label: string; hint: string; tone: 'success' | 'neutral' | 'warn' | 'danger' }> = {
+  active: { label: 'Active', hint: 'Sold + visible', tone: 'success' },
+  unlisted: { label: 'Unlisted', hint: 'Sold by link, hidden', tone: 'neutral' },
+  draft: { label: 'Draft', hint: 'Not for sale yet', tone: 'warn' },
+  archived: { label: 'Archived', hint: 'Retired, kept for history', tone: 'danger' },
 };
 
 export const MOVEMENT_REASON_LABEL: Record<string, string> = {
+  sale: 'Order sale',
+  cancel: 'Order cancelled',
+  external: 'Changed in store',
+  return: 'Return received',
+  return_damaged: 'Return written off',
+  po_receive: 'PO received',
+  count: 'Stock count',
+  adjust_damaged: 'Damaged',
+  adjust_lost: 'Lost',
+  adjust_found: 'Found',
+  adjust_recount: 'Recount',
+  adjust_gift: 'Gift / PR',
+  adjust_other: 'Other',
+  transfer_out: 'Transfer out',
+  transfer_in: 'Transfer in',
+  replacement_out: 'Replacement sent',
+  set: 'Set by hand',
+  import: 'CSV import',
+  bootstrap: 'Starting stock',
+  // legacy
   order_sale: 'Order sale',
-  order_cancel: 'Order cancel / restore',
-  return_restock: 'Return restock',
-  manual_adjust: 'Manual adjustment',
-  sync: 'Shopify sync',
-  push: 'Pushed to Shopify',
+  order_cancel: 'Order cancelled',
+  return_restock: 'Return received',
+  manual_adjust: 'Set by hand',
 };
+
+export const ADJUST_REASONS: Array<{ value: string; label: string }> = [
+  { value: 'adjust_damaged', label: 'Damaged' },
+  { value: 'adjust_lost', label: 'Lost' },
+  { value: 'adjust_found', label: 'Found' },
+  { value: 'adjust_recount', label: 'Recount' },
+  { value: 'adjust_gift', label: 'Gift / PR' },
+  { value: 'adjust_other', label: 'Other' },
+];
+
+// ── API ────────────────────────────────────────────────────────────────────
+
+const qp = (q: ItemQuery) => ({
+  search: q.search || undefined,
+  status: q.status || undefined,
+  category: q.category || undefined,
+  storeId: q.storeId || undefined,
+  locationId: q.locationId || undefined,
+  page: q.page,
+  limit: q.limit,
+  sort: q.sort,
+  dir: q.dir,
+});
+
+export async function listItems(q: ItemQuery, signal?: AbortSignal) {
+  const env = await apiFetchEnvelope<InventoryItem[]>('/inventory/items', { params: qp(q), signal });
+  return { rows: env.data ?? [], total: Number((env.meta as { total?: number } | undefined)?.total ?? 0) };
+}
+
+export const getSummary = (storeId?: number, locationId?: number, signal?: AbortSignal) =>
+  apiFetch<InventorySummary>('/inventory/summary', { params: { storeId, locationId }, signal });
+
+export const getCategories = () => apiFetch<string[]>('/inventory/categories');
+
+export const getItem = (id: number) => apiFetch<ItemDetail>(`/inventory/items/${id}`);
+
+export const itemForVariant = (variantId: number) =>
+  apiFetch<{ itemId: number }>(`/inventory/variants/${variantId}/item`);
+
+export const updateItem = (id: number, patch: Record<string, unknown>) =>
+  apiFetch<ItemDetail>(`/inventory/items/${id}`, { method: 'PATCH', body: patch });
+
+export const adjustItem = (id: number, body: { locationId: number; delta: number; reason: string; note?: string }) =>
+  apiFetch<ItemDetail>(`/inventory/items/${id}/adjust`, { method: 'POST', body });
+
+export const setItemAvailable = (id: number, body: { locationId?: number; available: number; seen?: number | null }) =>
+  apiFetch<ItemDetail>(`/inventory/items/${id}/set`, { method: 'POST', body });
+
+export const pushItem = (id: number) => apiFetch<{ queued: boolean }>(`/inventory/items/${id}/push`, { method: 'POST' });
+
+export const updateListing = (id: number, body: { price?: number; compare_at_price?: number | null }) =>
+  apiFetch<{ queued: boolean }>(`/inventory/listings/${id}`, { method: 'PATCH', body });
+
+export const unlinkListing = (id: number) =>
+  apiFetch<{ itemId: number }>(`/inventory/listings/${id}/link`, { method: 'DELETE' });
+
+export const linkCandidates = (itemId: number, q?: string) =>
+  apiFetch<Array<{ listingId: number; storeId: number; title: string; variantTitle: string | null; sku: string | null; image: string | null; itemId: number | null }>>(
+    `/inventory/items/${itemId}/link-candidates`,
+    { params: { q } },
+  );
+
+export const linkListing = (itemId: number, listingId: number) =>
+  apiFetch<ItemDetail>(`/inventory/items/${itemId}/link`, { method: 'POST', body: { listingId } });
+
+export const getConflicts = () => apiFetch<Conflict[]>('/inventory/conflicts');
+
+export const resolveConflict = (body: { itemId: number; locationId: number; available: number }) =>
+  apiFetch<{ ok: boolean }>('/inventory/conflicts/resolve', { method: 'POST', body });
+
+export const bulkInventory = (body: {
+  itemIds: number[];
+  action: 'adjust' | 'category' | 'reorder' | 'track' | 'push';
+  locationId?: number;
+  delta?: number;
+  reason?: string;
+  note?: string;
+  category?: string | null;
+  reorderLevel?: number;
+  track?: boolean;
+}) => apiFetch<{ updated: number }>('/inventory/bulk', { method: 'POST', body });
+
+export async function listMovements(
+  q: { itemId?: number; locationId?: number; reason?: string; from?: string; to?: string; page?: number; limit?: number },
+  signal?: AbortSignal,
+) {
+  const env = await apiFetchEnvelope<Movement[]>('/inventory/ledger', { params: q, signal });
+  return { rows: env.data ?? [], total: Number((env.meta as { total?: number } | undefined)?.total ?? 0) };
+}
+
+export const getLocations = () => apiFetch<InventoryLocation[]>('/inventory/locations');
+export const createLocation = (body: { name: string; address?: string | null }) =>
+  apiFetch<InventoryLocation[]>('/inventory/locations', { method: 'POST', body });
+export const updateLocation = (id: number, body: { name?: string; address?: string | null; isActive?: boolean; isDefault?: boolean }) =>
+  apiFetch<InventoryLocation[]>(`/inventory/locations/${id}`, { method: 'PATCH', body });
+export const updateLocationLink = (id: number, body: { locationId?: number; syncEnabled?: boolean }) =>
+  apiFetch<InventoryLocation[]>(`/inventory/location-links/${id}`, { method: 'PATCH', body });
+
+export const requestInventorySync = (storeId?: number) =>
+  apiFetch<{ started: boolean; bootstrap?: boolean }>('/inventory/sync', { method: 'POST', body: storeId ? { storeId } : {} });
+
+export const getSyncStatus = () =>
+  apiFetch<{ ready: boolean; running: boolean; stores: Array<{ storeId: number; lastSyncedAt: string | null }> }>('/inventory/sync-status');
+
+export const getInventorySettings = () => apiFetch<InventorySettings>('/inventory/settings');
+export const saveInventorySettings = (patch: Partial<InventorySettings>) =>
+  apiFetch<InventorySettings>('/inventory/settings', { method: 'PATCH', body: patch });
+
+export const getAvailability = (body: { variantGids?: string[]; storeId?: number; q?: string }) =>
+  apiFetch<{ allowBackorder: boolean; items: AvailabilityHit[] }>('/inventory/availability', { method: 'POST', body });
+
+export function getInventoryPushHealth(storeId?: number): Promise<InventoryPushHealth> {
+  return apiFetch<InventoryPushHealth>('/settings/shopify/inventory-push-health', { params: { storeId } });
+}
+
+async function download(path: string, params: Record<string, unknown>, name: string) {
+  const res = await api.get(path, { params, responseType: 'blob' });
+  const url = URL.createObjectURL(res.data as Blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+export const downloadInventoryCsv = (q: ItemQuery) =>
+  download('/inventory/export', qp(q), `inventory-${new Date().toISOString().slice(0, 10)}.csv`);
+
+export const downloadLedgerCsv = (q: { itemId?: number; locationId?: number; reason?: string; from?: string; to?: string }) =>
+  download('/inventory/ledger/export', q, `stock-ledger-${new Date().toISOString().slice(0, 10)}.csv`);

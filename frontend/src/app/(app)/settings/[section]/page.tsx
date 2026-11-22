@@ -29,6 +29,7 @@ import {
 } from '@/components/settings/ai-agent';
 import { KnowledgeSection } from '@/components/settings/knowledge';
 import { IntegrationsSection } from '@/components/settings/integrations';
+import { InventorySection } from '@/components/settings/inventory';
 
 /**
  * `/settings/<section>` — one page per section (deep-linkable, survives a
@@ -92,6 +93,8 @@ export default function SettingsSectionPage() {
       return <AiPerformanceSection />;
     case 'knowledge':
       return <KnowledgeSection />;
+    case 'inventory':
+      return <InventorySection />;
     case 'integrations':
       return <IntegrationsSection />;
     default:

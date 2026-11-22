@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import {
+  Boxes,
   User,
   Lock,
   Bell,
@@ -59,6 +60,7 @@ export type SettingsSectionId =
   | 'ai-playground'
   | 'ai-performance'
   | 'knowledge'
+  | 'inventory'
   | 'integrations';
 
 type Access = 'all' | 'manage' | 'kb' | 'hr';
@@ -113,6 +115,7 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
       { id: 'abandoned', label: 'Abandoned carts', icon: ShoppingCart, access: 'manage', keywords: 'abandoned cart recovery checkout webhooks sequence' },
       { id: 'delivery', label: 'Delivery updates', icon: Send, access: 'manage', keywords: 'delivery notifications shipped out for delivery delivered attempted failed cancelled' },
       { id: 'couriers', label: 'Couriers', icon: Truck, access: 'manage', keywords: 'courier trax leopards postex rocket mnp rapidxpk city mapping sync shipper advice' },
+      { id: 'inventory', label: 'Inventory', icon: Boxes, access: 'manage', keywords: 'inventory stock locations warehouse backorder low stock reorder returns restock shared pool' },
     ],
   },
   {
