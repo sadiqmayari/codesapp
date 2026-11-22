@@ -1291,6 +1291,7 @@ export class ShopifyService implements OnModuleInit {
   ): Promise<{
     writeInventory: boolean | null;
     writeProducts: boolean | null;
+    writePublications: boolean | null;
     shopDomain: string | null;
   }> {
     try {
@@ -1307,10 +1308,11 @@ export class ShopifyService implements OnModuleInit {
         // write_inventory covers qty + cost; write_products covers price/compare-at.
         writeInventory: handles.has('write_inventory'),
         writeProducts: handles.has('write_products'),
+        writePublications: handles.has('write_publications'),
         shopDomain: api.shopDomain,
       };
     } catch {
-      return { writeInventory: null, writeProducts: null, shopDomain: null };
+      return { writeInventory: null, writeProducts: null, writePublications: null, shopDomain: null };
     }
   }
 

@@ -35,7 +35,10 @@ import {
   type InventoryItem,
   type InventoryLocation,
   type InventorySummary,
+  PRODUCT_STATUS_META,
+  type ProductStatus,
 } from '@/lib/inventory';
+import { previewStatus, setProductStatus } from '@/lib/inventory-products';
 import { ItemSheet } from '@/components/inventory/item-sheet';
 import { BundleBadge, inputCls, itemName, money, parseMoney, PushChip, setInventoryCurrency, StockBadge, Thumb } from '@/components/inventory/shared';
 
@@ -92,6 +95,7 @@ export default function InventoryPage() {
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string | number>>(new Set());
   const [bulk, setBulk] = useState<null | 'adjust' | 'category' | 'reorder'>(null);
+  const [statusOpen, setStatusOpen] = useState(false);
   const [conflictsOpen, setConflictsOpen] = useState(false);
   const [sheetVersion, setSheetVersion] = useState(0);
   const limit = 50;
@@ -501,6 +505,7 @@ export default function InventoryPage() {
               <Button size="sm" onClick={() => setBulk('adjust')}>Adjust stock…</Button>
               <Button size="sm" variant="ghost" className="text-white hover:bg-white/10" onClick={() => setBulk('category')}>Category</Button>
               <Button size="sm" variant="ghost" className="text-white hover:bg-white/10" onClick={() => setBulk('reorder')}>Reorder point</Button>
+              <Button size="sm" variant="ghost" className="text-white hover:bg-white/10" onClick={() => setStatusOpen(true)}>Set status</Button>
               <Link href={`/inventory/purchase-orders/new?items=${sel.map((s) => s.id).join(',')}`}>
                 <Button size="sm" variant="ghost" className="text-white hover:bg-white/10">Add to PO</Button>
               </Link>
@@ -554,6 +559,18 @@ export default function InventoryPage() {
           setSelected(new Set());
           void load(true);
           void loadSummary();
+        }}
+      />
+
+      <StatusModal
+        open={statusOpen}
+        itemIds={selectedIds}
+        stores={stores}
+        onClose={() => setStatusOpen(false)}
+        onDone={() => {
+          setStatusOpen(false);
+          setSelected(new Set());
+          void load(true);
         }}
       />
 
@@ -803,6 +820,94 @@ function BulkModal({
           <input id="b-reorder" className={inputCls} inputMode="numeric" value={reorder} onChange={(e) => setReorder(e.target.value.replace(/[^0-9]/g, ''))} />
         </div>
       )}
+    </Modal>
+  );
+}
+
+function StatusModal({ open, itemIds, stores, onClose, onDone }: { open: boolean; itemIds: number[]; stores: StoreRow[]; onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
+  const [status, setStatus] = useState<ProductStatus>('active');
+  const [storeId, setStoreId] = useState('');
+  const [preview, setPreview] = useState<Awaited<ReturnType<typeof previewStatus>> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const idsKey = itemIds.join(',');
+  useEffect(() => {
+    if (!open) return;
+    setPreview(null);
+    previewStatus({ itemIds: idsKey.split(',').map(Number).filter(Boolean), status, storeId: Number(storeId) || undefined })
+      .then(setPreview)
+      .catch(() => setPreview(null));
+  }, [open, idsKey, status, storeId]);
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`Set status for ${itemIds.length} items`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button
+            loading={busy}
+            disabled={!preview?.changing}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                const r = await setProductStatus({ itemIds, status, storeId: Number(storeId) || undefined });
+                toast.success(`${r.updated} products set to ${PRODUCT_STATUS_META[status].label}. Updating the stores.`);
+                onDone();
+              } catch (e) {
+                toast.error(e instanceof ApiError ? e.userMessage : 'Could not change the status');
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Change {preview?.changing ?? ''} products
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="New status">
+          {(Object.keys(PRODUCT_STATUS_META) as ProductStatus[]).map((k) => (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              aria-checked={status === k}
+              onClick={() => setStatus(k)}
+              className={cn('flex flex-col rounded-xl border p-3 text-left text-sm', status === k ? 'border-brand-500 bg-brand-50' : 'border-line')}
+            >
+              <b>{PRODUCT_STATUS_META[k].label}</b>
+              <span className="text-xs text-muted">{PRODUCT_STATUS_META[k].hint}</span>
+            </button>
+          ))}
+        </div>
+        {stores.length > 1 && (
+          <div className="flex flex-col gap-1">
+            <label htmlFor="st-store" className="text-xs font-bold text-ink">In which store</label>
+            <select id="st-store" className={inputCls} value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+              <option value="">Every store the items sell in</option>
+              {stores.map((s) => <option key={s.id} value={s.id}>{s.label || s.shopDomain || `Store ${s.id}`}</option>)}
+            </select>
+          </div>
+        )}
+        {preview && (
+          <div className="rounded-xl bg-sunken p-3 text-sm">
+            {preview.changing ? (
+              <>
+                {preview.perStore.map((p) => `${p.count} in ${p.store}`).join(' · ')}
+                {preview.unchanged > 0 && <span className="text-muted"> · {preview.unchanged} already {PRODUCT_STATUS_META[status].label.toLowerCase()}</span>}
+              </>
+            ) : (
+              'Nothing to change.'
+            )}
+            {preview.withStock > 0 && (
+              <p className="mt-1 font-semibold text-amber-800">{preview.withStock} of them still have stock — customers won’t be able to buy them.</p>
+            )}
+          </div>
+        )}
+      </div>
     </Modal>
   );
 }

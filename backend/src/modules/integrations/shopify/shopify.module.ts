@@ -12,6 +12,7 @@ import { ShopifyTenantWebhookController } from './shopify-tenant-webhook.control
 import { ShopifyOrdersController } from './shopify-orders.controller';
 import { ShopifyCronController } from './shopify-cron.controller';
 import { ShopifyInventoryService } from './shopify-inventory.service';
+import { ProductPublishService } from './product-publish.service';
 // Provider-agnostic commerce layer (Shopify + WooCommerce). Placed inside this
 // module so the resolver can inject ShopifyService + WooCommerceService without
 // a module cycle (the AI agent + couriers consume the resolver, exported below).
@@ -37,6 +38,7 @@ import { WooCommerceWebhookController } from '../commerce/woocommerce-webhook.co
     WooCommerceService,
     CommerceResolverService,
     ShopifyInventoryService,
+    ProductPublishService,
   ],
   // CouriersModule consumes ShopifyService.processNotify to raise the
   // `address_issue` customer notification, and ShopifyOrderSyncService to read

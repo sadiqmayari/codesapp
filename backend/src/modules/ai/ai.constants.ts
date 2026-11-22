@@ -147,7 +147,8 @@ export type AiFeature =
   | 'shadow'
   | 'playground'
   | 'eval'
-  | 'knowledge';
+  | 'knowledge'
+  | 'inventory';
 
 /**
  * RAG embeddings (OpenAI). Used independently of the active TEXT provider

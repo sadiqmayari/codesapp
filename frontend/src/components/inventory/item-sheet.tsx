@@ -26,9 +26,12 @@ import {
   unlinkListing,
   updateItem,
   updateListing,
+  PRODUCT_STATUS_META,
   type ItemDetail,
   type Movement,
+  type ProductStatus,
 } from '@/lib/inventory';
+import { setProductStatus } from '@/lib/inventory-products';
 import { BundleBadge, inputCls, itemName, money, parseMoney, ProductStatusBadge, PushChip, StockBadge, Thumb } from './shared';
 
 type Tab = 'stock' | 'pricing' | 'ledger' | 'details';
@@ -280,7 +283,11 @@ function StockTab({ item, onChanged }: { item: ItemDetail; onChanged: (d?: ItemD
           >
             <span className="flex flex-wrap items-center gap-2">
               <StorePill storeId={l.storeId} label={l.storeLabel} />
-              <ProductStatusBadge status={l.productStatus} />
+              {l.productId ? (
+                <StatusSelect productId={l.productId} value={l.productStatus} pending={l.productStatusPush === 'pending'} error={l.productStatusError} onChanged={() => onChanged()} />
+              ) : (
+                <ProductStatusBadge status={l.productStatus} />
+              )}
               <span className="text-muted">
                 store shows <b className="text-ink">{l.storeQty}</b>
                 {l.price != null && <> · {money(l.price)}</>}
@@ -384,6 +391,53 @@ function StockTab({ item, onChanged }: { item: ItemDetail; onChanged: (d?: ItemD
         </section>
       )}
     </div>
+  );
+}
+
+function StatusSelect({
+  productId,
+  value,
+  pending,
+  error,
+  onChanged,
+}: {
+  productId: number;
+  value: string | null;
+  pending: boolean;
+  error: string | null;
+  onChanged: () => void;
+}) {
+  const toast = useToast();
+  const [v, setV] = useState(value ?? 'active');
+  useEffect(() => setV(value ?? 'active'), [value]);
+  return (
+    <span className="inline-flex items-center gap-1">
+      <label htmlFor={`ps-${productId}`} className="sr-only">Product status in this store</label>
+      <select
+        id={`ps-${productId}`}
+        value={v}
+        className="h-7 rounded-lg border border-line bg-surface px-2 text-xs font-semibold text-ink"
+        onChange={async (e) => {
+          const next = e.target.value as ProductStatus;
+          const prev = v;
+          setV(next);
+          try {
+            await setProductStatus({ productIds: [productId], status: next });
+            toast.success(`Status changed to ${PRODUCT_STATUS_META[next].label}. Updating the store.`);
+            onChanged();
+          } catch (err) {
+            setV(prev);
+            toast.error(err instanceof ApiError ? err.userMessage : 'Could not change the status');
+          }
+        }}
+      >
+        {(Object.keys(PRODUCT_STATUS_META) as ProductStatus[]).map((k) => (
+          <option key={k} value={k}>{PRODUCT_STATUS_META[k].label}</option>
+        ))}
+      </select>
+      {pending && <span className="text-xs text-sky-700">updating…</span>}
+      {error && <span className="text-xs text-red-700" title={error}>failed</span>}
+    </span>
   );
 }
 

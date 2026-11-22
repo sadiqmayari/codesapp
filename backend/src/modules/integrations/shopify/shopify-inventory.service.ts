@@ -978,9 +978,16 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  async onProductWebhook(companyId: number, storeId: number, productGid: string, deleted: boolean): Promise<void> {
+  async onProductWebhook(
+    companyId: number,
+    storeId: number,
+    productGid: string,
+    deleted: boolean,
+    /** variant gid (or sku) → master item id, for products CodesApp just created */
+    preLink?: Map<string, number>,
+  ): Promise<void> {
     const company = await this.prisma.company.findUnique({ where: { id: companyId }, select: { inventory_v2_at: true } });
-    if (!company?.inventory_v2_at) return;
+    if (!company?.inventory_v2_at && !preLink) return;
     if (deleted) {
       const p = await this.prisma.inventoryProduct.findUnique({
         where: { company_id_shopify_store_id_shopify_product_gid: { company_id: companyId, shopify_store_id: storeId, shopify_product_gid: productGid } },
@@ -1007,6 +1014,16 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
     await this.prisma.inventoryVariant.deleteMany({
       where: { company_id: companyId, product_id: ids.productId, id: { notIn: ids.variantIds } },
     });
+    if (preLink?.size) {
+      const rows = await this.prisma.inventoryVariant.findMany({
+        where: { id: { in: ids.variantIds }, item_id: null },
+        select: { id: true, shopify_variant_gid: true, sku: true },
+      });
+      for (const r of rows) {
+        const itemId = preLink.get(r.shopify_variant_gid) ?? (r.sku ? preLink.get(`sku:${r.sku.trim().toLowerCase()}`) : undefined);
+        if (itemId) await this.prisma.inventoryVariant.update({ where: { id: r.id }, data: { item_id: itemId, link_source: 'created' } });
+      }
+    }
     await this.linkUnlinked(companyId);
     // stock for any listing we don't track yet at its locations
     const links = await this.prisma.inventoryLocationLink.findMany({ where: { company_id: companyId, store_id: storeId, sync_enabled: true } });

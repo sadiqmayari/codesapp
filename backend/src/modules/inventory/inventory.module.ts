@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { AiModule } from '../ai/ai.module';
+import { ProductController } from './product.controller';
+import { ProductService } from './product.service';
 import { InventoryController } from './inventory.controller';
 import { InventoryService } from './inventory.service';
 import { StockOpsController } from './stock-ops.controller';
@@ -14,8 +17,8 @@ import { StockOpsService } from './stock-ops.service';
  * a leaf module with no commerce-module import (no DI cycle).
  */
 @Module({
-  imports: [AuthModule],
-  controllers: [InventoryController, StockOpsController],
-  providers: [InventoryService, StockOpsService],
+  imports: [AuthModule, AiModule],
+  controllers: [InventoryController, StockOpsController, ProductController],
+  providers: [InventoryService, StockOpsService, ProductService],
 })
 export class InventoryModule {}
