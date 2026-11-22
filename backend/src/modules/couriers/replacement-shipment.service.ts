@@ -29,6 +29,7 @@ import type { CreateReplacementDto } from './dto/create-replacement.dto';
  * `replacement_of_ticket_id` keep the links back to the order and the ticket,
  * and `contact_id` / `conversation_id` link it to the customer.
  */
+import { JobQueueService } from '../../common/services/job-queue.service';
 @Injectable()
 export class ReplacementShipmentService {
   private readonly logger = new Logger(ReplacementShipmentService.name);
@@ -39,6 +40,7 @@ export class ReplacementShipmentService {
     private readonly cityMapping: CityMappingService,
     private readonly inbox: InboxService,
     private readonly shopify: ShopifyService,
+    private readonly jobQueue: JobQueueService,
   ) {}
 
   /**
@@ -449,6 +451,27 @@ export class ReplacementShipmentService {
         created_by_user_id: userId,
       },
     });
+
+    // Inventory: the replacement's units leave the shelf (exactly once). The
+    // inventory worker maps the variants → master items → the store's default
+    // location; a returned replacement later restocks these same units.
+    if (dto.sentItems) {
+      try {
+        const lines = (JSON.parse(dto.sentItems) as Array<{ variantId?: string; quantity?: number }>)
+          .filter((l) => typeof l.variantId === 'string' && Number(l.quantity) > 0)
+          .slice(0, 50)
+          .map((l) => ({ variantId: String(l.variantId), quantity: Math.trunc(Number(l.quantity)) }));
+        if (lines.length) {
+          await this.jobQueue.enqueue(
+            'inventory',
+            { kind: 'replacementOut', companyId, shipmentId: shipment.id, lines },
+            { dedupKey: `inv2-repl:${shipment.id}` },
+          );
+        }
+      } catch {
+        /* malformed — the booking itself stands */
+      }
+    }
 
     // Timeline event on the ticket (best-effort — the parcel is already booked).
     await this.prisma.ticketEvent

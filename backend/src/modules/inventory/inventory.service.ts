@@ -1006,6 +1006,52 @@ export class InventoryService {
     };
   }
 
+  // ── Back-in-stock waitlist ───────────────────────────────────────────────
+
+  /** A customer asked for an out-of-stock item (from a chat). Idempotent. */
+  async addToWaitlist(companyId: number, dto: { variantGid?: string; itemId?: number; conversationId?: number; contactId?: number }, userId: number) {
+    let itemId = dto.itemId ?? null;
+    if (!itemId && dto.variantGid) {
+      const v = await this.prisma.inventoryVariant.findFirst({
+        where: { company_id: companyId, shopify_variant_gid: dto.variantGid, item_id: { not: null } },
+        select: { item_id: true },
+      });
+      itemId = v?.item_id ?? null;
+    }
+    if (!itemId) throw new BadRequestException('This product is not in inventory yet');
+    let contactId = dto.contactId ?? null;
+    if (!contactId && dto.conversationId) {
+      const c = await this.prisma.conversation.findFirst({ where: { id: dto.conversationId, company_id: companyId }, select: { contact_id: true } });
+      contactId = c?.contact_id ?? null;
+    }
+    if (!contactId) throw new BadRequestException('No customer to add');
+    await this.prisma.stockWaitlist.upsert({
+      where: { company_id_item_id_contact_id: { company_id: companyId, item_id: itemId, contact_id: contactId } },
+      create: { company_id: companyId, item_id: itemId, contact_id: contactId, added_by: userId },
+      update: { notified_at: null },
+    });
+    return { ok: true, itemId };
+  }
+
+  async waitlist(companyId: number, itemId: number) {
+    const rows = await this.prisma.stockWaitlist.findMany({
+      where: { company_id: companyId, item_id: itemId, notified_at: null },
+      orderBy: { created_at: 'asc' },
+      take: 500,
+    });
+    const contacts = rows.length
+      ? await this.prisma.contact.findMany({ where: { company_id: companyId, id: { in: rows.map((r) => r.contact_id) } }, select: { id: true, name: true, phone: true } })
+      : [];
+    const cBy = new Map(contacts.map((c) => [c.id, c]));
+    return rows.map((r) => ({ contactId: r.contact_id, name: cBy.get(r.contact_id)?.name ?? null, phone: cBy.get(r.contact_id)?.phone ?? null, since: r.created_at }));
+  }
+
+  /** After messaging them (broadcast), clear the list. */
+  async markWaitlistNotified(companyId: number, itemId: number) {
+    const r = await this.prisma.stockWaitlist.updateMany({ where: { company_id: companyId, item_id: itemId, notified_at: null }, data: { notified_at: new Date() } });
+    return { cleared: r.count };
+  }
+
   // ── helpers ──────────────────────────────────────────────────────────────
 
   private async assertItem(companyId: number, id: number) {

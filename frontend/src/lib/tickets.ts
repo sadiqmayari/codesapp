@@ -273,6 +273,8 @@ export interface CreateReplacementBody {
   contents: string;
   /** Total units sent (Trax item_quantity). */
   sentQuantity?: number;
+  /** Inventory: what is being sent, so stock moves out. */
+  sentItems?: Array<{ variantId: string; quantity: number }>;
   codAmount: number;
   email?: string;
   // Item being TAKEN BACK (required for a Trax replacement).
@@ -309,6 +311,7 @@ export function bookReplacementShipment(
   if (body.address2) fd.append('address2', body.address2);
   fd.append('contents', body.contents);
   if (body.sentQuantity != null) fd.append('sentQuantity', String(body.sentQuantity));
+  if (body.sentItems?.length) fd.append('sentItems', JSON.stringify(body.sentItems));
   fd.append('codAmount', String(body.codAmount));
   if (body.email) fd.append('email', body.email);
   if (body.returnItemDescription)

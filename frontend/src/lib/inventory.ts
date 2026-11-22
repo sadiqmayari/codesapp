@@ -362,3 +362,12 @@ export const downloadInventoryCsv = (q: ItemQuery) =>
 
 export const downloadLedgerCsv = (q: { itemId?: number; locationId?: number; reason?: string; from?: string; to?: string }) =>
   download('/inventory/ledger/export', q, `stock-ledger-${new Date().toISOString().slice(0, 10)}.csv`);
+
+// ── Back-in-stock waitlist ─────────────────────────────────────────────────
+
+export const addToWaitlist = (body: { variantGid?: string; itemId?: number; conversationId?: number; contactId?: number }) =>
+  apiFetch<{ ok: boolean; itemId: number }>('/inventory/waitlist', { method: 'POST', body });
+export const getWaitlist = (itemId: number) =>
+  apiFetch<Array<{ contactId: number; name: string | null; phone: string | null; since: string }>>(`/inventory/items/${itemId}/waitlist`);
+export const markWaitlistNotified = (itemId: number) =>
+  apiFetch<{ cleared: number }>(`/inventory/items/${itemId}/waitlist/notified`, { method: 'POST' });

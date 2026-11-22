@@ -137,7 +137,12 @@ export class InventoryLedgerService {
     if (touched.length && opts.push !== false) {
       for (const itemId of touched) await this.queuePush(companyId, itemId);
     }
-    if (touched.length) this.emit(companyId, 'inventory.changed', { itemIds: touched, reason: meta.reason });
+    if (touched.length) {
+      this.emit(companyId, 'inventory.changed', { itemIds: touched, reason: meta.reason });
+      const deltaBy = new Map<number, number>();
+      for (const l of expanded) deltaBy.set(l.itemId, (deltaBy.get(l.itemId) ?? 0) + Math.trunc(l.delta));
+      await this.alerts(companyId, touched, deltaBy).catch(() => undefined);
+    }
     return results;
   }
 
@@ -188,6 +193,124 @@ export class InventoryLedgerService {
         updated_at = NOW(3)`;
   }
 
+  /**
+   * Read-only: pool availability for store variants (selling surfaces + AI).
+   * Returns only variants linked to a tracked item; bundles = buildable.
+   * `sellable` honours the item's and the tenant's backorder switch.
+   */
+  async stockFor(
+    companyId: number,
+    variantGids: string[],
+    storeId?: number | null,
+  ): Promise<Map<string, { available: number; sellable: boolean }>> {
+    const out = new Map<string, { available: number; sellable: boolean }>();
+    const gids = [...new Set(variantGids.filter(Boolean))].slice(0, 300);
+    if (!gids.length) return out;
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { inventory_v2_at: true, inventory_settings: true },
+    });
+    if (!company?.inventory_v2_at) return out;
+    const tenantBackorder = !!(company.inventory_settings as { allowBackorder?: boolean } | null)?.allowBackorder;
+    const rows = await this.prisma.inventoryVariant.findMany({
+      where: { company_id: companyId, shopify_variant_gid: { in: gids }, item_id: { not: null }, ...(storeId ? { shopify_store_id: storeId } : {}) },
+      select: { shopify_variant_gid: true, item: { select: { id: true, track: true, allow_backorder: true, is_bundle: true, bundle_components: true } } },
+    });
+    const compIds = new Set<number>();
+    for (const r of rows) {
+      if (r.item?.is_bundle && Array.isArray(r.item.bundle_components)) {
+        for (const c of r.item.bundle_components as Array<{ itemId?: number }>) if (c?.itemId) compIds.add(Number(c.itemId));
+      }
+    }
+    const ids = [...new Set([...rows.map((r) => r.item!.id), ...compIds])];
+    const lv = ids.length
+      ? await this.prisma.inventoryLevel.groupBy({ by: ['item_id'], where: { item_id: { in: ids } }, _sum: { available: true } })
+      : [];
+    const av = new Map(lv.map((l) => [l.item_id, l._sum.available ?? 0]));
+    for (const r of rows) {
+      const it = r.item!;
+      if (!it.track) continue;
+      let available = av.get(it.id) ?? 0;
+      if (it.is_bundle) {
+        const comps = (Array.isArray(it.bundle_components) ? it.bundle_components : []) as Array<{ itemId?: number; quantity?: number }>;
+        available = comps.length
+          ? Math.min(...comps.map((c) => Math.floor(Math.max(0, av.get(Number(c.itemId)) ?? 0) / Math.max(1, Number(c.quantity) || 1))))
+          : 0;
+      }
+      out.set(r.shopify_variant_gid, { available, sellable: available > 0 || it.allow_backorder || tenantBackorder });
+    }
+    return out;
+  }
+
+  /**
+   * Threshold crossings → alerts: low (at/below reorder point), out (0) and
+   * back in stock (0 → >0; the waitlist is surfaced so someone can message
+   * them). Socket to owners/admins + outbound webhooks. Never throws.
+   */
+  private async alerts(companyId: number, itemIds: number[], deltaBy: Map<number, number>): Promise<void> {
+    const company = await this.prisma.company.findUnique({ where: { id: companyId }, select: { inventory_settings: true } });
+    const st = (company?.inventory_settings ?? {}) as { lowStockAlerts?: boolean };
+    const enabled = st.lowStockAlerts !== false;
+    const items = await this.prisma.inventoryItem.findMany({
+      where: { company_id: companyId, id: { in: itemIds }, track: true, is_bundle: false },
+      select: { id: true, title: true, variant_title: true, sku: true, reorder_level: true },
+    });
+    if (!items.length) return;
+    const lv = await this.prisma.inventoryLevel.groupBy({ by: ['item_id'], where: { item_id: { in: items.map((i) => i.id) } }, _sum: { available: true } });
+    const avBy = new Map(lv.map((l) => [l.item_id, l._sum.available ?? 0]));
+    for (const it of items) {
+      const after = avBy.get(it.id) ?? 0;
+      const before = after - (deltaBy.get(it.id) ?? 0);
+      const kind =
+        before > 0 && after <= 0
+          ? 'out'
+          : before <= 0 && after > 0
+            ? 'back_in_stock'
+            : before > it.reorder_level && after <= it.reorder_level && after > 0
+              ? 'low'
+              : null;
+      if (!kind) continue;
+      const waiting =
+        kind === 'back_in_stock'
+          ? await this.prisma.stockWaitlist.count({ where: { company_id: companyId, item_id: it.id, notified_at: null } })
+          : 0;
+      const payload = {
+        itemId: it.id,
+        title: [it.title, it.variant_title && it.variant_title !== 'Default Title' ? it.variant_title : null].filter(Boolean).join(' · '),
+        sku: it.sku,
+        available: after,
+        reorderLevel: it.reorder_level,
+        kind,
+        waiting,
+      };
+      if (enabled || kind === 'back_in_stock') this.emitPrivileged(companyId, 'inventory.alert', payload);
+      this.webhook(companyId, `inventory.${kind}`, payload);
+    }
+  }
+
+  private webhooks?: { dispatch(companyId: number, event: string, data: unknown): Promise<void> } | null;
+  private webhook(companyId: number, event: string, data: unknown): void {
+    try {
+      if (this.webhooks === undefined) {
+        const { WebhookDispatcherService } = require('../../webhooks/webhook-dispatcher.service');
+        this.webhooks = this.moduleRef.get(WebhookDispatcherService, { strict: false }) ?? null;
+      }
+      void this.webhooks?.dispatch(companyId, event, data);
+    } catch {
+      this.webhooks = null;
+    }
+  }
+
+  private emitPrivileged(companyId: number, event: string, payload: unknown): void {
+    try {
+      const g = this.resolveGateway();
+      if (g?.emitToPrivileged) g.emitToPrivileged(companyId, event, payload);
+      else g?.emitToCompany(companyId, event, payload);
+    } catch {
+      /* ignore */
+    }
+  }
+
   /** Queue one coalesced store push for an item (dedup per item). */
   async queuePush(companyId: number, itemId: number): Promise<void> {
     await this.jobQueue
@@ -199,15 +322,25 @@ export class InventoryLedgerService {
       .catch((e) => this.logger.warn(`queuePush ${itemId}: ${e instanceof Error ? e.message : e}`));
   }
 
-  emit(companyId: number, event: string, payload: unknown): void {
-    try {
-      if (this.gateway === undefined) {
+  private resolveGateway() {
+    if (this.gateway === undefined) {
+      try {
         const { InboxGateway } = require('../../inbox/inbox.gateway');
         this.gateway = this.moduleRef.get(InboxGateway, { strict: false }) ?? null;
+      } catch {
+        this.gateway = null;
       }
-      this.gateway?.emitToCompany(companyId, event, payload);
+    }
+    return this.gateway as
+      | ({ emitToCompany(c: number, e: string, p: unknown): void; emitToPrivileged?(c: number, e: string, p: unknown): void })
+      | null;
+  }
+
+  emit(companyId: number, event: string, payload: unknown): void {
+    try {
+      this.resolveGateway()?.emitToCompany(companyId, event, payload);
     } catch {
-      this.gateway = null;
+      /* a socket failure never blocks a stock write */
     }
   }
 

@@ -10,6 +10,8 @@ import { groupListings, LinkSource, normBarcode, normSku, titleKey } from '../..
 import { interpretWebhook, planPush, reasonForStoreDelta } from '../../inventory/core/push-plan';
 import { resolveInventorySettings } from '../../inventory/core/settings';
 import { ShopifyService } from './shopify.service';
+import { SharedStateService } from '../../../common/services/shared-state.service';
+import { MailService } from '../../../common/services/mail.service';
 import { WooCommerceService } from '../commerce/woocommerce.service';
 
 /** Jobs on the `inventory` queue (worker only). */
@@ -28,6 +30,7 @@ export type InventoryJob =
     }
   | { kind: 'productWebhook'; companyId: number; storeId: number; productGid: string; deleted: boolean }
   | { kind: 'restockReturn'; companyId: number; shipmentId: number }
+  | { kind: 'replacementOut'; companyId: number; shipmentId: number; lines: Array<{ variantId: string; quantity: number }> }
   | { kind: 'setProductStatus'; companyId: number; productId: number }
   | { kind: 'publishProduct'; companyId: number; jobId: number }
   | { kind: 'pushPrice'; companyId: number; variantId: number }
@@ -103,6 +106,8 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
     private readonly jobQueue: JobQueueService,
     private readonly ledger: InventoryLedgerService,
     private readonly feature: FeatureService,
+    private readonly shared: SharedStateService,
+    private readonly mail: MailService,
   ) {}
 
   onModuleInit(): void {
@@ -130,6 +135,8 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
         return this.onProductWebhook(job.companyId, job.storeId, job.productGid, job.deleted);
       case 'restockReturn':
         return this.restockReturn(job.companyId, job.shipmentId);
+      case 'replacementOut':
+        return this.replacementOut(job.companyId, job.shipmentId, job.lines);
       case 'setProductStatus':
         return this.pushProductStatus(job.companyId, job.productId);
       case 'pushPrice':
@@ -162,7 +169,9 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
         await this.enqueue({ kind: 'bootstrap', companyId: c.id }, `inv2-boot:${c.id}`);
         continue;
       }
-      const mins = resolveInventorySettings(c.inventory_settings).reconcileMinutes;
+      const settings = resolveInventorySettings(c.inventory_settings);
+      if (settings.dailyDigest) await this.digest(c.id).catch(() => undefined);
+      const mins = settings.reconcileMinutes;
       const stores = await this.prisma.shopifyStore.findMany({
         where: { company_id: c.id, status: 'active' },
         select: { id: true },
@@ -173,6 +182,53 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
         this.lastReconcile.set(key, Date.now());
         await this.enqueue({ kind: 'syncStore', companyId: c.id, storeId: s.id }, `inv2-sync:${c.id}:${s.id}`);
       }
+    }
+  }
+
+  /**
+   * Daily owner email of low + out-of-stock items, once per tenant day after
+   * 08:00 on the tenant clock (dedupe in shared state, survives restarts).
+   */
+  private async digest(companyId: number): Promise<void> {
+    const company = await this.prisma.company.findUnique({ where: { id: companyId }, select: { timezone: true, company_name: true } });
+    const tz = company?.timezone || 'Asia/Karachi';
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' })
+      .formatToParts(new Date())
+      .reduce<Record<string, string>>((a, p) => ((a[p.type] = p.value), a), {});
+    if (Number(parts.hour) < 8) return;
+    const day = `${parts.year}-${parts.month}-${parts.day}`;
+    const key = `inv-digest:${companyId}:${day}`;
+    if (await this.shared.get(key)) return;
+    await this.shared.set(key, 1, 2 * 86400);
+    const rows = await this.prisma.$queryRaw<Array<{ title: string; variant_title: string | null; sku: string | null; reorder_level: number; available: string | number }>>`
+      SELECT i.title, i.variant_title, i.sku, i.reorder_level, COALESCE(SUM(l.available), 0) AS available
+      FROM inventory_items i LEFT JOIN inventory_levels l ON l.item_id = i.id
+      WHERE i.company_id = ${companyId} AND i.archived_at IS NULL AND i.track = 1 AND i.is_bundle = 0
+      GROUP BY i.id
+      HAVING available <= MAX(i.reorder_level)
+      ORDER BY available ASC, i.title
+      LIMIT 200`;
+    if (!rows.length) return;
+    const owners = await this.prisma.user.findMany({
+      where: { company_id: companyId, role: { in: ['owner', 'admin'] }, status: 'active' },
+      select: { email: true },
+    });
+    const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string);
+    const out = rows.filter((r) => Number(r.available) <= 0);
+    const low = rows.filter((r) => Number(r.available) > 0);
+    const list = (rs: typeof rows) =>
+      rs
+        .map((r) => `<tr><td style="padding:4px 8px">${esc([r.title, r.variant_title && r.variant_title !== 'Default Title' ? r.variant_title : ''].filter(Boolean).join(' · '))}</td><td style="padding:4px 8px;color:#667085">${esc(r.sku ?? '')}</td><td style="padding:4px 8px;text-align:right"><b>${Number(r.available)}</b></td></tr>`)
+        .join('');
+    const base = (process.env.APP_URL ?? '').replace(/\/+$/, '');
+    const html = `<div style="font-family:Arial,sans-serif;color:#0E1A2B">
+      <h2 style="margin:0 0 8px">Stock check · ${esc(company?.company_name ?? '')}</h2>
+      <p>${out.length} out of stock · ${low.length} running low.</p>
+      ${out.length ? `<h3>Out of stock</h3><table>${list(out)}</table>` : ''}
+      ${low.length ? `<h3>Running low</h3><table>${list(low)}</table>` : ''}
+      <p><a href="${base}/inventory/purchase-orders">Open reorder suggestions</a></p></div>`;
+    for (const o of owners) {
+      if (o.email) await this.mail.send(o.email, `Stock check: ${out.length} out, ${low.length} low`, html).catch(() => undefined);
     }
   }
 
@@ -507,9 +563,10 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
         where: { item_id_location_id: { item_id: l.item_id, location_id: locationId } },
         select: { available: true },
       });
-      if (!level || (seed && q.available > level.available)) {
-        // Seed: the pool adopts the store value; across stores the MAX wins
-        // (a lower store shows as a conflict until someone resolves it).
+      if (!level || (seed && q.available < level.available)) {
+        // Seed: the pool adopts the store value; across stores the LOWER one
+        // wins so a linked item is never oversold (the higher store shows as
+        // a conflict until someone confirms the real count).
         await this.ledger.apply(
           companyId,
           [{ itemId: l.item_id, locationId, delta: q.available - (level?.available ?? 0), variantId: l.id }],
@@ -1069,9 +1126,22 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
     if (legacy) return;
     const shipment = await this.prisma.shipment.findFirst({
       where: { id: shipmentId, company_id: companyId },
-      select: { shopify_order_gid: true, shopify_store_id: true },
+      select: { shopify_order_gid: true, shopify_store_id: true, is_replacement: true },
     });
     if (!shipment) return;
+    // A returned REPLACEMENT puts back exactly what it took out (not the
+    // original order's lines, which may differ).
+    if (shipment.is_replacement) {
+      const out = await this.prisma.inventoryMovement.findMany({
+        where: { company_id: companyId, reason: 'replacement_out', ref: `replacement:${shipmentId}` },
+        select: { item_id: true, location_id: true, delta: true, variant_id: true },
+      });
+      const lines = out
+        .filter((m) => m.item_id && m.location_id && m.delta < 0)
+        .map((m) => ({ itemId: m.item_id!, locationId: m.location_id!, delta: -m.delta, variantId: m.variant_id }));
+      if (lines.length) await this.ledger.apply(companyId, lines, { reason: 'return', ref, refType: 'return', idemKey: ref });
+      return;
+    }
     const orderGid = shipment.shopify_order_gid.replace(/#R\d+$/, '');
     const order = await this.prisma.shopifyOrder.findFirst({
       where: { company_id: companyId, shopify_order_gid: orderGid },
@@ -1098,6 +1168,37 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
     }
     if (!ledgerLines.length) return;
     await this.ledger.apply(companyId, ledgerLines, { reason: 'return', ref, refType: 'return', idemKey: ref });
+  }
+
+  /** A replacement parcel left: take its units out of the pool (once). */
+  async replacementOut(companyId: number, shipmentId: number, lines: Array<{ variantId: string; quantity: number }>): Promise<void> {
+    const company = await this.prisma.company.findUnique({ where: { id: companyId }, select: { inventory_v2_at: true } });
+    if (!company?.inventory_v2_at || !(await this.feature.inventoryEnabled(companyId))) return;
+    const shipment = await this.prisma.shipment.findFirst({
+      where: { id: shipmentId, company_id: companyId },
+      select: { original_order_gid: true, shopify_store_id: true },
+    });
+    if (!shipment) return;
+    const order = shipment.original_order_gid
+      ? await this.prisma.shopifyOrder.findFirst({
+          where: { company_id: companyId, shopify_order_gid: shipment.original_order_gid },
+          select: { shopify_store_id: true },
+        })
+      : null;
+    const storeId = order?.shopify_store_id ?? shipment.shopify_store_id ?? null;
+    const locationId = await this.defaultLocationForStore(companyId, storeId);
+    if (!locationId) return;
+    const out: Array<{ itemId: number; locationId: number; delta: number; variantId: number }> = [];
+    for (const l of lines) {
+      const v = await this.prisma.inventoryVariant.findFirst({
+        where: { company_id: companyId, shopify_variant_gid: l.variantId, ...(storeId ? { shopify_store_id: storeId } : {}) },
+        select: { id: true, item_id: true },
+      });
+      if (v?.item_id) out.push({ itemId: v.item_id, locationId, delta: -Math.abs(l.quantity), variantId: v.id });
+    }
+    if (!out.length) return;
+    const ref = `replacement:${shipmentId}`;
+    await this.ledger.apply(companyId, out, { reason: 'replacement_out', ref, refType: 'replacement', idemKey: ref });
   }
 
   // ── Product status (Active / Unlisted / Draft / Archived) ─────────────────

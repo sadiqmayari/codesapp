@@ -474,14 +474,19 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
     const lines = await this.prisma.$queryRawUnsafe<
       Array<{ gid: string; qty: unknown; cost: unknown; is_bundle: number | boolean | null; comps: unknown }>
     >(
-      `SELECT o.shopify_order_gid gid, li.qty, COALESCE(iv.cost_price, iv.shopify_unit_cost) cost,
+      `SELECT o.shopify_order_gid gid, li.qty, COALESCE(it.avg_cost, iv.cost_price, iv.shopify_unit_cost) cost,
               iv.is_bundle, iv.bundle_components comps
          FROM shopify_orders o
          JOIN JSON_TABLE(o.line_items, '$[*]' COLUMNS(
                 qty INT PATH '$.quantity', variantId VARCHAR(120) PATH '$.variantId')) li
          LEFT JOIN inventory_variants iv
-           ON iv.company_id = o.company_id
-          AND iv.shopify_variant_gid COLLATE utf8mb4_general_ci = li.variantId COLLATE utf8mb4_general_ci
+           ON iv.id = (
+                SELECT v2.id FROM inventory_variants v2
+                 WHERE v2.company_id = o.company_id
+                   AND v2.shopify_variant_gid COLLATE utf8mb4_general_ci = li.variantId COLLATE utf8mb4_general_ci
+                 ORDER BY (v2.shopify_store_id = o.shopify_store_id) DESC, v2.id DESC
+                 LIMIT 1)
+         LEFT JOIN inventory_items it ON it.id = iv.item_id
         WHERE o.company_id = ? AND o.shopify_order_gid IN (${ph2})`,
       companyId,
       ...present,
@@ -503,10 +508,10 @@ export class GrowthFactsService implements OnModuleInit, OnModuleDestroy {
     if (compGids.size) {
       const cs = await this.prisma.inventoryVariant.findMany({
         where: { company_id: companyId, shopify_variant_gid: { in: [...compGids] } },
-        select: { shopify_variant_gid: true, cost_price: true, shopify_unit_cost: true },
+        select: { shopify_variant_gid: true, cost_price: true, shopify_unit_cost: true, item: { select: { avg_cost: true } } },
       });
       for (const c of cs) {
-        const v = c.cost_price ?? c.shopify_unit_cost;
+        const v = c.item?.avg_cost ?? c.cost_price ?? c.shopify_unit_cost;
         compCost.set(c.shopify_variant_gid, v == null ? null : Number(v));
       }
     }

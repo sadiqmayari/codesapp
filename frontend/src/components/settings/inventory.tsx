@@ -180,7 +180,6 @@ export function InventorySection() {
         <Rows>
           {toggle('lowStockAlerts', 'Low-stock alerts', 'Notify owners and admins when an item drops to its reorder point.')}
           {toggle('dailyDigest', 'Daily email digest', 'One email each morning with every low and out-of-stock item.')}
-          {toggle('adsOutOfStockAlert', 'Out of stock while ads spend', 'Alert when an ad that spent today sends people to an item with no stock.')}
           {toggle('backInStockOffer', 'Back-in-stock messages', 'When an item comes back, offer to message everyone on its waitlist.')}
         </Rows>
       </SettingsCard>

@@ -3890,18 +3890,35 @@ export class ShipmentService implements OnModuleInit {
     const gid = shipment.shopify_order_gid.replace(/#R\d+$/, '');
     const order = await this.prisma.shopifyOrder.findUnique({
       where: { company_id_shopify_order_gid: { company_id: companyId, shopify_order_gid: gid } },
-      select: { customer_name: true, city: true, total_outstanding: true, line_items: true },
+      select: { customer_name: true, city: true, total_outstanding: true, line_items: true, shopify_store_id: true },
     });
-    const items = (Array.isArray(order?.line_items) ? (order!.line_items as unknown[]) : []).map((rawIt) => {
-      const it = rawIt as Record<string, unknown>;
-      const v = (it?.variantTitle ?? it?.variant_title ?? null) as string | null;
-      return {
-        title: String(it?.title ?? it?.name ?? 'Item').trim() || 'Item',
-        variant: v && String(v).trim() && !/default title/i.test(String(v)) ? String(v).trim() : null,
-        sku: (it?.sku as string | null) ?? null,
-        quantity: Number(it?.quantity ?? it?.qty ?? 1) || 1,
-      };
-    });
+    const rawItems = Array.isArray(order?.line_items) ? (order!.line_items as Array<Record<string, unknown>>) : [];
+    // Inventory: shelf + item code so the packer walks straight to it.
+    const gids = rawItems.map((it) => String(it?.variantId ?? '')).filter((g) => g.startsWith('gid://'));
+    const inv = gids.length
+      ? await this.prisma.inventoryVariant
+          .findMany({
+            where: { company_id: companyId, shopify_variant_gid: { in: gids }, ...(order?.shopify_store_id ? { shopify_store_id: order.shopify_store_id } : {}) },
+            select: { shopify_variant_gid: true, item: { select: { shelf_location: true, item_code: true } } },
+          })
+          .catch(() => [])
+      : [];
+    const invBy = new Map(inv.map((r) => [r.shopify_variant_gid, r.item]));
+    const items = rawItems
+      .map((it) => {
+        const v = (it?.variantTitle ?? it?.variant_title ?? null) as string | null;
+        const info = invBy.get(String(it?.variantId ?? ''));
+        return {
+          title: String(it?.title ?? it?.name ?? 'Item').trim() || 'Item',
+          variant: v && String(v).trim() && !/default title/i.test(String(v)) ? String(v).trim() : null,
+          sku: (it?.sku as string | null) ?? null,
+          quantity: Number(it?.quantity ?? it?.qty ?? 1) || 1,
+          shelf: info?.shelf_location ?? null,
+          itemCode: info?.item_code ?? null,
+        };
+      })
+      // walk the shelves in order
+      .sort((a, b) => (a.shelf ?? '\uffff').localeCompare(b.shelf ?? '\uffff', undefined, { numeric: true }));
     const packedBy = shipment.packed_by_user_id
       ? await this.prisma.user.findUnique({ where: { id: shipment.packed_by_user_id }, select: { name: true } })
       : null;

@@ -77,6 +77,12 @@ export class CreateReplacementDto {
   @Min(1)
   sentQuantity?: number;
 
+  /** Inventory: JSON [{variantId, quantity}] of what is being sent (multipart → string). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  sentItems?: string;
+
   /** COD to collect on the replacement — 0 for a free re-send, or the price
    *  difference for an exchange. */
   @Type(() => Number)

@@ -165,6 +165,9 @@ export function ReplacementShipmentModal({
         address2: address2.trim() || undefined,
         contents: summarize(sentItems) || 'Replacement item',
         sentQuantity: totalQty(sentItems) || 1,
+        sentItems: sentItems
+          .filter((i) => i.variantId && i.quantity > 0)
+          .map((i) => ({ variantId: i.variantId as string, quantity: i.quantity })),
         codAmount,
         email: email.trim() || undefined,
         // A re-send collects nothing — only an exchange carries the return leg.

@@ -1,3 +1,4 @@
+import { InventoryLedgerService } from '../inventory/core/inventory-ledger.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -344,6 +345,7 @@ export class AgentSkills {
     private readonly bookings: AgentBookingsService,
     private readonly webhooks: WebhookDispatcherService,
     private readonly events: EventStoreService,
+    private readonly stock: InventoryLedgerService,
   ) {}
 
   /** Which tools to offer this turn, from the profile + store setup. */
@@ -531,6 +533,18 @@ export class AgentSkills {
     }
     const dedup = new Map<string, ProductHit>();
     for (const h of hits) if (h.variantId && !dedup.has(h.variantId)) dedup.set(h.variantId, h);
+    // Inventory v2: the shared stock pool decides what is in stock (Shopify's
+    // availableForSale stays true when "continue selling" is on, and a sale in
+    // another store isn't reflected there yet).
+    try {
+      const stock = await this.stock.stockFor(st.companyId, [...dedup.keys()], st.storeId);
+      for (const [gid, s] of stock) {
+        const h = dedup.get(gid);
+        if (h) dedup.set(gid, { ...h, available: s.sellable });
+      }
+    } catch {
+      /* inventory unavailable — keep the store's own flag */
+    }
     return [...dedup.values()];
   }
 
@@ -703,6 +717,11 @@ export class AgentSkills {
     }
     if (unknown.length) {
       return `Unknown variant_id(s): ${unknown.join(', ')}. Call search_products first and use its variant_id values.`;
+    }
+    // Never put an out-of-stock item in the cart.
+    const oos = cart.filter((l) => st.seen.get(l.variantId)?.available === false);
+    if (oos.length) {
+      return `Out of stock: ${oos.map((l) => `${l.title}${l.variantTitle ? ` (${l.variantTitle})` : ''}`).join(', ')}. Do not add it. Tell the customer it is out of stock and offer an in-stock option from search_products (or ask if they want to be told when it is back).`;
     }
     st.memory.cart = cart;
     this.touchOrder(st);

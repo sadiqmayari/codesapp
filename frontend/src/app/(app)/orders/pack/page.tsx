@@ -155,10 +155,16 @@ export default function PackStationPage() {
                           checked={!!checked[i]}
                           onChange={(e) => setChecked((c) => ({ ...c, [i]: e.target.checked }))}
                         />
+                        {it.shelf && (
+                          <span className="shrink-0 rounded-md bg-gray-900 px-2 py-1 text-xs font-bold text-white" title="Shelf">
+                            {it.shelf}
+                          </span>
+                        )}
                         <span className={cn('flex-1 text-sm', checked[i] ? 'text-muted line-through' : 'text-ink')}>
                           {it.title}
                           {it.variant && <span className="text-muted"> · {it.variant}</span>}
                           {it.sku && <span className="ml-2 font-mono text-xs text-muted">{it.sku}</span>}
+                          {it.itemCode && <span className="ml-2 rounded bg-sunken px-1.5 text-xs font-semibold">#{it.itemCode}</span>}
                         </span>
                         <b className="tabular-nums">× {it.quantity}</b>
                       </label>

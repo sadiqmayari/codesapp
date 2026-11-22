@@ -111,3 +111,10 @@ export class AvailabilityDto {
   @IsOptional() @IsInt() storeId?: number;
   @IsOptional() @IsString() @MaxLength(100) q?: string;
 }
+
+export class WaitlistDto {
+  @IsOptional() @IsString() @MaxLength(160) variantGid?: string;
+  @IsOptional() @IsInt() itemId?: number;
+  @IsOptional() @IsInt() conversationId?: number;
+  @IsOptional() @IsInt() contactId?: number;
+}

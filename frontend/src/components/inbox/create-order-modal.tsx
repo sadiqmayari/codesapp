@@ -1,5 +1,6 @@
 'use client';
 
+import { addToWaitlist, getAvailability } from '@/lib/inventory';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Clock,
@@ -31,6 +32,8 @@ interface ProductVariant {
   sku: string | null;
   image: string | null;
   available: boolean;
+  /** Inventory v2: units available in the shared pool (null = not tracked here). */
+  stock?: number | null;
 }
 
 type DiscountType = 'percentage' | 'fixed';
@@ -319,7 +322,9 @@ export default function CreateOrderModal({
                   itemCode: string | null;
                   alias: string | null;
                   image: string | null;
-                  available: boolean;
+                  available: number;
+                  sellable: boolean;
+                  tracked: boolean;
                 }[]
               >('/inventory/lookup', {
                 params: { q, ...(storeId ? { storeId: String(storeId) } : {}) },
@@ -340,9 +345,25 @@ export default function CreateOrderModal({
             price: h.price ?? '0',
             sku: h.sku,
             image: h.image,
-            available: h.available,
+            available: h.sellable,
+            stock: h.tracked ? h.available : null,
           }));
-        setResults([...invMapped, ...shopify]);
+        // Stock for the Shopify hits too (one call; best-effort).
+        const stockBy = new Map<string, { available: number; sellable: boolean; tracked: boolean }>();
+        if (shopify.length) {
+          try {
+            const av = await getAvailability({ variantGids: shopify.map((v) => v.variantId), storeId: storeId ?? undefined });
+            av.items.forEach((x) => stockBy.set(x.variantId, x));
+          } catch {
+            /* inventory off or unavailable — Shopify's own flag stays */
+          }
+        }
+        if (my !== productSearchSeq.current) return;
+        const withStock = shopify.map((v) => {
+          const st = stockBy.get(v.variantId);
+          return st ? { ...v, available: st.sellable, stock: st.tracked ? st.available : null } : v;
+        });
+        setResults([...invMapped, ...withStock]);
       } catch (e) {
         if (my !== productSearchSeq.current) return;
         setResults([]);
@@ -413,6 +434,22 @@ export default function CreateOrderModal({
   }, [items, address1, city, countryCode, storeId]);
 
   const addVariant = (v: ProductVariant) => {
+    // Inventory: never add an out-of-stock item (unless the shop allows backorders —
+    // then `available` stays true from the server).
+    if (v.stock != null && !v.available) {
+      if (conversationId) {
+        addToWaitlist({ variantGid: v.variantId, conversationId })
+          .then(() => toast.info(`${v.productTitle} is out of stock — the customer is on its back-in-stock list`))
+          .catch(() => toast.error(`${v.productTitle} is out of stock`));
+      } else {
+        toast.error(`${v.productTitle} is out of stock`);
+      }
+      return;
+    }
+    const already = items.find((it) => it.variantId === v.variantId)?.quantity ?? 0;
+    if (v.stock != null && already + 1 > v.stock) {
+      toast.info(`Only ${v.stock} of ${v.productTitle} available`);
+    }
     setItems((cur) => {
       const i = cur.findIndex((it) => it.variantId === v.variantId);
       if (i !== -1) {
@@ -943,6 +980,15 @@ export default function CreateOrderModal({
                         </span>
                       )}
                     </span>
+                    {v.stock != null && (
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                          !v.available ? 'bg-red-50 text-red-700' : v.stock <= 5 ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700'
+                        }`}
+                      >
+                        {!v.available ? 'Out' : v.stock <= 0 ? 'Backorder' : v.stock <= 5 ? `Only ${v.stock} left` : `${v.stock} available`}
+                      </span>
+                    )}
                     <span className="text-sm text-gray-700 shrink-0">
                       {v.price}
                     </span>

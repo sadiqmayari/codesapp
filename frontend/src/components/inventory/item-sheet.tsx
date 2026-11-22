@@ -32,6 +32,7 @@ import {
   type ProductStatus,
 } from '@/lib/inventory';
 import { setProductStatus } from '@/lib/inventory-products';
+import { getWaitlist, markWaitlistNotified } from '@/lib/inventory';
 import { BundleBadge, inputCls, itemName, money, parseMoney, ProductStatusBadge, PushChip, StockBadge, Thumb } from './shared';
 
 type Tab = 'stock' | 'pricing' | 'ledger' | 'details';
@@ -337,6 +338,8 @@ function StockTab({ item, onChanged }: { item: ItemDetail; onChanged: (d?: ItemD
         </div>
       </section>
 
+      <Waitlist itemId={item.id} available={item.available} />
+
       {!item.isBundle && locs.length > 0 && (
         <section className="flex flex-col gap-3 rounded-xl border border-line p-3">
           <h3 className="text-sm font-extrabold text-ink">Adjust stock</h3>
@@ -438,6 +441,47 @@ function StatusSelect({
       {pending && <span className="text-xs text-sky-700">updating…</span>}
       {error && <span className="text-xs text-red-700" title={error}>failed</span>}
     </span>
+  );
+}
+
+function Waitlist({ itemId, available }: { itemId: number; available: number }) {
+  const toast = useToast();
+  const [rows, setRows] = useState<Awaited<ReturnType<typeof getWaitlist>> | null>(null);
+  useEffect(() => {
+    getWaitlist(itemId).then(setRows).catch(() => setRows([]));
+  }, [itemId]);
+  if (!rows?.length) return null;
+  return (
+    <section className={cn('flex flex-col gap-2 rounded-xl border p-3', available > 0 ? 'border-sky-300 bg-sky-50' : 'border-line')}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-extrabold text-ink">
+          {rows.length} customer{rows.length === 1 ? '' : 's'} waiting for this
+        </h3>
+        <span className="flex gap-2">
+          <Link href={`/broadcasts/new?contacts=${rows.map((r) => r.contactId).join(',')}`}>
+            <Button size="sm" disabled={available <= 0}>Message them</Button>
+          </Link>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={async () => {
+              await markWaitlistNotified(itemId).catch(() => undefined);
+              setRows([]);
+              toast.success('Waitlist cleared');
+            }}
+          >
+            Clear
+          </Button>
+        </span>
+      </div>
+      <p className="text-xs text-muted">
+        {available > 0
+          ? 'It is back in stock — send them a template to let them know.'
+          : 'Asked for it while it was out of stock. Message them once it is back.'}{' '}
+        {rows.slice(0, 5).map((r) => r.name || r.phone).join(', ')}
+        {rows.length > 5 ? ` and ${rows.length - 5} more` : ''}
+      </p>
+    </section>
   );
 }
 

@@ -22,6 +22,7 @@ import {
   StoreScopedDto,
   UpdateItemDto,
   UpdateListingDto,
+  WaitlistDto,
 } from './dto/inventory.dto';
 
 type CU = { companyId: number; userId: number; role: string };
@@ -166,6 +167,12 @@ export class InventoryController {
     return this.inventory.availability(u.companyId, { q, storeId: toInt(storeId) }).then((r) => r.items);
   }
 
+  @Post('waitlist')
+  @Roles(...SELL_ROLES)
+  addWaitlist(@CurrentUser() u: CU, @Body() dto: WaitlistDto) {
+    return this.inventory.addToWaitlist(u.companyId, dto, u.userId);
+  }
+
   // ── Param routes LAST ──
 
   @Get('variants/:id/item')
@@ -211,6 +218,16 @@ export class InventoryController {
   @Get('items/:id/link-candidates')
   candidates(@CurrentUser() u: CU, @Param('id', ParseIntPipe) id: number, @Query('q') q?: string) {
     return this.inventory.linkCandidates(u.companyId, id, q);
+  }
+
+  @Get('items/:id/waitlist')
+  waitlist(@CurrentUser() u: CU, @Param('id', ParseIntPipe) id: number) {
+    return this.inventory.waitlist(u.companyId, id);
+  }
+
+  @Post('items/:id/waitlist/notified')
+  waitlistNotified(@CurrentUser() u: CU, @Param('id', ParseIntPipe) id: number) {
+    return this.inventory.markWaitlistNotified(u.companyId, id);
   }
 
   @Post('items/:id/link')

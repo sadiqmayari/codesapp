@@ -85,6 +85,7 @@ export function Navbar({
   const navHrefs = new Set(flatNav(user).map((n) => n.href));
   const hasInbox = navHrefs.has('/inbox');
   const hasOrders = navHrefs.has('/orders');
+  const hasInventory = navHrefs.has('/inventory');
 
   useEffect(() => {
     setTheme(getThemePref());
@@ -116,7 +117,7 @@ export function Navbar({
 
   const loadBell = useCallback(async () => {
     setBellLoading(true);
-    const [chats, warnings, lanes] = await Promise.allSettled([
+    const [chats, warnings, lanes, stock] = await Promise.allSettled([
       hasInbox
         ? apiFetch<ConversationRow[]>('/inbox/conversations', {
             params: { status: 'unread', limit: 8 },
@@ -128,6 +129,11 @@ export function Navbar({
       }),
       hasOrders
         ? apiFetch<LaneCounts>('/shipments/queue/lane-counts', {
+            noOnboardingRedirect: true,
+          })
+        : Promise.resolve(null),
+      hasInventory
+        ? apiFetch<{ lowCount: number; outCount: number; conflicts: number; pushFailed: number }>('/inventory/summary', {
             noOnboardingRedirect: true,
           })
         : Promise.resolve(null),
@@ -176,6 +182,36 @@ export function Navbar({
           href: '/orders/fulfillment',
         });
     }
+    if (stock.status === 'fulfilled' && stock.value) {
+      const st = stock.value;
+      if (st.outCount > 0)
+        items.push({
+          key: 'stock-out',
+          icon: AlertTriangle,
+          tone: 'red',
+          title: `${st.outCount} items out of stock`,
+          detail: st.lowCount ? `${st.lowCount} more are running low` : 'Reorder or hide them from the store',
+          href: '/inventory?status=out',
+        });
+      else if (st.lowCount > 0)
+        items.push({
+          key: 'stock-low',
+          icon: AlertTriangle,
+          tone: 'amber',
+          title: `${st.lowCount} items running low`,
+          detail: 'At or under their reorder point',
+          href: '/inventory?status=low',
+        });
+      if (st.pushFailed + st.conflicts > 0)
+        items.push({
+          key: 'stock-sync',
+          icon: AlertTriangle,
+          tone: 'amber',
+          title: `${st.pushFailed + st.conflicts} inventory items need attention`,
+          detail: `${st.pushFailed} store updates failed · ${st.conflicts} stores disagree`,
+          href: '/inventory?status=attention',
+        });
+    }
     if (warnings.status === 'fulfilled' && Array.isArray(warnings.value)) {
       for (const w of warnings.value) {
         items.push({
@@ -190,7 +226,7 @@ export function Navbar({
     }
     setAlerts(items);
     setBellLoading(false);
-  }, [hasInbox, hasOrders]);
+  }, [hasInbox, hasOrders, hasInventory]);
 
   useEffect(() => {
     if (bellOpen) loadBell();

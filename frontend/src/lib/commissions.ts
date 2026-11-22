@@ -159,7 +159,7 @@ export interface PackParcel {
   customerName: string | null;
   city: string | null;
   cod: number | null;
-  items: { title: string; variant: string | null; sku: string | null; quantity: number }[];
+  items: { title: string; variant: string | null; sku: string | null; quantity: number; shelf?: string | null; itemCode?: string | null }[];
   packedAt: string | null;
   packedBy: string | null;
 }

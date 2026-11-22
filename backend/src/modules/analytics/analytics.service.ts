@@ -1799,6 +1799,9 @@ export class AnalyticsService {
           local_qty: number;
           reorder_level: number;
           is_bundle: number;
+          item_id: number | null;
+          item_title: string | null;
+          pool_qty: unknown;
         };
         const univParams: unknown[] = [companyId];
         if (storeId) univParams.push(storeId);
@@ -1807,12 +1810,16 @@ export class AnalyticsService {
                   p.title AS title, p.image_url AS image, p.vendor AS vendor,
                   p.product_type AS product_type, v.category AS category, v.sku AS sku,
                   v.price AS price,
-                  COALESCE(v.cost_price, v.shopify_unit_cost) AS cost,
-                  v.local_qty AS local_qty, v.reorder_level AS reorder_level,
-                  v.is_bundle AS is_bundle
+                  COALESCE(i.avg_cost, v.cost_price, v.shopify_unit_cost) AS cost,
+                  v.local_qty AS local_qty, COALESCE(i.reorder_level, v.reorder_level) AS reorder_level,
+                  v.is_bundle AS is_bundle,
+                  v.item_id AS item_id, i.title AS item_title,
+                  (SELECT COALESCE(SUM(l.available + l.committed), 0) FROM inventory_levels l WHERE l.item_id = v.item_id) AS pool_qty
            FROM inventory_variants v
            JOIN inventory_products p ON p.id = v.product_id
-           WHERE v.company_id = ?${storeClauseV}`,
+           LEFT JOIN inventory_items i ON i.id = v.item_id
+           WHERE v.company_id = ?${storeClauseV}
+           ORDER BY v.id`,
           ...univParams,
         );
 
@@ -1974,8 +1981,13 @@ export class AnalyticsService {
         let prevCogs = 0;
         let prevGrossUnits = 0;
 
+        // Inventory v2: a product sold in two stores is ONE product here, and
+        // its stock (the shared pool) is counted once, never per listing.
+        const stockCounted = new Set<number>();
         for (const u of universe) {
-          const k = keyFor(u.product_id, (u.title ?? u.variant_gid).trim());
+          const k = u.item_id
+            ? `t:${(u.item_title ?? u.title ?? '').trim().toLowerCase()}`
+            : keyFor(u.product_id, (u.title ?? u.variant_gid).trim());
           const a = blank(k, {
             productId: u.product_id,
             title: (u.title ?? '').trim() || '(untitled)',
@@ -1984,7 +1996,14 @@ export class AnalyticsService {
             vendor: u.vendor,
             sku: u.sku,
           });
-          a.onHand += Number(u.local_qty) || 0;
+          if (u.item_id) {
+            if (!stockCounted.has(u.item_id) && !Number(u.is_bundle)) {
+              stockCounted.add(u.item_id);
+              a.onHand += n(u.pool_qty);
+            }
+          } else if (!Number(u.is_bundle)) {
+            a.onHand += Number(u.local_qty) || 0;
+          }
           const cost = n(u.cost);
           const price = n(u.price);
           if (!a.cost && cost) a.cost = cost;

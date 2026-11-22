@@ -29,6 +29,10 @@ const EVENTS = [
   // AI Agent v2
   'lead.qualified',
   'booking.created',
+  // Inventory v2
+  'inventory.low',
+  'inventory.out',
+  'inventory.back_in_stock',
 ];
 
 const LIMIT = 20;

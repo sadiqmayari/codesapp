@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
+import { getAvailability } from '@/lib/inventory';
 import { cn } from '@/lib/utils';
 import {
   getOrderEditable,
@@ -48,6 +49,8 @@ interface ProductVariant {
   image: string | null;
   available: boolean;
   isBundle?: boolean;
+  /** Inventory v2: units in the shared pool (null = not tracked). */
+  stock?: number | null;
 }
 interface ShippingRate {
   handle: string;
@@ -218,8 +221,22 @@ export function OrderItemsEditor({
       const res = await apiFetch<ProductVariant[]>('/shopify/products', {
         params: { query: q, all: '1', ...(orderStoreId ? { storeId: String(orderStoreId) } : {}) },
       });
+      let list = Array.isArray(res) ? res : [];
+      // Inventory stock for the hits (best-effort; module off → Shopify's flag stays).
+      if (list.length) {
+        try {
+          const av = await getAvailability({ variantGids: list.map((v) => v.variantId), storeId: orderStoreId ?? undefined });
+          const by = new Map(av.items.map((x) => [x.variantId, x]));
+          list = list.map((v) => {
+            const st = by.get(v.variantId);
+            return st ? { ...v, available: st.sellable, stock: st.tracked ? st.available : null } : v;
+          });
+        } catch {
+          /* ignore */
+        }
+      }
       // Stale-response guard: a slower earlier query must not overwrite newer results.
-      if (my === searchSeq.current) setResults(Array.isArray(res) ? res : []);
+      if (my === searchSeq.current) setResults(list);
     } catch {
       if (my === searchSeq.current) setResults([]);
     } finally {
@@ -256,6 +273,10 @@ export function OrderItemsEditor({
     );
 
   const addVariant = (v: ProductVariant) => {
+    if (v.stock != null && !v.available) {
+      toast.error(`${v.productTitle} is out of stock`);
+      return;
+    }
     setLines((prev) => {
       const existing = prev.findIndex((l) => l.variantId === v.variantId);
       if (existing >= 0)
@@ -580,6 +601,11 @@ export function OrderItemsEditor({
                   {v.variantTitle && v.variantTitle !== 'Default Title' && <span className="text-gray-400"> · {v.variantTitle}</span>}
                   {v.isBundle && <span className="ml-1.5 rounded bg-violet-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-violet-700">bundle</span>}
                 </span>
+                {v.stock != null && (
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${!v.available ? 'bg-red-50 text-red-700' : v.stock <= 5 ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700'}`}>
+                    {!v.available ? 'Out' : v.stock <= 0 ? 'Backorder' : `${v.stock} left`}
+                  </span>
+                )}
                 <span className="text-xs text-gray-500">{cur} {v.price}</span>
               </button>
             ))}

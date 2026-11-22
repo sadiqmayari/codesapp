@@ -612,18 +612,33 @@ export class LoadsheetService implements OnModuleInit {
       }),
     );
 
+    // Inventory: shelf per variant → the list walks the warehouse in shelf order.
+    const shelfBy = new Map<string, string>();
+    if (variantIds.length) {
+      const inv = await this.prisma.inventoryVariant
+        .findMany({
+          where: { company_id: companyId, shopify_variant_gid: { in: variantIds }, item: { shelf_location: { not: null } } },
+          select: { shopify_variant_gid: true, item: { select: { shelf_location: true } } },
+        })
+        .catch(() => []);
+      for (const r of inv) if (r.item?.shelf_location) shelfBy.set(r.shopify_variant_gid, r.item.shelf_location);
+    }
+    const shelfOf = (a: { variantId: string | null }) => (a.variantId ? shelfBy.get(a.variantId) ?? null : null);
+
     // Order names sort naturally by their numeric part (#34659 < #34660).
     const orderNum = (n: string) => Number(n.replace(/[^0-9]/g, '')) || 0;
     const rows: PicklistRow[] = [...agg.values()]
       .sort(
         (a, b) =>
+          (shelfOf(a) ?? '\uffff').localeCompare(shelfOf(b) ?? '\uffff', undefined, { numeric: true }) ||
           a.product.localeCompare(b.product) ||
           (a.variant ?? '').localeCompare(b.variant ?? ''),
       )
       .map((a) => {
         const url = a.variantId ? imgUrlByVariant.get(a.variantId) : undefined;
+        const shelf = shelfOf(a);
         return {
-          product: a.product,
+          product: shelf ? `[${shelf}] ${a.product}` : a.product,
           variant: a.variant,
           qty: a.qty,
           orders: [...a.orders].sort((x, y) => orderNum(x) - orderNum(y)),
