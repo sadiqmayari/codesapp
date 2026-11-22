@@ -51,7 +51,7 @@ export const wooProductGid = (storeId: number, id: number | string) => `woo://${
 const SCHEDULER_TICK_MS = 10 * 60_000;
 
 const VARIANT_FIELDS = `
-  id title sku barcode price compareAtPrice inventoryQuantity
+  id title sku barcode price compareAtPrice inventoryQuantity inventoryPolicy
   inventoryItem { id tracked unitCost { amount } }
   requiresComponents
   productVariantComponents(first: 25) { edges { node { quantity productVariant { id } } } }`;
@@ -68,6 +68,8 @@ interface VariantNode {
   price: string | null;
   compareAtPrice: string | null;
   inventoryQuantity: number | null;
+  /** CONTINUE = the store keeps selling at 0 (backorders) */
+  inventoryPolicy?: string | null;
   inventoryItem: { id: string | null; tracked?: boolean | null; unitCost?: { amount?: string | null } | null } | null;
   requiresComponents?: boolean | null;
   productVariantComponents?: { edges: Array<{ node: { quantity: number; productVariant: { id: string } | null } }> };
@@ -368,6 +370,7 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
     const now = new Date();
     const seenVariants = new Set<number>();
     const seenProducts = new Set<number>();
+    const continueIds: number[] = [];
     let cursor: string | null = null;
     let complete = false;
     for (let page = 0; page < 400; page++) {
@@ -394,6 +397,7 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
         const ids = await this.upsertProductNode(companyId, storeId, now, node);
         seenProducts.add(ids.productId);
         ids.variantIds.forEach((v) => seenVariants.add(v));
+        continueIds.push(...ids.continueIds);
       }
       if (!conn.pageInfo.hasNextPage) {
         complete = true;
@@ -413,6 +417,7 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.linkUnlinked(companyId);
+    await this.mirrorBackorder(companyId, continueIds);
 
     // Per-location stock.
     const links = await this.prisma.inventoryLocationLink.findMany({
@@ -492,7 +497,7 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
     storeId: number,
     now: Date,
     p: ProductNode,
-  ): Promise<{ productId: number; variantIds: number[] }> {
+  ): Promise<{ productId: number; variantIds: number[]; continueIds: number[] }> {
     const existing = await this.prisma.inventoryProduct.findUnique({
       where: { company_id_shopify_store_id_shopify_product_gid: { company_id: companyId, shopify_store_id: storeId, shopify_product_gid: p.id } },
       select: { id: true, status_push_status: true },
@@ -519,6 +524,7 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
           select: { id: true },
         });
     const variantIds: number[] = [];
+    const continueIds: number[] = [];
     for (const { node: v } of p.variants.edges) {
       // reuse the proven listing upsert (keeps local edits, bundles, cost)
       await this.shopify.upsertInventoryVariantNode(companyId, storeId, now, product.id, {
@@ -531,12 +537,31 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
       });
       if (row) {
         variantIds.push(row.id);
+        if (v.inventoryPolicy === 'CONTINUE') continueIds.push(row.id);
         if (row.item_id && v.inventoryItem?.tracked === false) {
           await this.prisma.inventoryItem.updateMany({ where: { id: row.item_id, track: true }, data: { track: false } });
         }
       }
     }
-    return { productId: product.id, variantIds };
+    return { productId: product.id, variantIds, continueIds };
+  }
+
+  /**
+   * A store that keeps selling at 0 ("continue selling when out of stock")
+   * must not be blocked by CodesApp's selling guards: mirror it onto the item
+   * as allow_backorder (never switched off automatically — that stays a
+   * CodesApp decision in the item's details).
+   */
+  private async mirrorBackorder(companyId: number, listingIds: number[]): Promise<void> {
+    if (!listingIds.length) return;
+    const rows = await this.prisma.inventoryVariant.findMany({
+      where: { company_id: companyId, id: { in: listingIds }, item_id: { not: null } },
+      select: { item_id: true },
+    });
+    const ids = [...new Set(rows.map((r) => r.item_id!))];
+    if (ids.length) {
+      await this.prisma.inventoryItem.updateMany({ where: { company_id: companyId, id: { in: ids }, allow_backorder: false }, data: { allow_backorder: true } });
+    }
   }
 
   /**
@@ -1094,6 +1119,7 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
       }
     }
     await this.linkUnlinked(companyId);
+    await this.mirrorBackorder(companyId, ids.continueIds);
     // stock for any listing we don't track yet at its locations
     const links = await this.prisma.inventoryLocationLink.findMany({ where: { company_id: companyId, store_id: storeId, sync_enabled: true } });
     const fresh = await this.prisma.inventoryVariant.findMany({

@@ -220,7 +220,10 @@ export class InventoryService {
         !b(r.is_bundle) &&
         ls.some((l) =>
           l.pushState.some(
-            (s) => s.status !== 'error' && s.last_seen != null && s.last_seen !== (poolBy.get(`${r.id}:${s.link.location_id}`) ?? 0),
+            (s) => {
+              const pool = poolBy.get(`${r.id}:${s.link.location_id}`) ?? 0;
+              return s.status !== 'error' && s.last_seen != null && s.last_seen !== pool && !(s.last_seen <= 0 && pool <= 0);
+            },
           ),
         );
       const sold30 = soldBy.get(Number(r.id)) ?? 0;
@@ -655,6 +658,7 @@ export class InventoryService {
       LEFT JOIN inventory_levels l ON l.item_id = i.id AND l.location_id = k.location_id
       WHERE ps.company_id = ${companyId} AND ps.last_seen IS NOT NULL
         AND ps.last_seen <> COALESCE(l.available, 0)
+        AND NOT (ps.last_seen <= 0 AND COALESCE(l.available, 0) <= 0)
         AND (ps.status IS NULL OR ps.status <> 'error')
       ORDER BY i.title
       LIMIT 500`;
