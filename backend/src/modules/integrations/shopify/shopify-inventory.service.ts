@@ -428,8 +428,29 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
       await this.applyStoreLevels(companyId, storeId, link.id, link.location_id, levels, !!opts.seed);
     }
     await this.refreshLegacyMirror(companyId, storeId);
+    await this.defaultBackorder(companyId);
     await this.shopify.ensureInventoryWebhook(companyId, storeId).catch(() => undefined);
     this.ledger.emit(companyId, 'inventory.changed', { storeId, sync: true });
+  }
+
+  /**
+   * A tenant that never configured inventory and already sells below zero
+   * (the store isn't keeping counts) starts with "allow selling when out of
+   * stock" ON, so the new selling guards don't suddenly block what it sells
+   * every day. Written once (settings then exist); the owner switches it off
+   * in Settings → Inventory when the counts are real.
+   */
+  private async defaultBackorder(companyId: number): Promise<void> {
+    const c = await this.prisma.company.findUnique({ where: { id: companyId }, select: { inventory_settings: true } });
+    if (c?.inventory_settings != null) return;
+    const [neg] = await this.prisma.$queryRaw<Array<{ n: bigint }>>`
+      SELECT COUNT(*) AS n FROM inventory_levels WHERE company_id = ${companyId} AND available < 0`;
+    if (!Number(neg?.n ?? 0)) return;
+    await this.prisma.company.update({
+      where: { id: companyId },
+      data: { inventory_settings: { ...resolveInventorySettings(null), allowBackorder: true } as unknown as Prisma.InputJsonValue },
+    });
+    this.logger.log(`company ${companyId}: stock below zero found — allow-backorder default ON`);
   }
 
   private async gql<T>(api: Api, storeId: number, query: string, vars: Record<string, unknown>): Promise<T> {
