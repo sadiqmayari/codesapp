@@ -245,13 +245,18 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
       where: { company_id: companyId, status: 'active' },
       orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
     });
+    let failed = 0;
     for (const s of stores) {
       try {
         await this.syncStore(companyId, s.id, { seed: true });
       } catch (e) {
+        failed++;
         this.logger.warn(`bootstrap store ${s.id} (company ${companyId}): ${(e as Error).message}`);
       }
     }
+    // Only mark done when every store seeded — the tick retries otherwise
+    // (seeding is idempotent).
+    if (failed) return;
     await this.prisma.company.update({ where: { id: companyId }, data: { inventory_v2_at: new Date() } });
     this.ledger.emit(companyId, 'inventory.changed', { bootstrap: true });
   }
@@ -305,9 +310,16 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
       select: { external_location_gid: true },
     });
     const linked = new Set(existingLinks.map((l) => l.external_location_gid));
-    for (const { node } of res.data?.locations?.edges ?? []) {
-      if (!node.isActive || linked.has(node.id)) continue;
-      const loc = await ensureLoc(node.name || 'Shopify location');
+    const active = (res.data?.locations?.edges ?? []).map((e) => e.node).filter((n) => n.isActive);
+    // A store's MAIN location feeds the shared default warehouse (that is what
+    // makes two stores share stock); extra locations map by name. Re-map in
+    // Settings → Inventory when a store really ships from elsewhere.
+    const primary = active.find((n) => n.id === store.primary_location_gid) ?? active[0];
+    const def = ours.find((l) => l.is_default) ?? null;
+    for (const node of active) {
+      if (linked.has(node.id)) continue;
+      const loc =
+        node === primary && def && !existingLinks.length ? def : await ensureLoc(node.name || 'Shopify location');
       await link(loc.id, node.id, node.name);
     }
     if (!(await this.prisma.inventoryLocation.findFirst({ where: { company_id: companyId, is_default: true } }))) {
@@ -363,7 +375,7 @@ export class ShopifyInventoryService implements OnModuleInit, OnModuleDestroy {
         data?: { products?: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; edges: Array<{ node: ProductNode }> } };
         errors?: Array<{ message: string }>;
       } = await this.gql(api, storeId, `query($cursor: String) {
-        products(first: 40, after: $cursor) {
+        products(first: 20, after: $cursor) {
           pageInfo { hasNextPage endCursor }
           edges { node { ${PRODUCT_FIELDS}
             variants(first: 100) { pageInfo { hasNextPage endCursor } edges { node { ${VARIANT_FIELDS} } } }
