@@ -253,6 +253,10 @@ export default function InventoryPage() {
     // Shopify requires a price — ignore a blank/removed sale price.
     if (value == null) return;
     if (value === row.price) return;
+    if (!(value > 0)) {
+      toast.error('Sale price must be more than 0');
+      return;
+    }
     try {
       const updated = await updateInventoryVariant(row.id, { price: value });
       patchRow(row.id, {
@@ -268,6 +272,10 @@ export default function InventoryPage() {
 
   const saveCompareAt = async (row: InventoryVariant, value: number | null) => {
     if ((row.compareAtPrice ?? null) === value) return;
+    if (value != null && value > 0 && row.price != null && value <= row.price) {
+      toast.error('Compare-at price must be higher than the sale price');
+      return;
+    }
     try {
       const updated = await updateInventoryVariant(row.id, { compare_at_price: value });
       patchRow(row.id, {
@@ -841,18 +849,29 @@ function EditableCell({
   value: string;
   placeholder?: string;
   className?: string;
-  onSave: (v: string) => void;
+  onSave: (v: string) => void | Promise<void>;
 }) {
   const [v, setV] = useState(value);
+  const cur = useRef(value);
+  cur.current = value;
   useEffect(() => setV(value), [value]);
   return (
     <input
       value={v}
+      aria-label={placeholder}
       placeholder={placeholder}
       onChange={(e) => setV(e.target.value)}
-      onBlur={() => onSave(v.trim())}
+      onBlur={() => {
+        // Always fall back to the server value afterwards: a failed save
+        // used to leave the unsaved text showing as if it had been stored.
+        void Promise.resolve(onSave(v.trim())).finally(() => setV(cur.current));
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+        if (e.key === 'Escape') {
+          setV(cur.current);
+          requestAnimationFrame(() => (e.target as HTMLInputElement).blur());
+        }
       }}
       className={`bg-transparent border border-transparent hover:border-gray-200 focus:border-green-500 focus:bg-white rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/15 ${className ?? ''}`}
     />
@@ -866,18 +885,31 @@ function QtyCell({
 }: {
   value: number;
   dirty: boolean;
-  onSave: (v: number) => void;
+  onSave: (v: number) => void | Promise<void>;
 }) {
   const [v, setV] = useState(String(value));
+  const cur = useRef(value);
+  cur.current = value;
   useEffect(() => setV(String(value)), [value]);
   return (
     <input
       value={v}
+      aria-label="CodesApp quantity"
       inputMode="numeric"
       onChange={(e) => setV(e.target.value.replace(/[^0-9]/g, ''))}
-      onBlur={() => onSave(Math.max(0, parseInt(v, 10) || 0))}
+      onBlur={() => {
+        // Blank = cancel (it used to save 0 and push zero stock to Shopify).
+        if (v.trim() === '') return setV(String(cur.current));
+        void Promise.resolve(onSave(Math.max(0, parseInt(v, 10)))).finally(() =>
+          setV(String(cur.current)),
+        );
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+        if (e.key === 'Escape') {
+          setV(String(cur.current));
+          requestAnimationFrame(() => (e.target as HTMLInputElement).blur());
+        }
       }}
       className={`w-16 text-center tabular-nums font-semibold bg-transparent border border-transparent hover:border-gray-200 focus:border-green-500 focus:bg-white rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/15 ${
         dirty ? 'text-amber-700' : 'text-gray-900'
@@ -895,10 +927,13 @@ function CostCell({
   value: number | null;
   state: 'pending' | 'error' | null;
   title?: string;
-  onSave: (v: number | null) => void;
+  onSave: (v: number | null) => void | Promise<void>;
 }) {
-  const [v, setV] = useState(value == null ? '' : String(value));
-  useEffect(() => setV(value == null ? '' : String(value)), [value]);
+  const fmt = (x: number | null) => (x == null ? '' : String(x));
+  const [v, setV] = useState(fmt(value));
+  const cur = useRef(value);
+  cur.current = value;
+  useEffect(() => setV(fmt(value)), [value]);
   const tone =
     state === 'error' ? 'text-red-700' : state === 'pending' ? 'text-amber-700' : 'text-gray-900';
   return (
@@ -910,10 +945,18 @@ function CostCell({
       onChange={(e) => setV(e.target.value.replace(/[^0-9.]/g, ''))}
       onBlur={() => {
         const t = v.trim();
-        onSave(t === '' ? null : parseFloat(t) || 0);
+        // Reject malformed numbers ("1.2.3", ".") instead of saving 0.
+        if (t !== '' && !/^\d+(\.\d{0,2})?$|^\.\d{1,2}$/.test(t)) return setV(fmt(cur.current));
+        void Promise.resolve(onSave(t === '' ? null : Number(t))).finally(() =>
+          setV(fmt(cur.current)),
+        );
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+        if (e.key === 'Escape') {
+          setV(fmt(cur.current));
+          requestAnimationFrame(() => (e.target as HTMLInputElement).blur());
+        }
       }}
       className={`w-20 text-right tabular-nums bg-transparent border border-transparent hover:border-gray-200 focus:border-green-500 focus:bg-white rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/15 ${tone}`}
     />

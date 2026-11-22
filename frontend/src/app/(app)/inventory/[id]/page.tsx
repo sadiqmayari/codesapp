@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
@@ -41,13 +41,16 @@ export default function InventoryVariantPage() {
 
   // editable form
   const [form, setForm] = useState<UpdateVariantInput>({});
+  // Server values the form was seeded from — save() sends ONLY changed fields,
+  // so editing notes can never reset stock that moved since the page loaded.
+  const initialRef = useRef<UpdateVariantInput>({});
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const data = await getInventoryVariant(id);
       setV(data);
-      setForm({
+      const seed: UpdateVariantInput = {
         item_code: data.itemCode ?? '',
         alias: data.alias ?? '',
         reorder_level: data.reorderLevel,
@@ -58,7 +61,9 @@ export default function InventoryVariantPage() {
         category: data.category ?? '',
         notes: data.notes ?? '',
         local_qty: data.localQty,
-      });
+      };
+      initialRef.current = seed;
+      setForm(seed);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load');
       if (e instanceof ApiError && e.status === 404) router.replace('/inventory');
@@ -77,7 +82,7 @@ export default function InventoryVariantPage() {
   const save = async () => {
     setSaving(true);
     try {
-      const updated = await updateInventoryVariant(id, {
+      const next: UpdateVariantInput = {
         item_code: form.item_code || null,
         alias: form.alias || null,
         reorder_level: Number(form.reorder_level) || 0,
@@ -98,8 +103,33 @@ export default function InventoryVariantPage() {
         category: form.category || null,
         notes: form.notes || null,
         local_qty: Number(form.local_qty) || 0,
+      };
+      const init = initialRef.current;
+      const norm = (k: keyof UpdateVariantInput, val: unknown) =>
+        k === 'item_code' || k === 'alias' || k === 'shelf_location' || k === 'category' || k === 'notes'
+          ? (val as string) || null
+          : val === '' || val == null ? null : Number(val);
+      const patch: UpdateVariantInput = {};
+      (Object.keys(next) as Array<keyof UpdateVariantInput>).forEach((k) => {
+        if (norm(k, next[k]) !== norm(k, init[k])) (patch as Record<string, unknown>)[k] = next[k];
       });
+      if (!Object.keys(patch).length) {
+        toast.info('Nothing changed');
+        return;
+      }
+      if (patch.price !== undefined && !(Number(patch.price) > 0)) {
+        toast.error('Sale price must be more than 0');
+        return;
+      }
+      const cmp = patch.compare_at_price ?? form.compare_at_price;
+      const pr = patch.price ?? form.price;
+      if (cmp != null && pr != null && Number(cmp) > 0 && Number(cmp) <= Number(pr)) {
+        toast.error('Compare-at price must be higher than the sale price');
+        return;
+      }
+      const updated = await updateInventoryVariant(id, patch);
       setV(updated);
+      void load();
       toast.success('Saved');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Could not save');
@@ -244,7 +274,7 @@ export default function InventoryVariantPage() {
               inputMode="decimal"
               onChange={(e) => {
                 const raw = e.target.value.replace(/[^0-9.]/g, '');
-                set('price', raw === '' ? undefined : Number(raw));
+                set('price', raw === '' ? undefined : (raw as unknown as number));
               }}
               className={inputCls}
               placeholder="0"
@@ -256,7 +286,7 @@ export default function InventoryVariantPage() {
               inputMode="decimal"
               onChange={(e) => {
                 const raw = e.target.value.replace(/[^0-9.]/g, '');
-                set('compare_at_price', raw === '' ? null : Number(raw));
+                set('compare_at_price', raw === '' ? null : (raw as unknown as number));
               }}
               className={inputCls}
               placeholder="0"
@@ -268,7 +298,7 @@ export default function InventoryVariantPage() {
               inputMode="decimal"
               onChange={(e) => {
                 const raw = e.target.value.replace(/[^0-9.]/g, '');
-                set('cost_price', raw === '' ? null : Number(raw));
+                set('cost_price', raw === '' ? null : (raw as unknown as number));
               }}
               className={inputCls}
               placeholder="0"

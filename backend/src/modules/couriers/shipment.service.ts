@@ -3664,9 +3664,16 @@ export class ShipmentService implements OnModuleInit {
       // non-throwing: a missing/closed fulfillment must not block the cancel.
       await this.pushFailedToShopify(companyId, shipment).catch(() => undefined);
       try {
+        // When CodesApp restocks returns itself (inventory module + "restock
+        // returns" on), Shopify must NOT restock on cancel too — that counted
+        // every returned unit twice. CodesApp restocks on PHYSICAL receipt.
+        const ownsRestock = await this.shopifyService
+          .ownsReturnRestock(companyId)
+          .catch(() => false);
         const r = await this.shopifyService.processOrderReturn(
           companyId,
           shipment.shopify_order_gid,
+          { restock: !ownsRestock },
         );
         cancelled = r.cancelled;
         archived = r.archived;

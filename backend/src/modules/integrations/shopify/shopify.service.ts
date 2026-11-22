@@ -714,6 +714,25 @@ export class ShopifyService implements OnModuleInit {
       v.inventoryItem?.unitCost?.amount != null
         ? Number(v.inventoryItem.unitCost.amount) || null
         : null;
+    // Existing row state decides what a re-sync may overwrite:
+    //  - local_qty follows Shopify when the row has no unpushed local edit
+    //    (local == last mirrored shopify qty). Before, a missed webhook left
+    //    local_qty stale and "Push changed" then wrote the stale number back.
+    //  - price/compare-at are NOT overwritten while a local price push is
+    //    pending or failed (the sync used to silently revert the user's edit).
+    const existing = await this.prisma.inventoryVariant.findUnique({
+      where: {
+        company_id_shopify_store_id_shopify_variant_gid: {
+          company_id: companyId,
+          shopify_store_id: sid,
+          shopify_variant_gid: v.id,
+        },
+      },
+      select: { local_qty: true, shopify_qty: true, price_push_status: true },
+    });
+    const clean = !existing || existing.local_qty === existing.shopify_qty;
+    const keepLocalPrice =
+      existing?.price_push_status === 'pending' || existing?.price_push_status === 'error';
     await this.prisma.inventoryVariant.upsert({
       where: {
         company_id_shopify_store_id_shopify_variant_gid: {
@@ -748,14 +767,15 @@ export class ShopifyService implements OnModuleInit {
         sku: v.sku ?? null,
         barcode: v.barcode ?? null,
         variant_title: v.title ?? null,
-        price: v.price ?? null,
-        compare_at_price: v.compareAtPrice ?? null,
+        ...(keepLocalPrice
+          ? {}
+          : { price: v.price ?? null, compare_at_price: v.compareAtPrice ?? null }),
         shopify_qty: qty,
         qty_synced_at: now,
         is_bundle: isBundle,
         bundle_components: bundleComponents ?? Prisma.DbNull,
         shopify_unit_cost: unitCost,
-        ...(isBundle ? { local_qty: qty } : {}),
+        ...(isBundle || clean ? { local_qty: qty } : {}),
       },
     });
   }
@@ -931,7 +951,7 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /** Push one variant's local_qty → Shopify "available" at the primary location. */
-  async pushVariantQty(companyId: number, variantId: number): Promise<void> {
+  async pushVariantQty(companyId: number, variantId: number, depth = 0): Promise<void> {
     const v = await this.prisma.inventoryVariant.findFirst({
       where: { id: variantId, company_id: companyId },
     });
@@ -957,12 +977,17 @@ export class ShopifyService implements OnModuleInit {
       );
       return;
     }
-    const api = await this.requireAdminApi(companyId, v.shopify_store_id);
-    const locationGid = await this.resolvePrimaryLocationGid(
-      companyId,
-      v.shopify_store_id,
-      api,
-    );
+    // Resolve inside a try so a dead token / missing location writes an error
+    // status instead of leaving the row "pending" forever.
+    let api: Awaited<ReturnType<ShopifyService['requireAdminApi']>>;
+    let locationGid: string;
+    try {
+      api = await this.requireAdminApi(companyId, v.shopify_store_id);
+      locationGid = await this.resolvePrimaryLocationGid(companyId, v.shopify_store_id, api);
+    } catch (err) {
+      await this.setQtyPushStatus(v.id, 'error', this.pushErrText(err));
+      throw err;
+    }
     // 2025+ Shopify: `inventorySetQuantities` REQUIRES `changeFromQuantity` per
     // item (the expected current value — optimistic concurrency). The old
     // top-level `ignoreCompareQuantity` skip flag was removed. So read the live
@@ -1058,6 +1083,15 @@ export class ShopifyService implements OnModuleInit {
         qty_push_error: null,
       },
     });
+    // An edit made WHILE this push ran was swallowed by the job dedup key — re-
+    // read and push again so the latest value always wins (bounded).
+    const fresh = await this.prisma.inventoryVariant.findUnique({
+      where: { id: v.id },
+      select: { local_qty: true },
+    });
+    if (fresh && fresh.local_qty !== v.local_qty && depth < 3) {
+      await this.pushVariantQty(companyId, variantId, depth + 1);
+    }
   }
 
   /**
@@ -1084,7 +1118,13 @@ export class ShopifyService implements OnModuleInit {
       await this.setCostPushStatus(v.id, 'skipped', 'No cost set — nothing to push.');
       return;
     }
-    const api = await this.requireAdminApi(companyId, v.shopify_store_id);
+    let api: Awaited<ReturnType<ShopifyService['requireAdminApi']>>;
+    try {
+      api = await this.requireAdminApi(companyId, v.shopify_store_id);
+    } catch (err) {
+      await this.setCostPushStatus(v.id, 'error', this.pushErrText(err));
+      throw err;
+    }
     const gql = `mutation($id: ID!, $input: InventoryItemInput!) {
       inventoryItemUpdate(id: $id, input: $input) {
         userErrors { field message }
@@ -1150,7 +1190,7 @@ export class ShopifyService implements OnModuleInit {
    * write_inventory). Best-effort status persisted on every exit so the board
    * can show ok / error / skipped.
    */
-  async pushVariantPrice(companyId: number, variantId: number): Promise<void> {
+  async pushVariantPrice(companyId: number, variantId: number, depth = 0): Promise<void> {
     const v = await this.prisma.inventoryVariant.findFirst({
       where: { id: variantId, company_id: companyId },
       include: { product: { select: { shopify_product_gid: true } } },
@@ -1170,7 +1210,13 @@ export class ShopifyService implements OnModuleInit {
       await this.setPricePushStatus(v.id, 'skipped', 'No sale price set — nothing to push.');
       return;
     }
-    const api = await this.requireAdminApi(companyId, v.shopify_store_id);
+    let api: Awaited<ReturnType<ShopifyService['requireAdminApi']>>;
+    try {
+      api = await this.requireAdminApi(companyId, v.shopify_store_id);
+    } catch (err) {
+      await this.setPricePushStatus(v.id, 'error', this.pushErrText(err));
+      throw err;
+    }
     const gql = `mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
       productVariantsBulkUpdate(productId: $productId, variants: $variants) {
         userErrors { field message }
@@ -1215,6 +1261,17 @@ export class ShopifyService implements OnModuleInit {
       throw new BadRequestException(full);
     }
     await this.setPricePushStatus(v.id, 'ok', null);
+    // Re-push if the price changed while this job ran (dedup swallowed it) —
+    // otherwise the next sync would silently revert the newer local price.
+    const fresh = await this.prisma.inventoryVariant.findUnique({
+      where: { id: v.id },
+      select: { price: true, compare_at_price: true },
+    });
+    const same = (a: unknown, b: unknown) =>
+      (a == null ? null : Number(a)) === (b == null ? null : Number(b));
+    if (fresh && (!same(fresh.price, v.price) || !same(fresh.compare_at_price, v.compare_at_price)) && depth < 3) {
+      await this.pushVariantPrice(companyId, variantId, depth + 1);
+    }
   }
 
   /**
@@ -1269,19 +1326,24 @@ export class ShopifyService implements OnModuleInit {
     });
     if (!v) return;
     // Loop guard: ignore the webhook that merely echoes the value we just pushed.
+    // The guard is ONE-SHOT — cleared on the echo — so a later genuine change
+    // that happens to land on the same number is not mistaken for an echo.
     if (v.last_pushed_qty != null && available === v.last_pushed_qty) {
       await this.prisma.inventoryVariant.update({
         where: { id: v.id },
-        data: { shopify_qty: available, qty_synced_at: new Date() },
+        data: { shopify_qty: available, last_pushed_qty: null, qty_synced_at: new Date() },
       });
       return;
     }
     const delta = available - v.shopify_qty;
+    // Apply the Shopify-side change as a DELTA to local stock (atomic
+    // increment) so an unpushed local edit is not silently thrown away.
     await this.prisma.inventoryVariant.update({
       where: { id: v.id },
       data: {
         shopify_qty: available,
-        local_qty: available,
+        local_qty: v.local_qty === v.shopify_qty ? available : { increment: delta },
+        last_pushed_qty: null,
         qty_synced_at: new Date(),
       },
     });
@@ -1303,38 +1365,53 @@ export class ShopifyService implements OnModuleInit {
    * Auto-restock a physically-received RTO parcel. Idempotent per shipment
    * (ref = "return:{shipmentId}"). Only runs when the tenant opted in.
    */
+  /**
+   * Does CodesApp own return restocking for this tenant? (inventory module on
+   * via FeatureService — honours super-admin overrides — AND the tenant's
+   * "restock returns" switch.) When true, Shopify's own cancel must NOT restock.
+   */
+  async ownsReturnRestock(companyId: number): Promise<boolean> {
+    if (!(await this.featureService.inventoryEnabled(companyId))) return false;
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { inventory_restock_returns: true },
+    });
+    return !!company?.inventory_restock_returns;
+  }
+
   async restockFromShipment(
     companyId: number,
     shipmentId: number,
   ): Promise<void> {
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { inventory_restock_returns: true, inventory_enabled: true },
-    });
-    if (!company?.inventory_enabled || !company.inventory_restock_returns) return;
+    if (!(await this.ownsReturnRestock(companyId))) return;
     const ref = `return:${shipmentId}`;
-    const already = await this.prisma.inventoryMovement.findFirst({
-      where: { company_id: companyId, reason: 'return_restock', ref },
-      select: { id: true },
-    });
-    if (already) return;
     const shipment = await this.prisma.shipment.findFirst({
       where: { id: shipmentId, company_id: companyId },
       select: { shopify_order_gid: true, shopify_store_id: true },
     });
     if (!shipment) return;
+    // Replacement parcels carry "<orderGid>#R<n>" / "ticket:<id>#R<n>" — strip
+    // the suffix to find the order whose items went out.
+    const orderGid = shipment.shopify_order_gid.replace(/#R\d+$/, '');
     const order = await this.prisma.shopifyOrder.findFirst({
-      where: { company_id: companyId, shopify_order_gid: shipment.shopify_order_gid },
+      where: { company_id: companyId, shopify_order_gid: orderGid },
       select: { line_items: true, shopify_store_id: true },
     });
+    const storeId = order?.shopify_store_id ?? shipment.shopify_store_id ?? null;
     const lines = Array.isArray(order?.line_items)
-      ? (order!.line_items as Array<{ variantId?: string | null; quantity?: number }>)
+      ? (order!.line_items as Array<{ variantId?: string | null; quantity?: number; currentQuantity?: number }>)
       : [];
     for (const li of lines) {
       if (!li.variantId) continue;
-      const qty = Number(li.quantity ?? 1) || 1;
+      // Prefer the line's CURRENT quantity (after edits/removals) when mirrored.
+      const qty = Number(li.currentQuantity ?? li.quantity ?? 1);
+      if (!(qty > 0)) continue;
       const v = await this.prisma.inventoryVariant.findFirst({
-        where: { company_id: companyId, shopify_variant_gid: li.variantId },
+        where: {
+          company_id: companyId,
+          shopify_variant_gid: li.variantId,
+          ...(storeId ? { shopify_store_id: storeId } : {}),
+        },
       });
       if (!v) continue;
       if (v.is_bundle) {
@@ -1346,7 +1423,11 @@ export class ShopifyService implements OnModuleInit {
         for (const c of comps) {
           if (!c.gid) continue;
           const cv = await this.prisma.inventoryVariant.findFirst({
-            where: { company_id: companyId, shopify_variant_gid: c.gid },
+            where: {
+              company_id: companyId,
+              shopify_variant_gid: c.gid,
+              shopify_store_id: v.shopify_store_id,
+            },
           });
           if (!cv || cv.is_bundle) continue;
           await this.restockOneVariant(
@@ -1369,22 +1450,33 @@ export class ShopifyService implements OnModuleInit {
     qty: number,
     ref: string,
   ): Promise<void> {
-    const after = v.local_qty + qty;
-    await this.prisma.inventoryVariant.update({
-      where: { id: v.id },
-      data: { local_qty: after },
+    // Exactly-once PER VARIANT (not per shipment): a crash mid-loop used to
+    // skip every remaining line on retry. Increment atomically + ledger in one tx.
+    const done = await this.prisma.$transaction(async (tx) => {
+      const already = await tx.inventoryMovement.findFirst({
+        where: { company_id: companyId, variant_id: v.id, reason: 'return_restock', ref },
+        select: { id: true },
+      });
+      if (already) return false;
+      const upd = await tx.inventoryVariant.update({
+        where: { id: v.id },
+        data: { local_qty: { increment: qty } },
+        select: { local_qty: true },
+      });
+      await tx.inventoryMovement.create({
+        data: {
+          company_id: companyId,
+          shopify_store_id: v.shopify_store_id,
+          variant_id: v.id,
+          delta: qty,
+          qty_after: upd.local_qty,
+          reason: 'return_restock',
+          ref,
+        },
+      });
+      return true;
     });
-    await this.prisma.inventoryMovement.create({
-      data: {
-        company_id: companyId,
-        shopify_store_id: v.shopify_store_id,
-        variant_id: v.id,
-        delta: qty,
-        qty_after: after,
-        reason: 'return_restock',
-        ref,
-      },
-    });
+    if (!done) return;
     await this.pushVariantQty(companyId, v.id).catch((e) =>
       this.logger.warn(
         `restock push failed (variant ${v.id}): ${
@@ -8828,7 +8920,9 @@ export class ShopifyService implements OnModuleInit {
   async processOrderReturn(
     companyId: number,
     orderGid: string,
+    opts: { restock?: boolean } = {},
   ): Promise<{ cancelled: boolean; archived: boolean }> {
+    const restock = opts.restock ?? true;
     // WooCommerce RTO: cancel the Woo order (its store id comes off the mirror),
     // then mark the local mirror cancelled+archived so it leaves the queue. Woo
     // has no "archive" concept — cancel is the terminal state. Never throws.
@@ -8875,7 +8969,7 @@ export class ShopifyService implements OnModuleInit {
         orderId: orderGid,
         notifyCustomer: false,
         refund: false,
-        restock: true,
+        restock,
         reason: 'CUSTOMER',
         staffNote: 'RTO — parcel returned (auto via CodesApp)',
       });
@@ -10119,6 +10213,15 @@ export class ShopifyService implements OnModuleInit {
       })
       .catch(() => undefined);
     await this.prisma.shopifyStore.delete({ where: { id: store.id } });
+    // Inventory mirror rows have no FK to the store: left behind they doubled
+    // analytics + Growth COGS once the store was re-added (same variant gids).
+    // Movements cascade with their variant.
+    await this.prisma.inventoryVariant
+      .deleteMany({ where: { company_id: companyId, shopify_store_id: store.id } })
+      .catch(() => undefined);
+    await this.prisma.inventoryProduct
+      .deleteMany({ where: { company_id: companyId, shopify_store_id: store.id } })
+      .catch(() => undefined);
     // v2: the removed store's products/policies must not stay retrievable.
     await this.rag.clear(companyId, undefined, store.id).catch(() => undefined);
     await this.prisma.whatsAppNumber
