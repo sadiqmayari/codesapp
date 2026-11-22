@@ -6,6 +6,11 @@
 
 ## Current Status
 
+**Inventory v2 (2026-11-22, latest):** full audit + rebuild of the inventory module. Migration `20261125000000_inventory_v2` (auto-applies). Preview: https://claude.ai/artifact/QScstyXHzTHCMHvbtt43fS
+- Fixed: returns restocked twice (CodesApp + Shopify cancel), multi-location stock corruption, "Push changed" writing stale stock back, detail Save resetting stock, edits lost during a running push, sync silently capped at 2,000 products / reverting pending prices, orphan rows after removing a store, same product in two stores counted twice in stats/analytics/Growth COGS.
+- New: master items + shared stock pool across stores (linked by SKU → barcode → title), per-location levels, ledger single writer, store webhooks per location, hourly reconcile, Woo stock; catalogue board + item sheet, ledger, conflicts review; stock counts (blind, scan), transfers, CSV import, suppliers, purchase orders + receiving (landed + weighted-average cost), reorder suggestions; create products + Active/Unlisted/Draft/Archived pushed to stores; selling guards (create-order, item editor, AI), waitlist + back-in-stock, alerts + webhooks + daily digest, shelf on pack/picklist.
+- Sois: bootstrapped (178 listings → 170 items, 8 products shared across both stores via Head Office). Tenant sells below zero, so "allow selling when out of stock" defaulted ON. Not built: ads-OOS alert (needs ad↔product mapping), Woo product edit.
+
 **Roles audit + HR manager + super-admin module grants (2026-11-21, latest):** migration `20261123000000_roles_hr_module_grants` (auto-applies: `hr_manager` enum, `users.token_version`, grandfathers module grants into `companies.feature_overrides`). Preview: https://claude.ai/artifact/V5aM79ah2faofcGQERytro
 - Fixed: locked roles reaching inbox/contacts/broadcasts/bots/templates/tickets/calls/AI APIs; admin able to demote/suspend/delete another admin; sessions + sockets surviving suspend/role/password change; JWT_SECRET placeholder fallback; member delete leaving leave requests/thread memberships/pack/content refs.
 - New role `hr_manager`: Team module admin (attendance, leave, payroll, commissions) + Settings → Team members (non-privileged roles only). Never sees/edits admin pay or own pay (masked rows + 403). Socket room `company:{id}:hr`.

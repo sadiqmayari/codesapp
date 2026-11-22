@@ -847,3 +847,14 @@ Supersedes the Meta Ads / Ad Report tables above: **`ad_spend_daily`, `ad_campai
 - `ai_usage_log.conversation_id, latency_ms, prompt_version, success, multiplier_x1000` + index (company_id, conversation_id).
 - `ai_knowledge_chunks.store_id` (0 = company-wide) — unique key now (company_id, store_id, source_type, source_id). pgvector `knowledge_chunks` gets the same column/key at boot (`PgVectorService.bootstrap`).
 - v1-only columns kept until the v1 brain is deleted: ai_active_topic, ai_topic_*, ai_episode_started_at, ai_linked_order_id, ai_pending_order*.
+
+## Inventory v2 (migration 20261125000000_inventory_v2, Nov-2026)
+- `inventory_items` — master physical item (sku normalized, barcode, title, variant_title, item_code, alias, category, shelf_location, reorder_level/qty, lead_time_days, avg_cost, track, allow_backorder, is_bundle + bundle_components [{itemId, quantity}], supplier_id, archived_at).
+- `inventory_variants` += `item_id`, `provider`, `link_source` (store listings of an item).
+- `inventory_locations`, `inventory_location_links (company, store_id, external_location_gid, location_id, sync_enabled)`.
+- `inventory_levels (item_id, location_id)` — available / committed / incoming / version. The ONLY stock truth.
+- `listing_push_state (variant_id, location_link_id)` — last_seen / last_pushed / status / error.
+- `inventory_movements` += item_id, location_id, ref_type, note, idem_key (unique per company); variant_id now nullable.
+- `inventory_products` += status_push_status/error, publications, description_html, tags.
+- `suppliers`, `purchase_orders`, `purchase_order_lines`, `goods_receipts`, `goods_receipt_lines`, `stock_counts`, `stock_count_lines`, `stock_transfers`, `stock_transfer_lines`, `inventory_cost_history`, `stock_waitlist`, `product_publish_jobs`.
+- `companies.inventory_settings` (JSON, resolveInventorySettings) + `inventory_v2_at`.
