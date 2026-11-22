@@ -88,12 +88,25 @@ export class AdPlatformRateLimitError extends Error {
   }
 }
 
+export interface AdStatusRow {
+  level: 'campaign' | 'adset' | 'ad';
+  externalId: string;
+  status: string | null;
+  configuredStatus: string | null;
+  endTime: string | null;
+}
+
 export interface AdPlatformAdapter {
   readonly platform: AdPlatform;
   /** False while the platform's developer app / API access isn't approved yet. */
   readonly available: boolean;
   getAccountInfo(token: string, externalId: string): Promise<AdAccountInfo>;
   listEntities(token: string, externalId: string, currency?: string | null): Promise<AdEntityRow[]>;
+  /**
+   * Optional light read of just the on/off state + end date of every campaign,
+   * ad set and ad (no creatives / budgets) — cheap enough for every refresh.
+   */
+  listStatuses?(token: string, externalId: string): Promise<AdStatusRow[]>;
   fetchInsights(
     token: string,
     externalId: string,

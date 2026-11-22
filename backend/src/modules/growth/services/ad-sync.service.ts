@@ -16,6 +16,9 @@ export const ADS_QUEUE = 'growth-ads';
 export const DEFAULT_SYNC_INTERVAL_MIN = 240;
 const DEFAULT_WINDOW_DAYS = 3;
 const ENTITY_REFRESH_MS = 6 * 3_600_000;
+// On/off state is cheap to read and people expect a refresh to show a pause
+// made in Ads Manager: re-read statuses on any pull older than this.
+const STATUS_REFRESH_MS = 2 * 60_000;
 const CHUNK_DAYS = 7; // per insights request (big windows time out on Meta) // a day's spend keeps firming up for ~72h
 const MAX_WINDOW_DAYS = 90;
 const TICK_MS = 10 * 60_000;
@@ -54,6 +57,8 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
   private lastFxDay = '';
   /** accountId → last light today-refresh enqueue (in-process; worker-only scheduler). */
   private readonly lastQuick = new Map<number, number>();
+  /** accountId → last light status refresh (in-process; jobs run in the worker). */
+  private readonly lastStatus = new Map<number, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -255,6 +260,8 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
       if (e instanceof AdPlatformAuthError && e.kind !== 'other') throw e;
       this.logger.warn(`entities failed (account ${acc.id}): ${(e as Error).message}`);
     }
+    if (entities.length) this.lastStatus.set(acc.id, Date.now());
+    else await this.refreshStatuses(acc, token);
 
     // `until` = tomorrow: spend is dated in the account timezone; +1 day always
     // covers the account's "today" (the platform clamps to the present).
@@ -373,6 +380,44 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
       this.version.bump(acc.company_id, 'spend');
     } catch (e) {
       this.logger.warn(`refreshEntities (account ${accountId}): ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * Light refresh of on/off state + end dates (no creatives/budgets) so a pause
+   * in Ads Manager shows on the next refresh instead of up to 6 h later.
+   * Writes only rows whose values changed. Best-effort.
+   */
+  private async refreshStatuses(acc: { id: number; company_id: number; platform: string; external_id: string }, token: string) {
+    const adapter = this.registry.get(acc.platform);
+    if (!adapter.listStatuses) return;
+    if (Date.now() - (this.lastStatus.get(acc.id) ?? 0) < STATUS_REFRESH_MS) return;
+    this.lastStatus.set(acc.id, Date.now());
+    try {
+      const rows = await adapter.listStatuses(token, acc.external_id);
+      const current = await this.prisma.adEntity.findMany({
+        where: { account_id: acc.id },
+        select: { id: true, level: true, external_id: true, status: true, configured_status: true, end_time: true },
+      });
+      const byKey = new Map(current.map((e) => [`${e.level}:${e.external_id}`, e]));
+      const updates: Prisma.PrismaPromise<unknown>[] = [];
+      for (const r of rows) {
+        const e = byKey.get(`${r.level}:${r.externalId}`);
+        if (!e) continue; // new objects arrive with the next full hierarchy refresh
+        const status = r.status?.slice(0, 32) ?? null;
+        const configured = r.configuredStatus?.slice(0, 16) ?? null;
+        const end = r.endTime ? new Date(r.endTime) : null;
+        const endOk = end && !Number.isNaN(end.getTime()) ? end : null;
+        if (e.status === status && e.configured_status === configured && (e.end_time?.getTime() ?? null) === (endOk?.getTime() ?? null)) continue;
+        updates.push(
+          this.prisma.adEntity.update({ where: { id: e.id }, data: { status, configured_status: configured, end_time: endOk } }),
+        );
+      }
+      for (const part of chunk(updates, 200)) await this.prisma.$transaction(part);
+      if (updates.length) this.logger.log(`account ${acc.id}: ${updates.length} status change(s)`);
+    } catch (e) {
+      if (e instanceof AdPlatformAuthError && e.kind !== 'other') throw e;
+      this.logger.warn(`status refresh failed (account ${acc.id}): ${(e as Error).message}`);
     }
   }
 

@@ -8,6 +8,7 @@ import {
   AdPlatformAdapter,
   AdPlatformAuthError,
   AdPlatformRateLimitError,
+  AdStatusRow,
 } from '../ad-platform.types';
 import { fromMinor } from '../ad-writer.types';
 
@@ -205,6 +206,29 @@ export class MetaAdapter implements AdPlatformAdapter {
           cr?.asset_feed_spec?.link_urls?.[0]?.website_url ??
           null,
       });
+    }
+    return out;
+  }
+
+  async listStatuses(token: string, externalId: string): Promise<AdStatusRow[]> {
+    const acct = this.act(externalId);
+    type S = { id: string; status?: string; effective_status?: string; stop_time?: string; end_time?: string };
+    const out: AdStatusRow[] = [];
+    const levels: Array<['campaign' | 'adset' | 'ad', string]> = [
+      ['campaign', `/${acct}/campaigns?fields=id,status,effective_status,stop_time&limit=500`],
+      ['adset', `/${acct}/adsets?fields=id,status,effective_status,end_time&limit=500`],
+      ['ad', `/${acct}/ads?fields=id,status,effective_status&limit=500`],
+    ];
+    for (const [level, path] of levels) {
+      for (const r of await this.pages<S>(path, token)) {
+        out.push({
+          level,
+          externalId: r.id,
+          status: r.effective_status ?? null,
+          configuredStatus: r.status ?? null,
+          endTime: r.stop_time ?? r.end_time ?? null,
+        });
+      }
     }
     return out;
   }
