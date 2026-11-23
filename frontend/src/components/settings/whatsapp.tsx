@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, PhoneCall, Plus, ShieldCheck, Star } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Circle, HelpCircle, PhoneCall, Plus, ShieldCheck, Star, XCircle } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
@@ -486,10 +486,60 @@ const SYNC_REASONS: Record<string, string> = {
 };
 
 /** WhatsApp Calling: on-demand re-sync of the SIP trunk password from Meta. */
+type CallingCheck = {
+  key: 'number' | 'tier' | 'module' | 'meta_calling' | 'server' | 'agents';
+  state: 'ok' | 'todo' | 'blocked' | 'unknown';
+  detail: string;
+};
+type CallingReadiness = {
+  ready: boolean;
+  tier: string | null;
+  callingStatus: string | null;
+  displayNumber: string | null;
+  checks: CallingCheck[];
+};
+
+const CHECK_TITLES: Record<CallingCheck['key'], string> = {
+  number: 'WhatsApp number connected',
+  tier: 'Messaging limit 2,000 or more',
+  module: 'Calling included in your plan',
+  meta_calling: 'Calling enabled on your number',
+  server: 'Connected to CodesApp calling',
+  agents: 'Team ready to take calls',
+};
+
+function CheckIcon({ state }: { state: CallingCheck['state'] }) {
+  if (state === 'ok') return <CheckCircle2 size={18} className="shrink-0 text-brand-600" aria-label="Done" />;
+  if (state === 'blocked') return <XCircle size={18} className="shrink-0 text-red-600" aria-label="Blocked" />;
+  if (state === 'unknown') return <HelpCircle size={18} className="shrink-0 text-muted" aria-label="Unknown" />;
+  return <Circle size={18} className="shrink-0 text-muted" aria-label="To do" />;
+}
+
+/**
+ * WhatsApp Calling setup guide: a live checklist (read from Meta) of what a
+ * workspace needs before customers can call it, plus the trunk re-sync once
+ * calling is connected.
+ */
 function CallingCard() {
   const toast = useToast();
+  const [data, setData] = useState<CallingReadiness | null>(null);
+  const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ synced: boolean; reason?: string } | null>(null);
+
+  const check = useCallback(async () => {
+    setChecking(true);
+    try {
+      setData(await apiFetch<CallingReadiness>('/settings/whatsapp/calling-readiness'));
+    } catch {
+      setData(null);
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+  useEffect(() => {
+    void check();
+  }, [check]);
 
   const sync = async () => {
     setBusy(true);
@@ -504,6 +554,10 @@ function CallingCard() {
     }
   };
 
+  const live = !!data?.checks.find((c) => c.key === 'server' && c.state === 'ok');
+  const moduleOn = !!data?.checks.find((c) => c.key === 'module' && c.state === 'ok');
+  const done = data?.checks.filter((c) => c.state === 'ok').length ?? 0;
+
   return (
     <SettingsCard
       icon={
@@ -512,25 +566,68 @@ function CallingCard() {
         </span>
       }
       title="WhatsApp Calling"
-      description="Call customers from the inbox. The calling password re-syncs automatically whenever you save a new Meta token."
+      description="Let customers call your WhatsApp number and call them back from the inbox. Work through the steps below; we check each one live with Meta."
       action={
-        result ? (
-          <Badge tone={result.synced ? 'success' : 'neutral'}>{result.synced ? 'In sync' : 'Not active'}</Badge>
+        data ? (
+          <Badge tone={data.ready ? 'success' : 'neutral'}>
+            {data.ready ? 'Live' : `${done}/${data.checks.length} done`}
+          </Badge>
         ) : undefined
       }
     >
-      <SettingRow
-        title="Calls failing after a token change?"
-        description={
-          result && !result.synced
-            ? SYNC_REASONS[result.reason ?? 'error'] ?? 'Calling couldn’t be synced.'
-            : 'Re-check the calling password with Meta now.'
-        }
-      >
-        <Button variant="secondary" size="sm" loading={busy} onClick={sync}>
-          Check &amp; re-sync
-        </Button>
-      </SettingRow>
+      {!data ? (
+        <SettingRow
+          title="Setup status"
+          description={checking ? 'Checking with Meta…' : 'Couldn’t load the calling checklist.'}
+        >
+          <Button variant="secondary" size="sm" loading={checking} onClick={check}>
+            Check again
+          </Button>
+        </SettingRow>
+      ) : (
+        <>
+          <ol className="space-y-3 py-1">
+            {data.checks.map((c, i) => (
+              <li key={c.key} className="flex gap-3">
+                <CheckIcon state={c.state} />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-ink">
+                    {i + 1}. {CHECK_TITLES[c.key]}
+                  </p>
+                  <p className="text-xs text-muted">{c.detail}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+          {!data.ready && (
+            <Callout tone="info">
+              Steps 4 and 5 are done by CodesApp. Once your messaging limit reaches 2,000, contact CodesApp support and
+              we’ll turn calling on and connect your number.
+            </Callout>
+          )}
+          <SettingRow
+            title={live ? 'Calls failing after a token change?' : 'Made a change?'}
+            description={
+              live
+                ? result && !result.synced
+                  ? SYNC_REASONS[result.reason ?? 'error'] ?? 'Calling couldn’t be synced.'
+                  : 'Re-check the calling password with Meta now.'
+                : 'Run the checks again after Meta raises your limit or support enables calling.'
+            }
+          >
+            <div className="flex gap-2">
+              <Button variant="secondary" size="sm" loading={checking} onClick={check}>
+                Check again
+              </Button>
+              {live && moduleOn && (
+                <Button variant="secondary" size="sm" loading={busy} onClick={sync}>
+                  Re-sync
+                </Button>
+              )}
+            </div>
+          </SettingRow>
+        </>
+      )}
     </SettingsCard>
   );
 }

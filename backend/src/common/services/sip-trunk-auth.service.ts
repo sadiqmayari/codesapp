@@ -69,53 +69,8 @@ export class SipTrunkAuthService {
         return { synced: false, reason: 'calls_business_number_unset' };
       }
 
-      // Primary active WhatsApp number for this company → its display number
-      // (confirms ownership), phone_number_id (to fetch SIP creds), token.
-      const number = (
-        await this.prisma.whatsAppNumber.findMany({
-          where: { company_id: companyId, status: 'active' },
-          orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
-          select: {
-            display_phone_number: true,
-            phone_number_id: true,
-            access_token_encrypted: true,
-          },
-          take: 1,
-        })
-      )[0];
-
-      const display = number?.display_phone_number ?? null;
-      let phoneNumberId: string | null = number?.phone_number_id ?? null;
-      let token: string | null = null;
-      if (number?.access_token_encrypted) {
-        try {
-          token = this.encryption.decrypt(number.access_token_encrypted);
-        } catch {
-          /* fall through to the legacy onboarding token */
-        }
-      }
-
-      // Legacy-company fallback: token in onboarding_status JSON, phone id on
-      // companies.phone_number_id (pre-multi-number rows).
-      if (!token || !phoneNumberId) {
-        const company = await this.prisma.company.findUnique({
-          where: { id: companyId },
-          select: { onboarding_status: true, phone_number_id: true },
-        });
-        if (!phoneNumberId) phoneNumberId = company?.phone_number_id ?? null;
-        const onb = company?.onboarding_status as {
-          metaAccessTokenEncrypted?: string;
-          metaAccessToken?: string;
-        } | null;
-        const enc = onb?.metaAccessTokenEncrypted ?? onb?.metaAccessToken;
-        if (!token && enc) {
-          try {
-            token = this.encryption.decrypt(enc);
-          } catch {
-            /* ignore */
-          }
-        }
-      }
+      const { display, phoneNumberId, token } =
+        await this.resolveNumber(companyId);
 
       // Ownership gate: this company's number must BE the calling number.
       if (!digits(display).endsWith(businessNoPlus.slice(-11))) {
@@ -138,6 +93,73 @@ export class SipTrunkAuthService {
       this.logger.error(`syncTrunkAuth failed: ${(e as Error).message}`);
       return { synced: false, reason: 'error' };
     }
+  }
+
+  /**
+   * The company's primary active WhatsApp number: display number, Meta
+   * phone_number_id and the decrypted access token (number row first, then
+   * the legacy onboarding token / companies.phone_number_id).
+   */
+  async resolveNumber(companyId: number): Promise<{
+    display: string | null;
+    phoneNumberId: string | null;
+    token: string | null;
+  }> {
+    // Primary active WhatsApp number for this company → its display number
+    // (confirms ownership), phone_number_id (to fetch SIP creds), token.
+    const number = (
+      await this.prisma.whatsAppNumber.findMany({
+        where: { company_id: companyId, status: 'active' },
+        orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+        select: {
+          display_phone_number: true,
+          phone_number_id: true,
+          access_token_encrypted: true,
+        },
+        take: 1,
+      })
+    )[0];
+
+    const display = number?.display_phone_number ?? null;
+    let phoneNumberId: string | null = number?.phone_number_id ?? null;
+    let token: string | null = null;
+    if (number?.access_token_encrypted) {
+      try {
+        token = this.encryption.decrypt(number.access_token_encrypted);
+      } catch {
+        /* fall through to the legacy onboarding token */
+      }
+    }
+
+    // Legacy-company fallback: token in onboarding_status JSON, phone id on
+    // companies.phone_number_id (pre-multi-number rows).
+    if (!token || !phoneNumberId) {
+      const company = await this.prisma.company.findUnique({
+        where: { id: companyId },
+        select: { onboarding_status: true, phone_number_id: true },
+      });
+      if (!phoneNumberId) phoneNumberId = company?.phone_number_id ?? null;
+      const onb = company?.onboarding_status as {
+        metaAccessTokenEncrypted?: string;
+        metaAccessToken?: string;
+      } | null;
+      const enc = onb?.metaAccessTokenEncrypted ?? onb?.metaAccessToken;
+      if (!token && enc) {
+        try {
+          token = this.encryption.decrypt(enc);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    return { display, phoneNumberId, token };
+  }
+
+  /** True when the platform's calling server is wired to this display number. */
+  isCallingNumber(display: string | null): boolean {
+    const businessNoPlus = digits(this.config.get<string>('CALLS_BUSINESS_NUMBER'));
+    return !!businessNoPlus && digits(display).endsWith(businessNoPlus.slice(-11));
   }
 
   /**

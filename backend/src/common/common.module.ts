@@ -14,6 +14,7 @@ import { CustomerRegistryService } from './services/customer-registry.service';
 import { AgentActivityService } from './services/agent-activity.service';
 import { SipTrunkAuthService } from './services/sip-trunk-auth.service';
 import { WabaSubscriptionService } from './services/waba-subscription.service';
+import { CallingReadinessService } from './services/calling-readiness.service';
 import { SharedStateService } from './services/shared-state.service';
 import { OrderAttributionService } from './services/order-attribution.service';
 import { InventoryLedgerService } from '../modules/inventory/core/inventory-ledger.service';
@@ -36,6 +37,7 @@ import { InventoryLedgerService } from '../modules/inventory/core/inventory-ledg
     AgentActivityService,
     SipTrunkAuthService,
     WabaSubscriptionService,
+    CallingReadinessService,
     SharedStateService,
     OrderAttributionService,
     InventoryLedgerService,
@@ -56,6 +58,7 @@ import { InventoryLedgerService } from '../modules/inventory/core/inventory-ledg
     AgentActivityService,
     SipTrunkAuthService,
     WabaSubscriptionService,
+    CallingReadinessService,
     SharedStateService,
     OrderAttributionService,
     InventoryLedgerService,

@@ -16,6 +16,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { WabaSubscriptionService } from '../../common/services/waba-subscription.service';
+import { CallingReadinessService } from '../../common/services/calling-readiness.service';
 
 /**
  * Multi-Number management for Settings → WhatsApp numbers. A tenant connects
@@ -29,7 +30,20 @@ export class WhatsAppNumbersController {
   constructor(
     private readonly meta: MetaClientService,
     private readonly wabaSubscription: WabaSubscriptionService,
+    private readonly callingReadiness: CallingReadinessService,
   ) {}
+
+  /**
+   * WhatsApp Calling setup checklist (live from Meta). Not behind the `calls`
+   * module guard on purpose: it tells a tenant what is missing, including the
+   * module grant itself.
+   */
+  @Get('calling-readiness')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  callingSetup(@CurrentUser() user: { companyId: number }) {
+    return this.callingReadiness.readiness(user.companyId);
+  }
 
   /**
    * Webhook delivery check: is our app subscribed to each WABA? Meta sends
