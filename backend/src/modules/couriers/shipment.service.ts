@@ -116,7 +116,7 @@ function bookLaneKey(
  */
 function isPermanentBookingError(err: unknown): boolean {
   const m = (err instanceof Error ? err.message : String(err)).toLowerCase();
-  return /incomplete shipping|need name|no courier configured|no courier serves|city .*(not|unmapped|unknown|unserviceable|serviceable)|unmapped city|no open fulfillment|already has an active|already fulfilled|has no shipping address|not found|invalid (phone|address|city|number)|out of (service|delivery) area|no active .*credential|not configured|missing credential|invalid (api )?(key|token)|unauthor|authentication failed/.test(
+  return /incomplete shipping|need name|no courier configured|no courier serves|city .*(not|unmapped|unknown|unserviceable|serviceable)|unmapped city|no open fulfillment|already has an active|already fulfilled|has no shipping address|not found|invalid (phone|address|city|number)|out of (service|delivery) area|no active .*credential|not configured|missing credential|invalid (api )?(key|token)|unauthor|authentication failed|do not retry|invalid cod|pickup details not configured/.test(
     m,
   );
 }

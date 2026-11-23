@@ -201,6 +201,7 @@ enum CourierType {
   // COURIER_TYPES/bookable lists.
   manual
   rapidxpk
+  tcs
 }
 
 enum ShipmentStatus {

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -30,6 +31,7 @@ import { MnpAdapter, MnpCredentials } from './adapters/mnp.adapter';
 import { CityMappingService } from './city-mapping.service';
 import { RapidxpkSetupService } from './rapidxpk-setup.service';
 import { RapidxpkCredentials } from './adapters/rapidxpk.adapter';
+import { TcsAdapter, TcsCredentials } from './adapters/tcs.adapter';
 
 /**
  * Which credential keys are SECRET per courier. Secret keys are never echoed
@@ -46,6 +48,7 @@ const SECRET_CRED_KEYS: Record<CourierType, string[]> = {
   mnp: ['password', 'webhookToken'],
   manual: [], // no credentials — not a real courier
   rapidxpk: ['apiKey', 'webhookSecret'],
+  tcs: ['clientSecret', 'password'],
 };
 import {
   SetCourierCredentialsDto,
@@ -233,6 +236,74 @@ export class SettingsCouriersController {
     return { seeded: data.length };
   }
 
+  // ── TCS helpers (owner/admin) ─────────────────────────────────────────────
+
+  private async tcs(companyId: number): Promise<{ adapter: TcsAdapter; creds: TcsCredentials }> {
+    const { creds } = await this.registry.requireCredentials(companyId, 'tcs');
+    return { adapter: this.registry.getAdapter('tcs') as TcsAdapter, creds: creds as TcsCredentials };
+  }
+
+  /** TCS cost centers for the account (pickup / return addresses). */
+  @Get('tcs/cost-centers')
+  async tcsCostCenters(@CurrentUser() user: { companyId: number }) {
+    const { adapter, creds } = await this.tcs(user.companyId);
+    return this.tcsCall(() => adapter.listCostCenters(creds));
+  }
+
+  /** TCS's own delivery-status vocabulary + what CodesApp maps each code to. */
+  @Get('tcs/status-codes')
+  async tcsStatusCodes(@CurrentUser() user: { companyId: number }) {
+    const { adapter, creds } = await this.tcs(user.companyId);
+    return this.tcsCall(() => adapter.statusList(creds));
+  }
+
+  /** Raw TCS shipper-advice catalogue (actions + details) — diagnostics. */
+  @Get('tcs/advice-actions')
+  async tcsAdviceActions(@CurrentUser() user: { companyId: number }) {
+    const { adapter, creds } = await this.tcs(user.companyId);
+    return this.tcsCall(() => adapter.adviceCatalogue(creds));
+  }
+
+  /**
+   * Fetch TCS's Pakistan city list and seed it as platform city mappings
+   * (company_id=null): city_name = lowercased name, city_code = TCS code
+   * ("KHI"). Idempotent — replaces the tcs seed set; tenant overrides stay.
+   */
+  @Post('tcs/seed-cities')
+  async tcsSeedCities(@CurrentUser() user: { companyId: number }) {
+    return { seeded: await this.seedTcsCities(user.companyId) };
+  }
+
+  private async seedTcsCities(companyId: number): Promise<number> {
+    const { adapter, creds } = await this.tcs(companyId);
+    const cities = await this.tcsCall(() => adapter.listCities(creds));
+    const byKey = new Map<string, string>();
+    for (const c of cities) {
+      const key = c.name.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (key && !byKey.has(key)) byKey.set(key, c.code.trim().toUpperCase());
+    }
+    if (!byKey.size) throw new BadRequestException('TCS returned no cities.');
+    const data = [...byKey.entries()].map(([cityName, code]) => ({
+      company_id: null as unknown as number,
+      courier_type: 'tcs' as CourierType,
+      city_name: cityName,
+      city_code: code,
+      is_default_courier: false,
+    }));
+    await this.prisma.courierCityMapping.deleteMany({ where: { company_id: null, courier_type: 'tcs' } });
+    await this.prisma.courierCityMapping.createMany({ data, skipDuplicates: true });
+    return data.length;
+  }
+
+  /** Turn a TCS failure into a clean 400 with TCS's own message. */
+  private async tcsCall<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      throw new BadRequestException((err as Error)?.message || 'TCS request failed.');
+    }
+  }
+
   /** RapidXpk webhook status card: TEST/LIVE mode, signing secret stored, and
    *  RapidXpk's own last-success/last-error for our URL. */
   @Get('rapidxpk/webhook')
@@ -286,6 +357,25 @@ export class SettingsCouriersController {
     if (courierType === 'rapidxpk') {
       await this.rapidxpk.assertKeyValid(merged as unknown as RapidxpkCredentials);
     }
+    // TCS: mint both tokens BEFORE saving (rejects bad creds with TCS's own
+    // message), then prefill the pickup block from the chosen cost center.
+    if (courierType === 'tcs') {
+      const tcs = this.registry.getAdapter('tcs') as TcsAdapter;
+      const c = merged as unknown as TcsCredentials;
+      await this.tcsCall(() => tcs.validate(c));
+      if (c.costCenterCode && (!c.pickupAddress || !c.pickupCity || !c.pickupPhone)) {
+        const centers = await tcs.listCostCenters(c).catch(() => [] as Awaited<ReturnType<TcsAdapter['listCostCenters']>>);
+        const cc = centers.find(
+          (x) => x.code === c.costCenterCode,
+        );
+        if (cc) {
+          if (!merged.pickupAddress) merged.pickupAddress = cc.pickupAddress;
+          if (!merged.pickupCity) merged.pickupCity = cc.city;
+          if (!merged.pickupPhone) merged.pickupPhone = cc.phone;
+          if (!merged.shipperName) merged.shipperName = cc.name;
+        }
+      }
+    }
     const credentialsEncrypted = this.encryption.encrypt(JSON.stringify(merged));
     const webhookSecretEncrypted = dto.webhookSecret
       ? this.encryption.encrypt(dto.webhookSecret)
@@ -319,6 +409,19 @@ export class SettingsCouriersController {
           await this.rapidxpk.registerWebhook(user.companyId);
         } catch (err) {
           webhookError = (err as Error)?.message ?? 'Webhook registration failed.';
+        }
+      }
+    }
+    // TCS: seed its city list once (cities drive booking + routing).
+    if (courierType === 'tcs') {
+      const seeded = await this.prisma.courierCityMapping.count({
+        where: { company_id: null, courier_type: 'tcs' },
+      });
+      if (!seeded) {
+        try {
+          await this.seedTcsCities(user.companyId);
+        } catch (err) {
+          webhookError = `Saved, but TCS cities could not be loaded: ${(err as Error)?.message}`;
         }
       }
     }

@@ -1464,6 +1464,7 @@ function ManifestsPanel({
     mnp: '#BE123C',
     manual: '#475569',
     rapidxpk: '#111311',
+    tcs: '#E31E24',
   };
 
   const ManifestRow = ({ b }: { b: LoadsheetBatch }) => {

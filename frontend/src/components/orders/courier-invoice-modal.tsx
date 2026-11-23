@@ -21,6 +21,7 @@ import {
   setCourierInvoiceAdjustment,
   supportedInvoiceCouriers,
   uploadCourierInvoice,
+  fetchTcsInvoice,
   COURIER_LABELS,
   type CourierInvoiceAdjustment,
   type CourierInvoiceDetail,
@@ -68,11 +69,16 @@ export function CourierInvoiceModal({
   const money = (v: number | null | undefined) =>
     v == null ? '—' : `${preview?.currency ?? 'PKR'} ${Math.round(v).toLocaleString()}`;
 
+  // TCS statements come from TCS's API by invoice number — no file.
+  const fromApi = courier === 'tcs';
+
   const doUpload = async () => {
-    if (!courier || !file) return;
+    if (!courier || (fromApi ? !invoiceNo.trim() : !file)) return;
     setBusy(true);
     try {
-      const res = await uploadCourierInvoice(courier, file, invoiceNo);
+      const res = fromApi
+        ? await fetchTcsInvoice(invoiceNo.trim())
+        : await uploadCourierInvoice(courier, file as File, invoiceNo);
       setPreview(res);
       setSummary(res.summary);
       setStep('preview');
@@ -198,6 +204,8 @@ export function CourierInvoiceModal({
             )}
           </div>
 
+          {!fromApi && (
+          <>
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
@@ -225,21 +233,25 @@ export function CourierInvoiceModal({
             className="hidden"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           />
+          </>
+          )}
 
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-600">
-              Invoice / CPR number <span className="font-normal text-gray-400">(optional)</span>
+              {fromApi ? 'TCS invoice number' : 'Invoice / CPR number'}{' '}
+              {!fromApi && <span className="font-normal text-gray-400">(optional)</span>}
             </label>
             <input
               type="text"
               value={invoiceNo}
               onChange={(e) => setInvoiceNo(e.target.value)}
-              placeholder="e.g. CPR-GQ01G905532"
+              placeholder={fromApi ? 'e.g. 543777' : 'e.g. CPR-GQ01G905532'}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
             />
             <p className="mt-1 text-xs text-gray-400">
-              Only needed if the file has no number in it (e.g. a PostEx CSV export).
-              Leave blank and the statement is de-duplicated by its contents.
+              {fromApi
+                ? 'CodesApp pulls this payment invoice straight from TCS — no file needed.'
+                : 'Only needed if the file has no number in it (e.g. a PostEx CSV export). Leave blank and the statement is de-duplicated by its contents.'}
             </p>
           </div>
 
@@ -252,11 +264,11 @@ export function CourierInvoiceModal({
             </button>
             <button
               onClick={doUpload}
-              disabled={!courier || !file || busy}
+              disabled={!courier || (fromApi ? !invoiceNo.trim() : !file) || busy}
               className="flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              Read statement
+              {fromApi ? 'Fetch from TCS' : 'Read statement'}
             </button>
           </div>
         </div>

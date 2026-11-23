@@ -21,6 +21,7 @@ export const COURIER_DISPLAY_NAME: Record<CourierType, string> = {
   mnp: 'M&P',
   manual: 'Manual',
   rapidxpk: 'RapidXpk',
+  tcs: 'TCS',
 };
 
 /**
@@ -37,6 +38,7 @@ export const COURIER_TRACKING_URL: Record<CourierType, ((tn: string) => string) 
   mnp: (tn) => `https://www.mulphilog.com/tracking/${encodeURIComponent(tn)}`,
   manual: null, // no courier portal — tracking (if any) is whatever the agent typed
   rapidxpk: (tn) => `https://rapidxpk.com/track.html?tn=${encodeURIComponent(tn)}`,
+  tcs: (tn) => `https://www.tcsexpress.com/track/${encodeURIComponent(tn)}`,
 };
 
 export function courierTrackingUrl(courier: CourierType, tn: string): string | undefined {

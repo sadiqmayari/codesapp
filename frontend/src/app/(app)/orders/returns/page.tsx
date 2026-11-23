@@ -31,6 +31,7 @@ const cmarkBg: Record<string, string> = {
   rocket: '#2f8fd6',
   mnp: '#c2782a',
   rapidxpk: '#111311',
+  tcs: '#E31E24',
 };
 
 export default function ReturnsHistoryPage() {

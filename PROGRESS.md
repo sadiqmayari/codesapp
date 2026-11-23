@@ -6,6 +6,12 @@
 
 ## Current Status
 
+**TCS courier — 7th courier (2026-11-23, latest):** migration `20261126000000_courier_type_tcs` (auto-applies; enum only). Built from TCS's E-COM API guide + its live Swagger specs (the PDF shows GET bodies; the real API takes query params).
+- Book (single + bulk queue), cancel/unbook, TCS label PDF per parcel (`print/label`, layout picked in Settings), in-app dispatch manifest (TCS has no loadsheet API), tracking timeline + status sync (no webhooks — pulled on the courier sync schedule), shipper advice (`shipperadvice/*`, ids resolved by name), city list seeded from TCS (`citylistbycountry`), cost centers prefill the pickup block.
+- COD: statements are FETCHED from TCS by invoice number (`booking/paymentinvoice`) into the normal preview → apply flow (Courier payments → statement → pick TCS).
+- Lost-reply guard: a booking timeout is NOT auto-retried (TCS has no lookup by order ref) — the error tells the agent to check the TCS portal first.
+- Pending: live verification with the tenant's production creds (status-code list, cost centers, one real booking + cancel).
+
 **Inventory v2 (2026-11-22, latest):** full audit + rebuild of the inventory module. Migration `20261125000000_inventory_v2` (auto-applies). Preview: https://claude.ai/artifact/QScstyXHzTHCMHvbtt43fS
 - Fixed: returns restocked twice (CodesApp + Shopify cancel), multi-location stock corruption, "Push changed" writing stale stock back, detail Save resetting stock, edits lost during a running push, sync silently capped at 2,000 products / reverting pending prices, orphan rows after removing a store, same product in two stores counted twice in stats/analytics/Growth COGS.
 - New: master items + shared stock pool across stores (linked by SKU → barcode → title), per-location levels, ledger single writer, store webhooks per location, hourly reconcile, Woo stock; catalogue board + item sheet, ledger, conflicts review; stock counts (blind, scan), transfers, CSV import, suppliers, purchase orders + receiving (landed + weighted-average cost), reorder suggestions; create products + Active/Unlisted/Draft/Archived pushed to stores; selling guards (create-order, item editor, AI), waitlist + back-in-stock, alerts + webhooks + daily digest, shelf on pack/picklist.

@@ -16,6 +16,10 @@ import {
   getTraxPickupAddresses,
   getMnpLocations,
   seedMnpCities,
+  getTcsCostCenters,
+  seedTcsCities,
+  getTcsStatusCodes,
+  type TcsStatusCode,
   getRapidxpkWebhook,
   registerRapidxpkWebhook,
   type RapidxpkWebhookStatus,
@@ -322,7 +326,13 @@ function CourierSheet({
     for (const f of fields) {
       if (!f.dynamic) continue;
       const loader =
-        f.dynamic === 'traxPickupAddresses' ? getTraxPickupAddresses : f.dynamic === 'mnpLocations' ? getMnpLocations : null;
+        f.dynamic === 'traxPickupAddresses'
+          ? getTraxPickupAddresses
+          : f.dynamic === 'mnpLocations'
+            ? getMnpLocations
+            : f.dynamic === 'tcsCostCenters'
+              ? getTcsCostCenters
+              : null;
       if (!loader) continue;
       const key = f.key;
       setDynOpts((m) => ({ ...m, [key]: null }));
@@ -390,16 +400,20 @@ function CourierSheet({
   const seedCities = async () => {
     setSeeding(true);
     try {
-      const { seeded } = await seedMnpCities();
-      toast.success(`Fetched ${seeded.toLocaleString()} M&P cities`);
+      const { seeded } = courierType === 'tcs' ? await seedTcsCities() : await seedMnpCities();
+      toast.success(`Fetched ${seeded.toLocaleString()} ${label} cities`);
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to fetch M&P cities');
+      toast.error(e instanceof ApiError ? e.userMessage : `Failed to fetch ${label} cities`);
     } finally {
       setSeeding(false);
     }
   };
 
-  const webhookUrl = row?.webhookUrl && typeof window !== 'undefined' ? `${window.location.origin}${row.webhookUrl}` : null;
+  // TCS has no push webhooks (statuses are pulled on the sync schedule).
+  const webhookUrl =
+    courierType !== 'tcs' && row?.webhookUrl && typeof window !== 'undefined'
+      ? `${window.location.origin}${row.webhookUrl}`
+      : null;
 
   return (
     <SideSheet
@@ -503,8 +517,8 @@ function CourierSheet({
         );
       })}
 
-      {courierType === 'mnp' && configured && (
-        <SettingRow title="City list" description="Fetch M&P’s cities from their API (re-run to refresh).">
+      {(courierType === 'mnp' || courierType === 'tcs') && configured && (
+        <SettingRow title="City list" description={`Fetch ${label}’s cities from their API (re-run to refresh).`}>
           <Button variant="secondary" size="sm" loading={seeding} onClick={seedCities}>
             Fetch cities
           </Button>
@@ -524,6 +538,7 @@ function CourierSheet({
       )}
 
       {courierType === 'rapidxpk' && configured && <RapidxpkWebhookPanel />}
+      {courierType === 'tcs' && configured && <TcsStatusCodesPanel />}
 
       {configured && (
         <SettingRow
@@ -556,6 +571,49 @@ function CourierSheet({
 // RapidXpk: CodesApp registers its webhook with RapidXpk itself (on save), so
 // instead of a "give this URL to the courier" field we show TEST/LIVE mode, the
 // registration state, RapidXpk's own last-success/last-error, and a Re-register.
+/** TCS's own status vocabulary + what each code becomes in CodesApp. TCS has
+ *  no webhooks — statuses are pulled on the courier sync schedule. */
+function TcsStatusCodesPanel() {
+  const [rows, setRows] = useState<TcsStatusCode[] | null>(null);
+  const [err, setErr] = useState('');
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open || rows) return;
+    getTcsStatusCodes()
+      .then(setRows)
+      .catch((e) => setErr(e instanceof ApiError ? e.userMessage : 'Couldn’t load TCS status codes.'));
+  }, [open, rows]);
+  return (
+    <div className="rounded-lg border border-line p-3 text-sm">
+      <p className="text-muted">
+        TCS sends no tracking pushes — CodesApp pulls each parcel’s status on your courier sync schedule.
+      </p>
+      <button type="button" className="mt-2 text-xs font-medium text-brand-700 hover:underline" onClick={() => setOpen((v) => !v)}>
+        {open ? 'Hide' : 'Show'} TCS status codes
+      </button>
+      {open && (
+        <div className="mt-2 max-h-64 overflow-auto">
+          {err && <p className="text-xs text-red-600">{err}</p>}
+          {!rows && !err && <Skeleton className="h-16 w-full" />}
+          {rows && (
+            <table className="w-full text-xs">
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.code} className="border-t border-line">
+                    <td className="py-1 pr-2 font-mono">{r.code}</td>
+                    <td className="py-1 pr-2">{r.description}</td>
+                    <td className={cn('py-1', r.mapsTo === 'unmapped' ? 'text-amber-700' : 'text-muted')}>{r.mapsTo}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RapidxpkWebhookPanel() {
   const toast = useToast();
   const [st, setSt] = useState<RapidxpkWebhookStatus | null>(null);

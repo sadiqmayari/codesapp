@@ -3,7 +3,7 @@ import { apiFetch, postMultipart } from '@/lib/api';
 // 'manual' = a Shopify-style manual fulfilment (no courier booking). It's a real
 // shipment courier_type but is NOT in COURIER_TYPES (never offered as a bookable
 // courier); the book modal exposes it as a separate "Manual" option.
-export type CourierType = 'trax' | 'leopards' | 'postex' | 'rocket' | 'mnp' | 'manual' | 'rapidxpk';
+export type CourierType = 'trax' | 'leopards' | 'postex' | 'rocket' | 'mnp' | 'manual' | 'rapidxpk' | 'tcs';
 
 export type ShipmentStatus =
   | 'booked'
@@ -18,7 +18,7 @@ export type ShipmentStatus =
   | 'cancelled'
   | 'returned';
 
-export const COURIER_TYPES: CourierType[] = ['trax', 'leopards', 'postex', 'rocket', 'mnp', 'rapidxpk'];
+export const COURIER_TYPES: CourierType[] = ['trax', 'leopards', 'postex', 'rocket', 'mnp', 'rapidxpk', 'tcs'];
 
 export const COURIER_LABELS: Record<CourierType, string> = {
   trax: 'Trax',
@@ -28,6 +28,7 @@ export const COURIER_LABELS: Record<CourierType, string> = {
   mnp: 'M&P',
   manual: 'Manual',
   rapidxpk: 'RapidXpk',
+  tcs: 'TCS',
 };
 
 export const STATUS_LABELS: Record<ShipmentStatus, string> = {
@@ -82,7 +83,7 @@ export interface CourierField {
   /** Static options for a 'select' field. */
   options?: Array<{ value: string; label: string }>;
   /** A 'select' whose options are loaded at runtime from an API. */
-  dynamic?: 'traxPickupAddresses' | 'mnpLocations';
+  dynamic?: 'traxPickupAddresses' | 'mnpLocations' | 'tcsCostCenters';
   /** Not required to save. */
   optional?: boolean;
   /** Default value when nothing is saved yet (e.g. a toggle that's on by default). */
@@ -274,6 +275,50 @@ export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
       hint: 'Only needed if you set the webhook URL in the RapidXpk portal yourself — paste the secret it shows. Leave blank when CodesApp registers the webhook for you (on save).',
     },
   ],
+  tcs: [
+    {
+      key: 'environment',
+      label: 'Environment',
+      type: 'select',
+      default: 'production',
+      options: [
+        { value: 'production', label: 'Production (live bookings)' },
+        { value: 'sandbox', label: 'Sandbox / UAT (test only)' },
+      ],
+    },
+    { key: 'clientId', label: 'Client ID', type: 'text', hint: 'From TCS (API authorization).' },
+    { key: 'clientSecret', label: 'Client secret', type: 'secret' },
+    { key: 'username', label: 'API username', type: 'text', hint: 'TCS e-com API username (not your portal login, unless TCS said so).' },
+    { key: 'password', label: 'API password', type: 'secret' },
+    { key: 'accountNo', label: 'Account number', type: 'text', hint: 'Your TCS customer / account no (e.g. 04011K1). Checked with TCS on save.' },
+    {
+      key: 'costCenterCode',
+      label: 'Cost center (pickup)',
+      type: 'select',
+      dynamic: 'tcsCostCenters',
+      hint: 'Loaded from your TCS account — save the credentials first. Its pickup address fills the shipper details below.',
+    },
+    { key: 'serviceCode', label: 'Service code', type: 'text', default: 'O', hint: 'TCS service, e.g. O (overnight). Ask TCS if unsure.' },
+    { key: 'defaultWeightKg', label: 'Default weight (kg)', type: 'text', optional: true, default: '0.5', hint: 'Sent with every parcel (TCS minimum 0.5).' },
+    {
+      key: 'labelPrintType',
+      label: 'Label layout',
+      type: 'select',
+      default: '2',
+      options: [
+        { value: '2', label: 'Single label per page' },
+        { value: '3', label: '6×4 label' },
+        { value: '1', label: '3 copies per page' },
+        { value: '6', label: 'Shipment label' },
+        { value: '7', label: 'Shipment label 6×4' },
+      ],
+    },
+    { key: 'shipperName', label: 'Shipper name', type: 'text', optional: true, hint: 'Printed as the sender. Defaults to the cost center name.' },
+    { key: 'pickupAddress', label: 'Pickup address', type: 'text', optional: true, hint: 'Filled from the cost center when blank.' },
+    { key: 'pickupCity', label: 'Pickup city', type: 'text', optional: true },
+    { key: 'pickupCityCode', label: 'Pickup city code', type: 'text', optional: true, hint: 'TCS code, e.g. KHI / LHE.' },
+    { key: 'pickupPhone', label: 'Pickup phone', type: 'text', optional: true, hint: '03XXXXXXXXX' },
+  ],
 };
 
 export interface RapidxpkWebhookStatus {
@@ -292,6 +337,36 @@ export function getRapidxpkWebhook() {
 
 export function registerRapidxpkWebhook() {
   return apiFetch<{ url: string }>('/settings/couriers/rapidxpk/register-webhook', { method: 'POST' });
+}
+
+export function getTcsCostCenters() {
+  return apiFetch<Array<{ code: string; name: string; city: string; pickupAddress: string }>>(
+    '/settings/couriers/tcs/cost-centers',
+  ).then((list) =>
+    list.map((c) => ({ id: c.code, label: [c.code, c.name, c.city].filter(Boolean).join(' — ') })),
+  );
+}
+
+export function seedTcsCities() {
+  return apiFetch<{ seeded: number }>('/settings/couriers/tcs/seed-cities', { method: 'POST' });
+}
+
+export interface TcsStatusCode {
+  code: string;
+  description: string;
+  mapsTo: string;
+}
+
+export function getTcsStatusCodes() {
+  return apiFetch<TcsStatusCode[]>('/settings/couriers/tcs/status-codes');
+}
+
+/** Pull a TCS payment invoice from TCS's API → same preview as an upload. */
+export function fetchTcsInvoice(invoiceNumber: string) {
+  return apiFetch<CourierInvoicePreview>('/shipments/courier-invoices/tcs/fetch', {
+    method: 'POST',
+    body: { invoiceNumber },
+  });
 }
 
 export interface Shipment {

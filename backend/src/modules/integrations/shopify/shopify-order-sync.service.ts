@@ -617,6 +617,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     if (t.includes('rocket')) return 'rocket';
     if (t.includes('m&p') || t.includes('mnp') || t.includes('muller')) return 'mnp';
     if (/rapid\s*x/.test(t)) return 'rapidxpk';
+    if (/\btcs\b/.test(t)) return 'tcs';
     return null;
   }
 

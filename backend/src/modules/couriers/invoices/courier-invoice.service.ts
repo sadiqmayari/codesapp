@@ -23,6 +23,8 @@ import {
 } from '../couriers.constants';
 import { buildCourierInvoicePdf } from '../courier-invoice-pdf.util';
 import { CourierInvoiceRegistry } from './courier-invoice.registry';
+import { CourierRegistryService } from '../courier-registry.service';
+import { TcsAdapter, TcsCredentials } from '../adapters/tcs.adapter';
 import {
   DeductionComponent,
   ParsedInvoice,
@@ -69,6 +71,7 @@ export class CourierInvoiceService implements OnModuleInit {
     private readonly sharedState: SharedStateService,
     private readonly jobQueue: JobQueueService,
     private readonly registry: CourierInvoiceRegistry,
+    private readonly couriers: CourierRegistryService,
     private readonly shopifyFulfillment: ShopifyFulfillmentClient,
     private readonly shopifyService: ShopifyService,
   ) {}
@@ -87,7 +90,8 @@ export class CourierInvoiceService implements OnModuleInit {
   }
 
   supportedCouriers(): CourierType[] {
-    return this.registry.supportedCouriers();
+    // TCS statements come from its API (fetch by invoice number), not a file.
+    return [...this.registry.supportedCouriers(), 'tcs'];
   }
 
   // ── Phase 1: upload + preview (no shipment writes) ──────────────────────
@@ -117,6 +121,53 @@ export class CourierInvoiceService implements OnModuleInit {
     const parsed = await this.registry
       .getParser(courierType)
       .parse(file.buffer, { filename: file.originalname });
+    return this.previewParsed(companyId, courierType, parsed, {
+      userId,
+      providedInvoiceNumber,
+      source: {
+        buffer: file.buffer,
+        mime: isCsv
+          ? 'text/csv'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      },
+    });
+  }
+
+  /**
+   * TCS: pull a settlement (payment invoice) straight from TCS's API by its
+   * invoice number instead of uploading a file. Same reconcile + preview path as
+   * an upload; the raw API reply is archived as the "source file".
+   */
+  async fetchTcsInvoice(companyId: number, invoiceNumber: string, userId?: number) {
+    const no = String(invoiceNumber ?? '').trim();
+    if (!no) throw new BadRequestException('Enter the TCS invoice number.');
+    const { creds } = await this.couriers.requireCredentials(companyId, 'tcs');
+    const adapter = this.couriers.getAdapter('tcs') as TcsAdapter;
+    let parsed: ParsedInvoice;
+    try {
+      parsed = await adapter.getPaymentInvoice(creds as TcsCredentials, no);
+    } catch (err) {
+      throw new BadRequestException((err as Error)?.message || 'TCS invoice could not be fetched.');
+    }
+    return this.previewParsed(companyId, 'tcs', parsed, {
+      userId,
+      providedInvoiceNumber: no,
+      source: {
+        buffer: Buffer.from(JSON.stringify(parsed.lines, null, 2)),
+        mime: 'application/json',
+        name: `tcs-invoice-${no}.json`,
+      },
+    });
+  }
+
+  /** Shared tail of upload/fetch: dedup → reconcile → archive source → save. */
+  private async previewParsed(
+    companyId: number,
+    courierType: CourierType,
+    parsed: ParsedInvoice,
+    opts: { userId?: number; providedInvoiceNumber?: string; source?: { buffer: Buffer; mime: string; name?: string } },
+  ) {
+    const { userId, providedInvoiceNumber } = opts;
     // Some statements (e.g. PostEx's CSV export) carry no invoice number — fall
     // back to the CPR the tenant typed, else a deterministic content hash so a
     // re-upload of the same file is still caught by the dedup guard below.
@@ -155,11 +206,10 @@ export class CourierInvoiceService implements OnModuleInit {
     // Archive the original file alongside the reconciliation that consumed it.
     let sourceUrl: string | null = null;
     try {
-      const sourceMime = isCsv
-        ? 'text/csv'
-        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-      const saved = this.media.saveBuffer(file.buffer, sourceMime, companyId);
-      sourceUrl = this.toWebPath(saved.path);
+      if (opts.source) {
+        const saved = this.media.saveBuffer(opts.source.buffer, opts.source.mime, companyId, opts.source.name);
+        sourceUrl = this.toWebPath(saved.path);
+      }
     } catch (err) {
       this.logger.warn(
         `Could not archive the uploaded statement (company ${companyId}): ${

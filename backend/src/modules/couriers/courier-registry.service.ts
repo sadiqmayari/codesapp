@@ -9,6 +9,7 @@ import { PostexAdapter } from './adapters/postex.adapter';
 import { RocketAdapter } from './adapters/rocket.adapter';
 import { MnpAdapter } from './adapters/mnp.adapter';
 import { RapidxpkAdapter } from './adapters/rapidxpk.adapter';
+import { TcsAdapter } from './adapters/tcs.adapter';
 
 export const COURIER_TYPES: CourierType[] = [
   'trax',
@@ -17,6 +18,7 @@ export const COURIER_TYPES: CourierType[] = [
   'rocket',
   'mnp',
   'rapidxpk',
+  'tcs',
 ];
 
 /**
@@ -39,8 +41,9 @@ export class CourierRegistryService {
     rocket: RocketAdapter,
     mnp: MnpAdapter,
     rapidxpk: RapidxpkAdapter,
+    tcs: TcsAdapter,
   ) {
-    this.adapters = { trax, leopards, postex, rocket, mnp, rapidxpk };
+    this.adapters = { trax, leopards, postex, rocket, mnp, rapidxpk, tcs };
   }
 
   getAdapter(courierType: CourierType): CourierAdapter {

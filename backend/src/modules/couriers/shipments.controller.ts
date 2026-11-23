@@ -350,6 +350,18 @@ export class ShipmentsController {
     );
   }
 
+  /** TCS: fetch a payment invoice from TCS's API by number → same preview. */
+  @Post('courier-invoices/tcs/fetch')
+  @RequireModule('couriers')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'finance')
+  fetchTcsInvoice(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Body() body: { invoiceNumber?: string },
+  ) {
+    return this.courierInvoices.fetchTcsInvoice(user.companyId, String(body?.invoiceNumber ?? ''), user.userId);
+  }
+
   /** One uploaded statement + its reconciliation (also the apply-progress poll). */
   @Get('courier-invoices/:id')
   @UseGuards(RolesGuard)
