@@ -18,6 +18,8 @@ export interface CallingReadiness {
   callingStatus: string | null;
   displayNumber: string | null;
   checks: CallingCheck[];
+  /** Values for WhatsApp Manager → Phone numbers → Calling → SIP dialog. */
+  sip: { host: string; port: number; appId: string | null };
 }
 
 /** Messaging-limit tiers Meta accepts for calling (docs: 2,000 or above). */
@@ -169,8 +171,35 @@ export class CallingReadinessService {
           : 'Team members get a call line automatically the first time they open CodesApp after calling is live.',
     });
 
+    // The Meta app that owns the tenant's token (SIP is configured per
+    // number + app). Onboarding stores it; else ask Meta via debug_token.
+    let appId: string | null = null;
+    try {
+      const co = await this.prisma.company.findUnique({
+        where: { id: companyId },
+        select: { onboarding_status: true },
+      });
+      appId =
+        ((co?.onboarding_status as { metaAppId?: string } | null)?.metaAppId ??
+          null) || null;
+    } catch {
+      /* ignore */
+    }
+    if (!appId && connected) {
+      const dbg = await this.graph<{ data?: { app_id?: string } }>(
+        `debug_token?input_token=${encodeURIComponent(num!.token!)}`,
+        num!.token!,
+      );
+      appId = dbg?.data?.app_id ?? null;
+    }
+
     return {
       ready: checks.every((c) => c.state === 'ok'),
+      sip: {
+        host: this.config.get<string>('SIP_REALM') || 'sip.codentra.pk',
+        port: 5061,
+        appId,
+      },
       tier,
       callingStatus,
       displayNumber: display,

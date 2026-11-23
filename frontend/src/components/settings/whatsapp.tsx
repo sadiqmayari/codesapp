@@ -497,6 +497,7 @@ type CallingReadiness = {
   callingStatus: string | null;
   displayNumber: string | null;
   checks: CallingCheck[];
+  sip: { host: string; port: number; appId: string | null };
 };
 
 const CHECK_TITLES: Record<CallingCheck['key'], string> = {
@@ -599,6 +600,63 @@ function CallingCard() {
               </li>
             ))}
           </ol>
+          <details className="rounded-lg border border-line bg-sunken/40 px-3 py-2">
+            <summary className="cursor-pointer text-sm font-medium text-ink">
+              Meta SIP settings: what to enter in WhatsApp Manager
+            </summary>
+            <div className="space-y-3 pt-3">
+              <p className="text-xs text-muted">
+                WhatsApp Manager → Phone numbers → your number → Calls → “Set up your connection to use SIP
+                communication”. Enter these values only after CodesApp confirms your number is connected (step 5).
+                Your app must be in <b>Live</b> mode.
+              </p>
+              <CopyField label="SIP server" value={data.sip.host} />
+              <CopyField label="SIP port" value={String(data.sip.port)} />
+              <CopyField
+                label="App ID"
+                value={data.sip.appId ?? 'See Meta for Developers → your app → App settings'}
+                hint="Your own Meta app, the one whose token is saved in CodesApp. Meta won’t let you change it later."
+              />
+              <p className="text-xs text-muted">
+                <b>Request URI user parameters:</b> leave empty. Press Save. CodesApp then finishes the encryption
+                setting (SDES) and the calling password for you; these can’t be set from this dialog.
+              </p>
+            </div>
+          </details>
+          <details className="rounded-lg border border-line bg-sunken/40 px-3 py-2">
+            <summary className="cursor-pointer text-sm font-medium text-ink">What calls cost</summary>
+            <ul className="list-disc space-y-1.5 pt-3 pl-5 text-xs text-muted">
+              <li>
+                <b className="text-ink">Incoming calls</b> (customer calls you): free. A customer call also opens or
+                refreshes the 24-hour messaging window, even if nobody answers.
+              </li>
+              <li>
+                <b className="text-ink">Outgoing calls</b> (you call the customer): charged by Meta per minute, by the
+                customer’s country, billed in 6-second steps (a 56-second call is billed as 60 seconds). Rates get
+                cheaper as your monthly calling minutes grow.
+              </li>
+              <li>
+                Before you can call a customer, they must accept a call-permission request. That request is a
+                WhatsApp message and is charged like one.
+              </li>
+              <li>
+                Meta bills these charges to the payment method on your own WhatsApp Business Account, not through
+                CodesApp. A valid payment method is required to place calls.
+              </li>
+              <li>
+                Current rates:{' '}
+                <a
+                  href="https://developers.facebook.com/documentation/business-messaging/whatsapp/calling/pricing"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-brand-700 underline"
+                >
+                  Meta’s calling rate cards
+                </a>
+                .
+              </li>
+            </ul>
+          </details>
           {!data.ready && (
             <Callout tone="info">
               Steps 4 and 5 are done by CodesApp. Once your messaging limit reaches 2,000, contact CodesApp support and
