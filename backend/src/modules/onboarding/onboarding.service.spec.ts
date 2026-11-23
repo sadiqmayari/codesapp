@@ -38,6 +38,8 @@ describe('OnboardingService', () => {
       prisma as never,
       enc,
       {} as never,
+      { syncTrunkAuth: async () => ({ synced: false }) } as never,
+      { kick: () => undefined } as never,
     );
 
     await expect(
@@ -52,7 +54,13 @@ describe('OnboardingService', () => {
     expect(enc.isUsingPlaceholderKey()).toBe(false);
 
     const prisma = makePrisma();
-    const svc = new OnboardingService(prisma as never, enc, {} as never);
+    const svc = new OnboardingService(
+      prisma as never,
+      enc,
+      {} as never,
+      { syncTrunkAuth: async () => ({ synced: false }) } as never,
+      { kick: () => undefined } as never,
+    );
 
     const result = await svc.step3(1, { accessToken: 'EAAG-secret-123' });
     expect(result.metaAccessToken).toBe('(set)');

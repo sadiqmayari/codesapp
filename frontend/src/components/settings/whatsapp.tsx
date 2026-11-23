@@ -177,6 +177,8 @@ export function WhatsAppSection() {
         </SettingsCard>
       )}
 
+      <WebhookDeliveryCard />
+
       <CallingCard />
 
       {user?.role === 'owner' && (
@@ -529,6 +531,75 @@ function CallingCard() {
           Check &amp; re-sync
         </Button>
       </SettingRow>
+    </SettingsCard>
+  );
+}
+
+type WabaSubscription = { wabaId: string; subscribed: boolean; fixed?: boolean; apps?: string[]; error?: string };
+
+/**
+ * Meta only sends inbound messages + sent/delivered/read ticks to apps that are
+ * subscribed to the WhatsApp Business Account. Verifying the callback URL is
+ * not enough. The server checks + repairs this automatically; this card shows
+ * the state and lets an admin force a repair.
+ */
+function WebhookDeliveryCard() {
+  const toast = useToast();
+  const [rows, setRows] = useState<WabaSubscription[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setRows(await apiFetch<WabaSubscription[]>('/settings/whatsapp/webhook-subscription'));
+    } catch {
+      setRows([]);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const fix = async () => {
+    setBusy(true);
+    try {
+      const r = await apiFetch<WabaSubscription[]>('/settings/whatsapp/webhook-subscription', { method: 'POST' });
+      setRows(r);
+      if (r.length && r.every((x) => x.subscribed)) toast.success('Meta will now deliver messages and ticks');
+      else toast.error(r.find((x) => x.error)?.error ?? 'Could not subscribe the app');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Repair failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!rows || rows.length === 0) return null;
+  const allOk = rows.every((r) => r.subscribed);
+
+  return (
+    <SettingsCard
+      icon={<BrandMark brand="meta" />}
+      title="Message delivery from Meta"
+      description="Incoming messages and delivery/read ticks only arrive when your Meta app is subscribed to your WhatsApp Business Account."
+      action={<Badge tone={allOk ? 'success' : 'danger'}>{allOk ? 'Receiving' : 'Not receiving'}</Badge>}
+    >
+      {rows.map((r) => (
+        <SettingRow
+          key={r.wabaId}
+          title={`WABA ${r.wabaId}`}
+          description={
+            r.subscribed
+              ? `Subscribed app: ${(r.apps ?? []).join(', ') || 'yes'}`
+              : r.error ?? 'No app subscribed: Meta is not sending messages or ticks.'
+          }
+        >
+          {!r.subscribed && (
+            <Button variant="secondary" size="sm" loading={busy} onClick={fix}>
+              Fix now
+            </Button>
+          )}
+        </SettingRow>
+      ))}
     </SettingsCard>
   );
 }

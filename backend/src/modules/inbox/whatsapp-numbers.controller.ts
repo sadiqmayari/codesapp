@@ -15,6 +15,7 @@ import { TenantGuard } from '../../common/guards/tenant.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { WabaSubscriptionService } from '../../common/services/waba-subscription.service';
 
 /**
  * Multi-Number management for Settings → WhatsApp numbers. A tenant connects
@@ -25,7 +26,28 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 @Controller('settings/whatsapp')
 @UseGuards(AuthGuard('jwt'), TenantGuard)
 export class WhatsAppNumbersController {
-  constructor(private readonly meta: MetaClientService) {}
+  constructor(
+    private readonly meta: MetaClientService,
+    private readonly wabaSubscription: WabaSubscriptionService,
+  ) {}
+
+  /**
+   * Webhook delivery check: is our app subscribed to each WABA? Meta sends
+   * no inbound messages or status ticks without it. POST repairs it.
+   */
+  @Get('webhook-subscription')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  subscriptionStatus(@CurrentUser() user: { companyId: number }) {
+    return this.wabaSubscription.ensureSubscribed(user.companyId, false);
+  }
+
+  @Post('webhook-subscription')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  fixSubscription(@CurrentUser() user: { companyId: number }) {
+    return this.wabaSubscription.ensureSubscribed(user.companyId, true);
+  }
 
   /** Agent-safe brief list (no secrets) for the inbox reply-from selector. */
   @Get('numbers-brief')

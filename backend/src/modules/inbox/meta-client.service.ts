@@ -12,6 +12,7 @@ import * as https from 'https';
 import { v4 as uuidv4 } from 'uuid';
 import { EncryptionService } from '../../common/services/encryption.service';
 import { SipTrunkAuthService } from '../../common/services/sip-trunk-auth.service';
+import { WabaSubscriptionService } from '../../common/services/waba-subscription.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 // 20s (was 10s). 10s was too aggressive for media upload/send from the VPS to
@@ -93,6 +94,7 @@ export class MetaClientService {
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
     private readonly sipTrunkAuth: SipTrunkAuthService,
+    private readonly wabaSubscription: WabaSubscriptionService,
   ) {
     this.graphVersion = this.config.get<string>('META_GRAPH_VERSION') ?? 'v19.0';
   }
@@ -344,6 +346,8 @@ export class MetaClientService {
     });
     // Keep the WhatsApp-Calling SIP trunk password in step with the token.
     void this.sipTrunkAuth.syncTrunkAuth(companyId);
+    // Meta only delivers webhooks to apps subscribed to the WABA.
+    this.wabaSubscription.kick(companyId);
     return this.numberPublic(row);
   }
 
@@ -381,6 +385,9 @@ export class MetaClientService {
     // password so a rotated token takes effect without any Asterisk edit.
     if (data.access_token_encrypted) {
       void this.sipTrunkAuth.syncTrunkAuth(companyId);
+    }
+    if (data.access_token_encrypted || data.waba_id) {
+      this.wabaSubscription.kick(companyId);
     }
     return this.numberPublic(updated);
   }

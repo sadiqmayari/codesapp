@@ -1098,3 +1098,8 @@ The old `/ad-report` had these defects; each is fixed by the Growth module (see 
 ## [Courier statements] M&P marked delivered-no-COD parcels as paid in Shopify (fixed 2026-11-21)
 - **Symptom:** an M&P IBFT report lists DELIVERED parcels with COD 0 (72 of 244 on the 2026-11-21 file). The app treated every delivered parcel as paid, so applying settled them, marked COD orders PAID in Shopify and archived them — even when their cash wasn't in that transfer, and they dropped out of Pending payments.
 - **Fix:** `paid` = COD > 0; delivered-COD-0 → prepaid check against `shopify_orders.total_outstanding` at reconcile. Prepaid → settled; else `deliveredUnpaid` → marked delivered only. Statements uploaded (not applied) before the fix keep the old classification — re-upload them.
+
+## [WhatsApp] Tenant receives no inbound messages and no delivered/read ticks (fixed 2026-11-23)
+- **Symptom:** Bin Ali (company 9) onboarded on 2026-11-22, webhook verify passed, outbound templates sent, but zero inbound messages ever and every outbound stuck at `sent`. No webhook POSTs in the logs at all.
+- **Root cause:** the WABA had no subscribed app (`GET /{waba_id}/subscribed_apps` → `{"data":[]}`). Meta only delivers webhooks to apps subscribed to the WABA; setting the callback URL and passing the GET verify does not subscribe it. Our onboarding never made the `POST /{waba_id}/subscribed_apps` call, so every tenant using their own Meta app could hit this.
+- **Fix:** subscribed Bin Ali's WABA by hand, then added `WabaSubscriptionService` (auto-subscribe on token/WABA save, 6-hourly worker sweep, Settings card with "Fix now"). Old receipts are not resent; only events after the subscription arrive.
