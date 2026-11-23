@@ -1,13 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useTenantCouriers } from '@/lib/use-tenant-couriers';
 import { DownloadCloud, Loader2, ChevronDown } from 'lucide-react';
 import { useToast } from '@/components/toast';
 import { ApiError } from '@/lib/api';
 import {
   importLoadsheet,
   COURIER_LABELS,
-  COURIER_TYPES,
   type CourierType,
 } from '@/lib/couriers';
 
@@ -21,7 +21,13 @@ import {
 export function ImportLoadsheet({ onImported }: { onImported?: () => void }) {
   const toast = useToast();
   const [open, setOpen] = useState(false);
+  const tenantCouriers = useTenantCouriers();
   const [courier, setCourier] = useState<CourierType>('leopards');
+  // Default to the first connected courier once known.
+  useEffect(() => {
+    const list = tenantCouriers.configured;
+    if (list.length && !list.includes(courier)) setCourier(list[0]);
+  }, [tenantCouriers.configured, courier]);
   const [id, setId] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -76,7 +82,7 @@ export function ImportLoadsheet({ onImported }: { onImported?: () => void }) {
                 onChange={(e) => setCourier(e.target.value as CourierType)}
                 className="rounded-lg border border-gray-200 px-3 py-2 text-sm"
               >
-                {COURIER_TYPES.map((c) => (
+                {tenantCouriers.configured.map((c) => (
                   <option key={c} value={c}>
                     {COURIER_LABELS[c]}
                   </option>

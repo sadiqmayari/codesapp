@@ -2,6 +2,7 @@
 import { SkeletonRows } from '@/components/ui/skeleton';
 
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { useTenantCouriers } from '@/lib/use-tenant-couriers';
 import {
   Loader2,
   RefreshCw,
@@ -197,6 +198,7 @@ const STATUS_STYLES: Record<ShipmentStatus, string> = {
 };
 
 export default function FulfillmentPage() {
+  const tenantCouriers = useTenantCouriers();
   const toast = useToast();
   const { user } = useAuth();
   // The view lives in the URL (?view=…) — the Orders header tabs (layout.tsx)
@@ -596,7 +598,7 @@ ${frames}</body></html>`);
       </div>
 
       <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-        {COURIER_TYPES.map((c) => {
+        {tenantCouriers.configured.map((c) => {
           const st = staging?.couriers.find((x) => x.courier === c);
           const count = st?.total ?? 0;
           const manifestable = st?.withTracking ?? 0;
@@ -711,7 +713,7 @@ ${frames}</body></html>`);
           title="Filter by courier"
         >
           <option value="all">All couriers</option>
-          {COURIER_TYPES.map((c) => (
+          {tenantCouriers.configured.map((c) => (
             <option key={c} value={c}>
               {COURIER_LABELS[c]}
             </option>
@@ -1152,6 +1154,7 @@ function BookShipmentModal({
   onClose: () => void;
   onBooked: () => void;
 }) {
+  const tenantCouriers = useTenantCouriers();
   const toast = useToast();
   const [orderName, setOrderName] = useState('');
   const [courierType, setCourierType] = useState<CourierType | ''>('');
@@ -1206,14 +1209,16 @@ function BookShipmentModal({
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
           >
             <option value="">Auto-suggest from destination city</option>
-            {COURIER_TYPES.map((c) => (
+            {tenantCouriers.bookable.map((c) => (
               <option key={c} value={c}>
                 {COURIER_LABELS[c]}
               </option>
             ))}
           </select>
           <p className="text-xs text-muted mt-1">
-            Leave on auto to pick the courier that serves the order&apos;s city.
+            {tenantCouriers.loaded && tenantCouriers.bookable.length === 0
+              ? 'No courier is connected yet — connect one in Settings › Couriers to book.'
+              : 'Leave on auto to pick the courier that serves the order’s city.'}
           </p>
         </div>
         <div className="flex gap-2 justify-end">
@@ -1248,6 +1253,7 @@ function ManifestsPanel({
   toast: ReturnType<typeof useToast>;
   refreshNonce?: number;
 }) {
+  const tenantCouriers = useTenantCouriers();
   const [batches, setBatches] = useState<LoadsheetBatch[] | null>(null);
   const [courierFilter, setCourierFilter] = useState<CourierType | 'all'>('all');
   const [period] = useState<PeriodKey>('all');
@@ -1678,7 +1684,7 @@ function ManifestsPanel({
             title="Filter by courier"
           >
             <option value="all">All couriers</option>
-            {COURIER_TYPES.map((c) => (
+            {tenantCouriers.configured.map((c) => (
               <option key={c} value={c}>
                 {COURIER_LABELS[c]}
               </option>
@@ -2053,6 +2059,7 @@ function FulfillmentQueue({
   toast: ReturnType<typeof useToast>;
   onChanged?: () => void;
 }) {
+  const tenantCouriers = useTenantCouriers();
   const { user } = useAuth();
   const { on, status: socketStatus } = useSocket();
   // The scrollable table viewport — bounded height + sticky header live here, and
@@ -3634,7 +3641,7 @@ function FulfillmentQueue({
             title="Filter orders by courier"
             options={[
               { value: 'all', label: 'All' },
-              ...COURIER_TYPES.map((c) => ({ value: c, label: COURIER_LABELS[c] })),
+              ...tenantCouriers.configured.map((c) => ({ value: c, label: COURIER_LABELS[c] })),
             ]}
             onChange={(v) => {
               setPage(1);
@@ -3768,7 +3775,7 @@ function FulfillmentQueue({
                       aria-label="Courier to book with"
                     >
                       <option value="">Suggested per city</option>
-                      {COURIER_TYPES.map((c) => (
+                      {tenantCouriers.bookable.map((c) => (
                         <option key={c} value={c}>
                           {COURIER_LABELS[c]}
                         </option>

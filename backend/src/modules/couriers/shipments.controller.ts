@@ -16,7 +16,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '@nestjs/passport';
 import { CourierType, ShipmentStatus } from '@prisma/client';
-import { COURIER_TYPES } from './courier-registry.service';
+import { COURIER_TYPES, CourierRegistryService } from './courier-registry.service';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ShipmentService, QueueStatus, QueueSort } from './shipment.service';
@@ -120,6 +120,7 @@ export class ShipmentsController {
     private readonly courierInvoices: CourierInvoiceService,
     private readonly replacements: ReplacementShipmentService,
     private readonly returnsSheetService: ReturnsSheetService,
+    private readonly registry: CourierRegistryService,
   ) {}
 
   /**
@@ -511,6 +512,22 @@ export class ShipmentsController {
       shipmentIds: body?.shipmentIds,
       orderNumbers: body?.orderNumbers,
     });
+  }
+
+  /**
+   * The tenant's couriers for pickers: `bookable` = connected AND offered for
+   * new bookings (book menus); `configured` = connected at all (filters — a
+   * courier switched off for new orders still has parcels to filter by).
+   * Every role on the board needs this, so it's not behind Settings' roles.
+   */
+  @Get('couriers')
+  async tenantCouriers(@CurrentUser() user: { companyId: number }) {
+    const [bookable, configured] = await Promise.all([
+      this.registry.getBookableCouriers(user.companyId),
+      this.registry.getActiveCouriers(user.companyId),
+    ]);
+    const order = (list: CourierType[]) => COURIER_TYPES.filter((c) => list.includes(c));
+    return { bookable: order(bookable), configured: order(configured) };
   }
 
   @Get('suggest-courier')

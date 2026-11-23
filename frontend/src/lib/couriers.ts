@@ -1427,6 +1427,24 @@ export function getTrackingHistory(shipmentId: number) {
   return apiFetch<TrackingHistory>(`/shipments/${shipmentId}/tracking`);
 }
 
+/** The tenant's connected couriers. `bookable` → book pickers; `configured`
+ *  → filters (includes couriers switched off for new orders). */
+export interface TenantCouriers {
+  bookable: CourierType[];
+  configured: CourierType[];
+}
+
+let tenantCouriersPromise: Promise<TenantCouriers> | null = null;
+export function getTenantCouriers(fresh = false): Promise<TenantCouriers> {
+  if (fresh || !tenantCouriersPromise) {
+    tenantCouriersPromise = apiFetch<TenantCouriers>('/shipments/couriers').catch((e) => {
+      tenantCouriersPromise = null;
+      throw e;
+    });
+  }
+  return tenantCouriersPromise;
+}
+
 export function suggestCourier(city: string) {
   return apiFetch<CourierSuggestion[]>(
     `/shipments/suggest-courier?city=${encodeURIComponent(city)}`,
