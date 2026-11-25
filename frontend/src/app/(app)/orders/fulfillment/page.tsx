@@ -3019,15 +3019,28 @@ function FulfillmentQueue({
   const rowMenuItems = (r: QueueOrder): RowMenuItem[] => {
     const sh = r.shipment;
     const busy = actBusyGid === r.orderGid;
-    const editable = !r.archived && r.fulfillmentStatus === 'unfulfilled' && !sh;
+    // Same lock as the backend: a courier-held parcel can't be edited; a
+    // cancelled/returned leftover or an address-issue flag (never sent to a
+    // courier) can.
+    const courierHeld =
+      !!sh &&
+      !['cancelled', 'returned'].includes(sh.status) &&
+      !(sh.status === 'address_issue' && !sh.trackingNumber);
+    const editable = !r.archived && r.fulfillmentStatus === 'unfulfilled' && !courierHeld;
     const items: RowMenuItem[] = [
       { key: 'open', label: 'Open order', icon: Eye, onSelect: () => setDrawerGid(r.orderGid) },
     ];
     if (editable) {
+      const flagged = sh?.status === 'address_issue';
       items.push(
-        { key: 'addr', label: 'Edit address', icon: Pencil, onSelect: () => setEditRow(r), divider: true },
-        { key: 'items', label: 'Edit items', icon: Package, onSelect: () => setEditItemsRow(r) },
-        { key: 'flag', label: 'Flag wrong address', icon: MapPinOff, onSelect: () => setWrongAddrGid(r.orderGid) },
+        // A flagged row already has "Fix address" below — don't show it twice.
+        ...(flagged
+          ? []
+          : [{ key: 'addr', label: 'Edit address', icon: Pencil, onSelect: () => setEditRow(r), divider: true }]),
+        { key: 'items', label: 'Edit items', icon: Package, onSelect: () => setEditItemsRow(r), divider: flagged },
+        ...(flagged
+          ? []
+          : [{ key: 'flag', label: 'Flag wrong address', icon: MapPinOff, onSelect: () => setWrongAddrGid(r.orderGid) }]),
       );
     }
     if (sh && !r.archived) {
@@ -4679,6 +4692,10 @@ function FulfillmentQueue({
             onNavigate={(k) => k.gid && setDrawerGid(k.gid)}
             contextLabel={`Orders · ${status.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase())}`}
             onBook={drawerRow && bookable(drawerRow) ? () => book(drawerRow) : undefined}
+            onChanged={() => {
+              load({ silent: true, keepSelection: true });
+              onChanged?.();
+            }}
           />
         );
       })()}
@@ -4714,6 +4731,8 @@ function FulfillmentQueue({
         <EditItemsModal
           orderGid={editItemsRow.orderGid}
           orderName={editItemsRow.orderName}
+          currency={editItemsRow.currency ?? 'Rs'}
+          prepaid={(editItemsRow.totalOutstanding ?? 0) <= 0}
           onClose={() => setEditItemsRow(null)}
           onSaved={() => {
             setEditItemsRow(null);

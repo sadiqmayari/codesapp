@@ -86,6 +86,7 @@ export function OrderDetailDrawer({
   onNavigate,
   contextLabel,
   onBook,
+  onChanged,
 }: {
   orderKey: OrderKey;
   onClose: () => void;
@@ -99,6 +100,8 @@ export function OrderDetailDrawer({
   /** Books this order with the board's suggested courier (board only; omit
    *  when the order isn't bookable). The drawer reloads once it settles. */
   onBook?: (key: OrderKey) => unknown;
+  /** The order was edited in the drawer — refresh the list behind it. */
+  onChanged?: () => void;
 }) {
   // When set, the drawer shows the conversation IN PLACE (no navigation away
   // from the orders board). Back returns to the order details.
@@ -198,6 +201,7 @@ export function OrderDetailDrawer({
                 hotkeys
                 onOpenChat={readOnly ? undefined : (id, title) => setChat({ id, title })}
                 onBook={readOnly || !onBook ? undefined : () => onBook(orderKey)}
+                onChanged={onChanged}
               />
             </div>
           </>
@@ -296,6 +300,7 @@ export function OrderDetailContent({
   readOnly = false,
   hotkeys = false,
   onBook,
+  onChanged,
 }: {
   orderKey: OrderKey;
   /** When provided (drawer), "Open chat" opens the conversation in place via
@@ -309,6 +314,8 @@ export function OrderDetailContent({
   hotkeys?: boolean;
   /** Board-only: book this order with the suggested courier. */
   onBook?: () => unknown;
+  /** Fired after an edit saved (items/address/note/cancel/archive). */
+  onChanged?: () => void;
 }) {
   const toast = useToast();
   const router = useRouter();
@@ -429,6 +436,8 @@ export function OrderDetailContent({
     }
     loadMirror();
     loadLive();
+    // Let the list behind the drawer (Orders board) refresh its row.
+    onChanged?.();
   };
 
   if (err) return <div className="p-10 text-center text-sm text-muted">{err}</div>;
@@ -450,6 +459,19 @@ export function OrderDetailContent({
   const active = !o.cancelledAt && !o.archivedAt;
   // Items + address edits on ANY unfulfilled, active order (incl. prepaid —
   // the editor warns about the balance/refund a re-price creates).
+  // Once a courier holds the parcel, items AND address are locked (no courier
+  // has an update API — the edit would never reach the slip). An address-issue
+  // row without a tracking number was never sent to a courier → still editable.
+  // Mirrors the backend rule (ShopifyService.getBookedShipment).
+  const bookedSh =
+    d.shipment &&
+    !['cancelled', 'returned'].includes(d.shipment.status) &&
+    !(d.shipment.status === 'address_issue' && !d.shipment.trackingNumber)
+      ? d.shipment
+      : null;
+  const lockedReason = bookedSh
+    ? `Booked with ${courierName(bookedSh.courierType)}${bookedSh.trackingNumber ? ` (${bookedSh.trackingNumber})` : ''}. Cancel the booking first to change items or address — the courier can't be updated.`
+    : null;
   const canEditItems = unfulfilled && active;
   const canEditAddress = unfulfilled && active;
   const editable = canEditItems || canEditAddress;
@@ -971,6 +993,7 @@ export function OrderDetailContent({
           currency={cur}
           canEditItems={canEditItems}
           canEditAddress={canEditAddress}
+          lockedReason={lockedReason}
           prepaid={canEditItems && outstanding <= 0}
           initial={{
             name: o.customerName,

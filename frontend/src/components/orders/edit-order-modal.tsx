@@ -39,6 +39,7 @@ export function EditOrderModal({
   currency = 'Rs',
   canEditItems,
   canEditAddress,
+  lockedReason = null,
   prepaid = false,
   initial,
   tags,
@@ -50,6 +51,8 @@ export function EditOrderModal({
   currency?: string;
   canEditItems: boolean;
   canEditAddress: boolean;
+  /** Set when a courier already holds the order — items + address are read-only. */
+  lockedReason?: string | null;
   /** Order already paid (outstanding 0) — item edits create a balance/refund. */
   prepaid?: boolean;
   initial: EditOrderInitial;
@@ -60,15 +63,21 @@ export function EditOrderModal({
   onSaved: (opts?: { addressChanged?: boolean }) => void;
 }) {
   const toast = useToast();
-  const [tab, setTab] = useState<Tab>(canEditItems ? 'items' : 'addr');
+  // Booked → items/address locked; open on Note & tags (still editable).
+  const [tab, setTab] = useState<Tab>(
+    lockedReason ? 'note' : canEditItems ? 'items' : canEditAddress ? 'addr' : 'note',
+  );
+  const [itemsDirty, setItemsDirty] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   /* ── Address state ───────────────────────────────────────────────────── */
   const [name, setName] = useState(initial.name ?? '');
   const [phone, setPhone] = useState(initial.phone ?? '');
   const [email, setEmail] = useState(initial.email ?? '');
-  const [address1, setAddress1] = useState(
-    [initial.address1, initial.address2].filter(Boolean).join(', '),
-  );
+  // Line 1 and line 2 are separate (they used to be merged into line 1 while
+  // Shopify kept the old line 2 → "A, B, B").
+  const [address1, setAddress1] = useState(initial.address1 ?? '');
+  const [address2, setAddress2] = useState(initial.address2 ?? '');
   const [city, setCity] = useState(initial.city ?? '');
   const [countryCode, setCountryCode] = useState(
     (initial.countryCode ?? 'PK').toUpperCase().slice(0, 2) || 'PK',
@@ -77,7 +86,8 @@ export function EditOrderModal({
     name !== (initial.name ?? '') ||
     phone !== (initial.phone ?? '') ||
     email !== (initial.email ?? '') ||
-    address1 !== [initial.address1, initial.address2].filter(Boolean).join(', ') ||
+    address1 !== (initial.address1 ?? '') ||
+    address2 !== (initial.address2 ?? '') ||
     city !== (initial.city ?? '') ||
     countryCode !== ((initial.countryCode ?? 'PK').toUpperCase().slice(0, 2) || 'PK');
 
@@ -95,6 +105,8 @@ export function EditOrderModal({
         phone: phone.trim() || undefined,
         email: email.trim() || undefined,
         address1: address1.trim(),
+        // '' clears line 2 in Shopify (undefined would leave the old one).
+        address2: address2.trim(),
         city: city.trim(),
         countryCode,
       });
@@ -184,16 +196,23 @@ export function EditOrderModal({
     }
   };
 
+  /* ── Close guard: never drop unsaved edits silently ─────────────────── */
+  const anyDirty = itemsDirty || addrDirty || noteDirty || tagsDirty;
+  const requestClose = () => {
+    if (anyDirty) setConfirmDiscard(true);
+    else onClose();
+  };
+
   /* ── Footer (per tab) ────────────────────────────────────────────────── */
   const footer =
     tab === 'items' ? null : tab === 'addr' ? (
       <div className="flex w-full items-center justify-end gap-2">
-        <button onClick={onClose} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
+        <button onClick={requestClose} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
           Close
         </button>
         <button
           onClick={saveAddress}
-          disabled={savingAddr || !addrDirty}
+          disabled={savingAddr || !addrDirty || !!lockedReason}
           className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
         >
           {savingAddr && <Loader2 size={14} className="animate-spin" />}
@@ -202,7 +221,7 @@ export function EditOrderModal({
       </div>
     ) : (
       <div className="flex w-full items-center justify-end gap-2">
-        <button onClick={onClose} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
+        <button onClick={requestClose} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
           Close
         </button>
         <button
@@ -230,26 +249,39 @@ export function EditOrderModal({
   );
 
   return (
-    <Modal open onClose={onClose} title={`Edit order — ${orderName ?? 'order'}`} size="lg" footer={footer}>
+    <Modal open onClose={requestClose} title={`Edit order — ${orderName ?? 'order'}`} size="lg" footer={footer}>
       <div className="-mt-1 mb-3 flex gap-1 border-b border-gray-200">
         {canEditItems && <TabBtn id="items" icon={<Package size={14} />} label="Items" />}
         {canEditAddress && <TabBtn id="addr" icon={<MapPin size={14} />} label="Customer & address" />}
         <TabBtn id="note" icon={<StickyNote size={14} />} label="Note & tags" />
       </div>
 
-      {/* ITEMS — shared editor (also used by the fulfillment queue) */}
-      {tab === 'items' && (
-        <OrderItemsEditor
-          orderGid={orderGid}
-          currency={currency}
-          prepaid={prepaid}
-          onClose={onClose}
-          onSaved={() => onSaved()}
-        />
+      {lockedReason && (tab === 'items' || tab === 'addr') && (
+        <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2.5 text-sm text-amber-800">{lockedReason}</p>
+      )}
+
+      {/* ITEMS — shared editor (also used by the fulfillment queue). Kept MOUNTED
+          while another tab is open so switching tabs never drops item edits. */}
+      {canEditItems && !lockedReason && (
+        <div className={tab === 'items' ? undefined : 'hidden'}>
+          <OrderItemsEditor
+            orderGid={orderGid}
+            currency={currency}
+            prepaid={prepaid}
+            onClose={requestClose}
+            onDirtyChange={setItemsDirty}
+            onSaved={() => {
+              // Close after a successful save: re-saving the same changes used to
+              // re-add the added products a second time.
+              onSaved();
+              onClose();
+            }}
+          />
+        </div>
       )}
 
       {/* ADDRESS */}
-      {tab === 'addr' && (
+      {tab === 'addr' && !lockedReason && (
         <div className="space-y-3">
           <p className="text-xs text-gray-500">
             Saving updates the shipping address on the Shopify order and here, so the courier books to the
@@ -271,8 +303,11 @@ export function EditOrderModal({
               />
             </Field>
           </div>
-          <Field label="Address">
+          <Field label="Address line 1">
             <textarea value={address1} onChange={(e) => setAddress1(e.target.value)} rows={2} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base" />
+          </Field>
+          <Field label="Address line 2 (area, landmark — optional)">
+            <input value={address2} onChange={(e) => setAddress2(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base" />
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="City">
@@ -377,6 +412,20 @@ export function EditOrderModal({
         </div>
       )}
 
+      {confirmDiscard && (
+        <ConfirmDialog
+          open
+          danger
+          title="Discard unsaved changes?"
+          message="You have edits on this order that aren't saved to Shopify yet."
+          confirmLabel="Discard"
+          onConfirm={() => {
+            setConfirmDiscard(false);
+            onClose();
+          }}
+          onCancel={() => setConfirmDiscard(false)}
+        />
+      )}
       {confirmArchive && (
         <ConfirmDialog
           open

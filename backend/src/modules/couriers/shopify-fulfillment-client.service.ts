@@ -3,6 +3,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EncryptionService } from '../../common/services/encryption.service';
 import { SHOPIFY_API_VERSIONS } from '../integrations/shopify/shopify.service';
 import { ShopifyTokenService } from '../integrations/shopify/shopify-token.service';
+import { formatLineItemsSummary } from '../../common/utils/line-items-summary';
+import { effectiveQty } from '../../common/utils/order-lines';
 
 // Same default the Shopify module uses, so a version bump there applies here
 // too rather than silently drifting to an older API.
@@ -21,6 +23,23 @@ export interface ShopifyOrderForBooking {
     address2: string | null;
   } | null;
   lineItemsSummary: string;
+  /**
+   * The order's CURRENT lines (post order-edit; removed lines dropped) and money.
+   * Booking treats these as the authority for the courier's items + COD — the
+   * local mirror can lag an edit (webhook/reconcile timing).
+   */
+  lines: Array<{
+    title: string;
+    quantity: number;
+    variantTitle: string | null;
+    variantId: string | null;
+    sku: string | null;
+  }>;
+  /** Amount still owed (= COD to collect). null when Shopify didn't return it. */
+  totalOutstanding: number | null;
+  /** Current order total (post-edit). */
+  currentTotal: number | null;
+  cancelled: boolean;
 }
 
 /**
@@ -209,7 +228,21 @@ export class ShopifyFulfillmentClient {
                 address1: string | null;
                 address2: string | null;
               } | null;
-              lineItems: { edges: Array<{ node: { title: string; quantity: number } }> };
+              cancelledAt?: string | null;
+              currentTotalPriceSet?: { shopMoney?: { amount?: string | null } } | null;
+              totalOutstandingSet?: { shopMoney?: { amount?: string | null } } | null;
+              lineItems: {
+                edges: Array<{
+                  node: {
+                    title: string;
+                    quantity: number;
+                    currentQuantity?: number | null;
+                    variantTitle?: string | null;
+                    sku?: string | null;
+                    variant?: { id?: string | null } | null;
+                  };
+                }>;
+              };
               fulfillmentOrders: {
                 edges: Array<{
                   node: {
@@ -238,8 +271,11 @@ export class ShopifyFulfillmentClient {
             id
             name
             phone
+            cancelledAt
+            currentTotalPriceSet { shopMoney { amount } }
+            totalOutstandingSet { shopMoney { amount } }
             shippingAddress { name phone city address1 address2 }
-            lineItems(first: 50) { edges { node { title quantity } } }
+            lineItems(first: 100) { edges { node { title quantity currentQuantity variantTitle sku variant { id } } } }
             fulfillmentOrders(first: 50) {
               edges { node { id status supportedActions { action } } }
             }
@@ -269,6 +305,21 @@ export class ShopifyFulfillmentClient {
         (e) => e.node.status !== 'CLOSED' && e.node.status !== 'CANCELLED',
       );
     const addr = node.shippingAddress;
+    // Current lines only — after an order edit `quantity` is the ORIGINAL amount.
+    const lines = node.lineItems.edges
+      .map((e) => ({
+        title: e.node.title,
+        quantity: effectiveQty(e.node),
+        variantTitle: e.node.variantTitle ?? null,
+        variantId: e.node.variant?.id ?? null,
+        sku: e.node.sku || null,
+      }))
+      .filter((l) => l.title && l.quantity > 0);
+    const money = (v: string | null | undefined): number | null => {
+      if (v == null || v === '') return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
     return {
       orderGid: node.id,
       orderName: node.name,
@@ -282,9 +333,11 @@ export class ShopifyFulfillmentClient {
             address2: addr.address2,
           }
         : null,
-      lineItemsSummary: node.lineItems.edges
-        .map((e) => `${e.node.quantity}x ${e.node.title}`)
-        .join(', '),
+      lineItemsSummary: formatLineItemsSummary(lines),
+      lines,
+      totalOutstanding: money(node.totalOutstandingSet?.shopMoney?.amount),
+      currentTotal: money(node.currentTotalPriceSet?.shopMoney?.amount),
+      cancelled: !!node.cancelledAt,
     };
   }
 

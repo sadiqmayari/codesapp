@@ -32,8 +32,9 @@ import { InboxService } from '../../inbox/inbox.service';
 import { SendMessageType } from '../../inbox/dto/send-message.dto';
 import { AiKnowledgeService } from '../../ai/ai-knowledge.service';
 import { AiRagService, RagItem } from '../../ai/ai-rag.service';
-import { courierTrackingUrl } from '../../couriers/couriers.constants';
+import { COURIER_DISPLAY_NAME, courierTrackingUrl } from '../../couriers/couriers.constants';
 import { formatLineItemsSummary } from '../../../common/utils/line-items-summary';
+import { effectiveQty } from '../../../common/utils/order-lines';
 import { classifySearch, likeContains } from '../../../common/utils/search';
 import { SharedStateService } from '../../../common/services/shared-state.service';
 
@@ -7569,6 +7570,9 @@ export class ShopifyService implements OnModuleInit {
     },
     userId?: number,
   ): Promise<{ ok: true }> {
+    // Same lock as item edits: once a courier holds the parcel, changing the
+    // address here would never reach the courier (no courier has an update API).
+    await this.assertOrderNotBooked(companyId, dto.orderGid);
     // Multi-Store: write to THIS order's own store, not the primary.
     const api = await this.requireAdminApi(
       companyId,
@@ -7655,6 +7659,34 @@ export class ShopifyService implements OnModuleInit {
           }`,
         ),
       );
+
+    // An address-issue row (not yet at a courier) keeps a destination snapshot
+    // that labels/loadsheets prefer — keep it in step with the correction.
+    if (dto.address1 != null || dto.address2 != null || dto.city != null) {
+      const fresh = await this.prisma.shopifyOrder
+        .findFirst({
+          where: { company_id: companyId, shopify_order_gid: dto.orderGid },
+          select: { city: true, address1: true, address2: true },
+        })
+        .catch(() => null);
+      if (fresh) {
+        await this.prisma.shipment
+          .updateMany({
+            where: {
+              company_id: companyId,
+              shopify_order_gid: dto.orderGid,
+              status: 'address_issue',
+              courier_tracking_number: null,
+            },
+            data: {
+              destination_city: fresh.city,
+              destination_address: [fresh.address1, fresh.address2].filter(Boolean).join(', '),
+            },
+          })
+          .catch(() => undefined);
+      }
+    }
+    this.afterOrderMutated(companyId, dto.orderGid);
 
     // Keep the CRM contact's address in sync with the correction (match by the
     // order's phone → contact; only when we have an address + a phone to match).
@@ -7806,8 +7838,10 @@ export class ShopifyService implements OnModuleInit {
       // still unfulfilled AND no courier shipment is booked yet.
       editable: (disp === '' || disp === 'unfulfilled') && !bookedStatus,
       blockedReason: bookedStatus
-        ? `A courier shipment is already booked for this order (status: ${bookedStatus}). Void or cancel the shipment first to edit the items, so the slip stays in sync.`
-        : null,
+        ? bookedStatus
+        : disp === '' || disp === 'unfulfilled'
+          ? null
+          : `Shopify shows this order as ${disp.replace(/_/g, ' ')} — only unfulfilled orders can be edited.`,
       currentTotal: order.currentTotalPriceSet?.shopMoney?.amount != null
         ? num(order.currentTotalPriceSet)
         : null,
@@ -8441,13 +8475,13 @@ export class ShopifyService implements OnModuleInit {
     // it must NOT be silently swallowed either (a stale mirror = a wrong slip).
     // Log loudly and retry once; the periodic reconcile backstops anything left.
     try {
-      await this.refreshOrderTotals(companyId, orderGid);
+      await this.refreshOrderMirror(companyId, orderGid);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(
         `Order edit committed but mirror refresh failed (company ${companyId}, ${orderGid}): ${msg}. Retrying once.`,
       );
-      await this.refreshOrderTotals(companyId, orderGid).catch((e2) =>
+      await this.refreshOrderMirror(companyId, orderGid).catch((e2) =>
         this.logger.error(
           `Mirror refresh retry failed (company ${companyId}, ${orderGid}): ${
             e2 instanceof Error ? e2.message : String(e2)
@@ -8466,62 +8500,98 @@ export class ShopifyService implements OnModuleInit {
    * that want the reason can read it.
    */
   private async getActiveShipmentStatus(companyId: number, orderGid: string): Promise<string | null> {
+    return (await this.getBookedShipment(companyId, orderGid))?.reason ?? null;
+  }
+
+  /**
+   * THE "is this order locked for editing" rule (items AND address). An order is
+   * locked once a courier holds it: any shipment that isn't cancelled/returned,
+   * EXCEPT an `address_issue` row with no tracking number — that is a pre-dispatch
+   * admin flag (nothing was sent to a courier), so it stays editable and the
+   * booking later reads the corrected order. Returns the human reason, or null.
+   */
+  private async getBookedShipment(
+    companyId: number,
+    orderGid: string,
+  ): Promise<{ id: number; status: string; reason: string } | null> {
     const sh = await this.prisma.shipment
       .findUnique({
         where: { company_id_shopify_order_gid: { company_id: companyId, shopify_order_gid: orderGid } },
-        select: { status: true },
+        select: { id: true, status: true, courier_type: true, courier_tracking_number: true },
       })
       .catch(() => null);
-    if (sh && !['cancelled', 'returned'].includes(sh.status)) return sh.status;
-    return null;
+    if (!sh || ['cancelled', 'returned'].includes(sh.status)) return null;
+    if (sh.status === 'address_issue' && !sh.courier_tracking_number) return null;
+    const courier = COURIER_DISPLAY_NAME[sh.courier_type] ?? sh.courier_type;
+    const tn = sh.courier_tracking_number ? ` (${sh.courier_tracking_number})` : '';
+    return {
+      id: sh.id,
+      status: sh.status,
+      reason: `This order is booked with ${courier}${tn} — status ${sh.status.replace(/_/g, ' ')}. Cancel the booking first to edit it, so the courier slip and the order stay the same.`,
+    };
   }
 
   private async assertOrderNotBooked(companyId: number, orderGid: string): Promise<void> {
-    const status = await this.getActiveShipmentStatus(companyId, orderGid);
-    if (status) {
-      throw new BadRequestException(
-        `This order already has a booked shipment (status: ${status}). Void or cancel the shipment first, then edit the items — otherwise the courier slip and the order won't match.`,
-      );
-    }
+    const booked = await this.getBookedShipment(companyId, orderGid);
+    if (booked) throw new BadRequestException(booked.reason);
   }
 
-  /** Refresh a mirror order's line items + totals after an edit (non-PII). */
-  private async refreshOrderTotals(companyId: number, orderGid: string): Promise<void> {
+  /**
+   * Re-read an order from Shopify and rewrite the mirror's line items + money
+   * (non-PII). Called after an in-app order edit AND by courier booking when it
+   * finds the mirror out of step with Shopify. Full fidelity — keeps order-time
+   * price, per-line discount and SKU — so analytics/COGS never lose fields.
+   * Busts the 5-min order-detail cache and pings open Orders boards.
+   */
+  async refreshOrderMirror(companyId: number, orderGid: string): Promise<void> {
     const api = await this.requireAdminApi(
       companyId,
       await this.storeIdForOrderGid(companyId, orderGid),
     );
-    // NOTE: read `currentQuantity`, NOT `quantity`. After an order edit, a line's
-    // `quantity` stays at the ORIGINAL ordered amount — a removed line still
-    // reports quantity 2 with currentQuantity 0, and a reduced line keeps its
-    // original quantity. Using `quantity` here left removed/reduced products in
-    // the mirror even though the total (currentTotalPriceSet) had updated.
+    // NOTE: read `currentQuantity`, NOT `quantity` (see common/utils/order-lines).
     const query = `query($id: ID!) {
       order(id: $id) {
         currencyCode
+        cancelledAt
         currentTotalPriceSet { shopMoney { amount currencyCode } }
         totalOutstandingSet { shopMoney { amount } }
+        currentSubtotalPriceSet { shopMoney { amount } }
+        currentTotalDiscountsSet { shopMoney { amount } }
+        currentTotalTaxSet { shopMoney { amount } }
+        totalShippingPriceSet { shopMoney { amount } }
         lineItems(first: 100) {
           edges { node {
-            title quantity currentQuantity
+            title quantity currentQuantity variantTitle sku
             variant { id title price }
+            originalUnitPriceSet { shopMoney { amount } }
+            discountAllocations { allocatedAmountSet { shopMoney { amount } } }
           } }
         }
       }
     }`;
+    type Money = { shopMoney?: { amount?: string | null; currencyCode?: string | null } } | null;
     type Res = {
       data?: {
         order?: {
           currencyCode?: string | null;
-          currentTotalPriceSet?: { shopMoney?: { amount?: string | null; currencyCode?: string | null } } | null;
-          totalOutstandingSet?: { shopMoney?: { amount?: string | null } } | null;
+          cancelledAt?: string | null;
+          currentTotalPriceSet?: Money;
+          totalOutstandingSet?: Money;
+          currentSubtotalPriceSet?: Money;
+          currentTotalDiscountsSet?: Money;
+          currentTotalTaxSet?: Money;
+          totalShippingPriceSet?: Money;
           lineItems?: {
             edges?: Array<{
               node?: {
                 title?: string | null;
                 quantity?: number | null;
                 currentQuantity?: number | null;
+                variantTitle?: string | null;
+                sku?: string | null;
                 variant?: { id?: string | null; title?: string | null; price?: string | null } | null;
+                originalUnitPriceSet?: Money;
+                discountAllocations?: Array<{ allocatedAmountSet?: Money }> | null;
               };
             }>;
           };
@@ -8533,32 +8603,61 @@ export class ShopifyService implements OnModuleInit {
     });
     const order = res?.data?.order;
     if (!order) return;
+    // A cancelled (VOIDED) order keeps its original value (RTO/cancel rule) —
+    // only open orders are re-priced here.
+    const cancelled = !!order.cancelledAt;
+    const amt = (m: Money | undefined) => m?.shopMoney?.amount ?? null;
     const items = (order.lineItems?.edges ?? [])
       .map((e) => ({
         title: e.node?.title ?? 'Item',
-        // currentQuantity = qty after edits; falls back to quantity for stores/
-        // versions that don't return it. Removed lines (0) are filtered out below.
-        quantity: e.node?.currentQuantity ?? e.node?.quantity ?? 0,
-        variantTitle: e.node?.variant?.title ?? null,
+        quantity: effectiveQty(e.node ?? null),
+        sku: e.node?.sku || null,
+        variantTitle: e.node?.variantTitle ?? e.node?.variant?.title ?? null,
         variantId: e.node?.variant?.id ?? null,
-        price: e.node?.variant?.price ?? null,
+        // Order-time unit price (before discount), not today's catalogue price.
+        price: amt(e.node?.originalUnitPriceSet) ?? e.node?.variant?.price ?? null,
+        lineDiscount: (e.node?.discountAllocations ?? []).reduce(
+          (acc, d) => acc + (Number(amt(d.allocatedAmountSet)) || 0),
+          0,
+        ),
       }))
       .filter((i) => i.quantity > 0);
     const summary = formatLineItemsSummary(items);
-    const totalPrice = order.currentTotalPriceSet?.shopMoney?.amount;
-    const outstanding = order.totalOutstandingSet?.shopMoney?.amount;
+    const totalPrice = amt(order.currentTotalPriceSet);
+    const outstanding = amt(order.totalOutstandingSet);
     const currency = order.currentTotalPriceSet?.shopMoney?.currencyCode || order.currencyCode || undefined;
     await this.prisma.shopifyOrder.updateMany({
       where: { company_id: companyId, shopify_order_gid: orderGid },
       data: {
         line_items: items,
         line_items_summary: summary,
-        ...(totalPrice != null ? { total_price: totalPrice } : {}),
+        ...(!cancelled && totalPrice != null ? { total_price: totalPrice } : {}),
         ...(outstanding != null ? { total_outstanding: outstanding } : {}),
+        ...(!cancelled && amt(order.currentSubtotalPriceSet) != null
+          ? { subtotal_price: amt(order.currentSubtotalPriceSet)! }
+          : {}),
+        ...(!cancelled && amt(order.currentTotalDiscountsSet) != null
+          ? { total_discounts: amt(order.currentTotalDiscountsSet)! }
+          : {}),
+        ...(amt(order.currentTotalTaxSet) != null ? { total_tax: amt(order.currentTotalTaxSet)! } : {}),
+        ...(amt(order.totalShippingPriceSet) != null
+          ? { total_shipping: amt(order.totalShippingPriceSet)! }
+          : {}),
         ...(currency ? { currency } : {}),
         synced_at: new Date(),
       },
     });
+    this.afterOrderMutated(companyId, orderGid);
+  }
+
+  /** Drop the cached order detail + ping open Orders boards after a local write. */
+  private afterOrderMutated(companyId: number, orderGid: string): void {
+    this.cache.del(`shopify-order:${companyId}:${orderGid}`);
+    try {
+      this.inbox.notifyOrdersChanged(companyId);
+    } catch {
+      /* best-effort — the board self-heals on the next event */
+    }
   }
 
   /**

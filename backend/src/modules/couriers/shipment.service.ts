@@ -34,6 +34,7 @@ import {
   formatLineItemsSummary,
   SummaryLineItem,
 } from '../../common/utils/line-items-summary';
+import { liveLines } from '../../common/utils/order-lines';
 import { SharedStateService } from '../../common/services/shared-state.service';
 
 const LANE_COUNTS_TTL_MS = 15_000;
@@ -438,6 +439,13 @@ export class ShipmentService implements OnModuleInit {
     args: Parameters<ShipmentService['claimShipment']>[0],
     status: ShipmentStatus,
   ): Promise<Shipment> {
+    // A leftover CANCELLED row (fulfilment cancelled in Shopify / reconcile saw
+    // the order go unfulfilled) still carries the previous consignment number.
+    // Re-using it as-is made the booking job skip the courier call (it treats a
+    // tracking number as "already booked") — the OLD consignment, with the old
+    // items/COD/address, went out again after an edit. Release that consignment
+    // at the courier first (best-effort, outside the row lock — never blocks).
+    await this.releaseStaleConsignment(args.companyId, args.gid);
     try {
       return await this.prisma.$transaction(async (tx) => {
         const rows = await tx.$queryRaw<{ id: number; status: string }[]>`
@@ -452,11 +460,44 @@ export class ShipmentService implements OnModuleInit {
           );
         }
         if (existing) {
-          // Leftover cancelled/returned row (rare — cancel DELETES the row). Re-use
-          // it; do NOT touch the previous leg's tracking/RTO/settlement records.
+          // Leftover cancelled/returned row (cancel-booking DELETES the row, so
+          // this is a Shopify-side cancel or an RTO). A RETURNED row keeps its
+          // previous leg (RTO/settlement history). A CANCELLED row never completed
+          // a delivery, so its courier leg is cleared → the job books a NEW
+          // consignment with the order's current items, COD and address.
+          const freshLeg: Prisma.ShipmentUncheckedUpdateInput =
+            existing.status === 'cancelled'
+              ? {
+                  courier_tracking_number: null,
+                  courier_credential_id: null,
+                  courier_city_code: null,
+                  courier_slip_link: null,
+                  shopify_fulfillment_gid: null,
+                  booked_at: null,
+                  cancelled_at: null,
+                  loadsheet_batch_id: null,
+                  payment_at_dispatch: null,
+                  raw_last_webhook: Prisma.DbNull,
+                  last_courier_status_raw: null,
+                  last_status_reason: null,
+                  shipper_advice_status: null,
+                  shipper_advice_remarks: null,
+                  shipper_advice_at: null,
+                  shipper_advice_required_at: null,
+                  shipper_advice_required_raw: null,
+                  attempted_at: null,
+                  failed_at: null,
+                  packed_by_user_id: null,
+                  packed_at: null,
+                  destination_city: args.destinationCity,
+                  destination_address: args.destinationAddress,
+                  created_by_user_id: args.createdByUserId,
+                }
+              : {};
           return tx.shipment.update({
             where: { id: existing.id },
             data: {
+              ...freshLeg,
               courier_type: args.courierType,
               status,
               address_issue_reason: args.addressIssueReason,
@@ -492,6 +533,41 @@ export class ShipmentService implements OnModuleInit {
         );
       }
       throw err;
+    }
+  }
+
+  /**
+   * Best-effort cancel, at the courier, of the consignment still recorded on a
+   * CANCELLED shipment row about to be re-booked. Never throws — a courier that
+   * already dropped it (or was never told) just answers not-ok and we move on.
+   */
+  private async releaseStaleConsignment(companyId: number, gid: string): Promise<void> {
+    try {
+      const row = await this.prisma.shipment.findUnique({
+        where: { company_id_shopify_order_gid: { company_id: companyId, shopify_order_gid: gid } },
+        select: { id: true, status: true, courier_type: true, courier_tracking_number: true },
+      });
+      if (!row || row.status !== 'cancelled' || !row.courier_tracking_number) return;
+      if (row.courier_type === 'manual') return;
+      const adapter = this.registry.getAdapter(row.courier_type);
+      if (!adapter.cancelShipment) return;
+      const creds = await this.registry
+        .requireCredentials(companyId, row.courier_type)
+        .then((c) => c.creds)
+        .catch(() => null);
+      if (!creds) return;
+      const r = await adapter
+        .cancelShipment(creds, row.courier_tracking_number)
+        .catch(() => ({ ok: false, raw: null }));
+      this.logger.log(
+        `Re-book of shipment ${row.id}: released old ${row.courier_type} consignment ${row.courier_tracking_number} (courier ok=${r.ok})`,
+      );
+    } catch (e) {
+      this.logger.warn(
+        `releaseStaleConsignment failed (company ${companyId}, ${gid}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
     }
   }
 
@@ -4244,9 +4320,16 @@ export class ShipmentService implements OnModuleInit {
           address2: true,
         },
       });
-      const live = order?.shipping;
+      // Live Shopify is the authority for WHAT is in the parcel (items + COD): the
+      // mirror can lag an order edit. Only trust it when the lookup (by order
+      // number) really returned THIS order — a Woo order or another store's order
+      // of the same number must never leak into the slip.
+      const liveOrder =
+        order && order.orderGid === shipment.shopify_order_gid ? order : null;
+      const live = liveOrder?.shipping ?? order?.shipping;
       const dest = {
-        name: (mirror?.customer_name || live?.name || '').trim(),
+        // Shipping name first (that's what an agent corrects); mirror next.
+        name: (liveOrder?.shipping?.name || mirror?.customer_name || live?.name || '').trim(),
         phone: (mirror?.phone || live?.phone || '').trim(),
         city: (mirror?.city || live?.city || '').trim(),
         address1: (mirror?.address1 || live?.address1 || '').trim(),
@@ -4276,11 +4359,18 @@ export class ShipmentService implements OnModuleInit {
         shipment.courier_type,
       );
       const adapter = this.registry.getAdapter(shipment.courier_type);
-      const codAmount = mirror?.total_outstanding
-        ? Number(mirror.total_outstanding)
-        : 0;
+      const codAmount =
+        liveOrder?.totalOutstanding != null
+          ? liveOrder.totalOutstanding
+          : mirror?.total_outstanding
+            ? Number(mirror.total_outstanding)
+            : 0;
       const totalPrice =
-        mirror?.total_price != null ? Number(mirror.total_price) : undefined;
+        liveOrder?.currentTotal != null
+          ? liveOrder.currentTotal
+          : mirror?.total_price != null
+            ? Number(mirror.total_price)
+            : undefined;
       // Total units across the order's line items (mirror stores the raw JSON —
       // Prisma may hand it back already-parsed or as a string).
       let totalQuantity: number | undefined;
@@ -4294,10 +4384,35 @@ export class ShipmentService implements OnModuleInit {
       // Structured lines for couriers that take items[] (RapidXpk).
       let items: Array<{ sku?: string; name: string; qty: number }> | undefined;
       try {
-        const rawLi: unknown =
+        const mirrorLi: unknown =
           typeof mirror?.line_items === 'string'
             ? JSON.parse(mirror.line_items)
             : mirror?.line_items;
+        // Live current lines win; the mirror (current lines only) is the fallback.
+        const rawLi: unknown = liveOrder?.lines.length
+          ? liveOrder.lines
+          : Array.isArray(mirrorLi)
+            ? liveLines(mirrorLi as Array<Record<string, unknown>>)
+            : mirrorLi;
+        // The mirror disagreed with Shopify (stale after an edit) → heal it so the
+        // board, pick list and labels match what we're about to book.
+        if (
+          liveOrder?.lines.length &&
+          formatLineItemsSummary(liveOrder.lines) !==
+            formatLineItemsSummary(
+              Array.isArray(mirrorLi) ? liveLines(mirrorLi as SummaryLineItem[]) : [],
+            )
+        ) {
+          void this.shopifyService
+            .refreshOrderMirror(shipment.company_id, shipment.shopify_order_gid)
+            .catch((e: unknown) =>
+              this.logger.warn(
+                `Mirror heal at booking failed (${shipment.shopify_order_name}): ${
+                  e instanceof Error ? e.message : String(e)
+                }`,
+              ),
+            );
+        }
         if (Array.isArray(rawLi)) {
           const sum = (rawLi as Array<{ quantity?: number }>).reduce(
             (s, li) => s + (Number(li?.quantity) || 0),
@@ -4355,6 +4470,10 @@ export class ShipmentService implements OnModuleInit {
           courier_city_code: cityCode,
           courier_slip_link: slipLink ?? undefined,
           booked_at: new Date(),
+          // Snapshot the address the courier actually got, so labels/loadsheets
+          // (which prefer this snapshot) print the same destination.
+          destination_city: dest.city,
+          destination_address: [dest.address1, dest.address2].filter(Boolean).join(', '),
           // RapidXpk: keep the booking reply (carries external_id + tracking_url,
           // which its label + loadsheet print). Later webhooks overwrite it with
           // the same-shaped order body.

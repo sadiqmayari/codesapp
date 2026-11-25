@@ -5,6 +5,7 @@ import { EncryptionService } from '../../../common/services/encryption.service';
 import { ShopifyTokenService } from './shopify-token.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { formatLineItemsSummary } from '../../../common/utils/line-items-summary';
+import { currentOrOriginal, effectiveQty, liveLines } from '../../../common/utils/order-lines';
 import { CustomerRegistryService } from '../../../common/services/customer-registry.service';
 import { classify } from '../../growth/attribution/attribution';
 
@@ -345,13 +346,24 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     if (!gid) return;
     const customer = (payload.customer ?? {}) as Record<string, unknown>;
     const ship = (payload.shipping_address ?? {}) as Record<string, unknown>;
+    // Consignee = the SHIPPING name (what an agent corrects), not the customer
+    // profile — otherwise a corrected recipient name reverts on every webhook.
     const name =
-      [customer.first_name, customer.last_name].filter(Boolean).join(' ') ||
       (ship.name as string) ||
+      [customer.first_name, customer.last_name].filter(Boolean).join(' ') ||
       null;
-    const lineItems = Array.isArray(payload.line_items)
-      ? (payload.line_items as Array<Record<string, unknown>>)
-      : [];
+    // Current lines only: after an order edit REST `quantity` stays at the
+    // ORIGINAL amount and removed lines remain with current_quantity 0.
+    const lineItems = liveLines(
+      Array.isArray(payload.line_items)
+        ? (payload.line_items as Array<Record<string, unknown>>)
+        : [],
+    );
+    // Open orders mirror the CURRENT (post-edit) money; a cancelled (VOIDED) order
+    // keeps its ORIGINAL value (returns/cancellations show the real amount).
+    const isCancelled = !!payload.cancelled_at;
+    const money = (cur: string, orig: string) =>
+      currentOrOriginal(isCancelled, payload[cur] as unknown, payload[orig] as unknown);
     const num = (v: unknown): number | null => {
       if (v == null || v === '') return null;
       const n = Number(v);
@@ -379,7 +391,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
         address1: (ship.address1 as string) ?? null,
         address2: (ship.address2 as string) ?? null,
         countryCode: (ship.country_code as string) ?? null,
-        totalPrice: num(payload.total_price),
+        totalPrice: num(money('current_total_price', 'total_price')),
         totalOutstanding: num(payload.total_outstanding),
         currency: (payload.currency as string) ?? null,
         financialStatus: (payload.financial_status as string) ?? null,
@@ -396,9 +408,9 @@ export class ShopifyOrderSyncService implements OnModuleInit {
         // Ad Report v3: financial breakdown. REST carries subtotal_price,
         // total_discounts, total_tax at the top level; shipping = sum of
         // shipping_lines[].price (no single total field on REST).
-        subtotalPrice: num(payload.subtotal_price),
-        totalDiscounts: num(payload.total_discounts),
-        totalTax: num(payload.total_tax),
+        subtotalPrice: num(money('current_subtotal_price', 'subtotal_price')),
+        totalDiscounts: num(money('current_total_discounts', 'total_discounts')),
+        totalTax: num(money('current_total_tax', 'total_tax')),
         totalShipping: Array.isArray(payload.shipping_lines)
           ? (payload.shipping_lines as Array<Record<string, unknown>>).reduce(
               (s, sl) => s + (num(sl.price) ?? 0),
@@ -407,7 +419,8 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           : null,
         lineItems: lineItems.map((li) => ({
           title: li.title ?? null,
-          quantity: Number(li.quantity ?? 1) || 1,
+          quantity: effectiveQty(li),
+          sku: (li.sku as string) || null,
           variantId:
             li.variant_id != null
               ? `gid://shopify/ProductVariant/${li.variant_id}`
@@ -420,7 +433,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
         lineItemsSummary: formatLineItemsSummary(
           lineItems.map((li) => ({
             title: li.title != null ? String(li.title) : null,
-            quantity: Number(li.quantity ?? 1) || 1,
+            quantity: effectiveQty(li),
             variantTitle: li.variant_title != null ? String(li.variant_title) : null,
           })),
         ),
@@ -1044,7 +1057,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           shippingAddress { name phone city address1 address2 countryCodeV2 }
           fulfillmentOrders(first: 5) { edges { node { id status } } }
           fulfillments(first: 5) { displayStatus updatedAt trackingInfo { company } }
-          lineItems(first: 50) { edges { node { title quantity variantTitle
+          lineItems(first: 50) { edges { node { title quantity currentQuantity variantTitle sku
             variant { id price }
             originalUnitPriceSet { shopMoney { amount } }
             discountAllocations { allocatedAmountSet { shopMoney { amount } } } } } }
@@ -1096,6 +1109,8 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           node: {
             title?: string;
             quantity?: number;
+            currentQuantity?: number;
+            sku?: string | null;
             variantTitle?: string | null;
             variant?: { id?: string; price?: string } | null;
             originalUnitPriceSet?: { shopMoney?: { amount?: string } };
@@ -1135,7 +1150,8 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       for (const edge of edges) {
         const n = edge.node;
         if (!n?.id) continue;
-        const li = n.lineItems?.edges ?? [];
+        // Current lines only (an edited order keeps removed lines at currentQuantity 0).
+        const li = (n.lineItems?.edges ?? []).filter((e) => effectiveQty(e.node) > 0);
         const dispFul = (n.displayFulfillmentStatus ?? '').toLowerCase();
         // Delivery tracking from the order's fulfillments (latest wins).
         const ful = n.fulfillments ?? [];
@@ -1162,11 +1178,12 @@ export class ShopifyOrderSyncService implements OnModuleInit {
               n.fulfillmentOrders?.edges.find(
                 (e) => e.node.status !== 'CLOSED' && e.node.status !== 'CANCELLED',
               )?.node.id ?? null,
+            // Consignee = the SHIPPING name (agent corrections live there).
             customerName:
+              n.shippingAddress?.name ||
               [n.customer?.firstName, n.customer?.lastName]
                 .filter(Boolean)
                 .join(' ') ||
-              n.shippingAddress?.name ||
               null,
             phone: n.shippingAddress?.phone || n.phone || n.customer?.phone || null,
             email: n.customer?.email ?? null,
@@ -1208,7 +1225,8 @@ export class ShopifyOrderSyncService implements OnModuleInit {
                   : 'unfulfilled',
             lineItems: li.map((e) => ({
               title: e.node.title ?? null,
-              quantity: e.node.quantity ?? 1,
+              quantity: effectiveQty(e.node),
+              sku: e.node.sku || null,
               variantId: e.node.variant?.id ?? null,
               variantTitle: e.node.variantTitle ?? null,
               // Price AT ORDER TIME (before discounts), not today's catalogue price.
@@ -1221,7 +1239,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             lineItemsSummary: formatLineItemsSummary(
               li.map((e) => ({
                 title: e.node.title ?? null,
-                quantity: e.node.quantity ?? 1,
+                quantity: effectiveQty(e.node),
                 variantTitle: e.node.variantTitle ?? null,
               })),
             ),
@@ -1583,7 +1601,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
         currentTotalDiscountsSet { shopMoney { amount } }
         totalShippingPriceSet { shopMoney { amount } }
         currentTotalTaxSet { shopMoney { amount } }
-        lineItems(first: 50) { edges { node { title quantity
+        lineItems(first: 50) { edges { node { title quantity currentQuantity
           originalUnitPriceSet { shopMoney { amount } }
           discountAllocations { allocatedAmountSet { shopMoney { amount } } } } } }
       } }
@@ -1598,7 +1616,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       currentTotalDiscountsSet?: Money;
       totalShippingPriceSet?: Money;
       currentTotalTaxSet?: Money;
-      lineItems?: { edges?: Array<{ node: { title?: string; quantity?: number; originalUnitPriceSet?: Money; discountAllocations?: Array<{ allocatedAmountSet?: Money }> } }> };
+      lineItems?: { edges?: Array<{ node: { title?: string; quantity?: number; currentQuantity?: number; originalUnitPriceSet?: Money; discountAllocations?: Array<{ allocatedAmountSet?: Money }> } }> };
     } | null;
     const amt = (m: Money) => this.num(m?.shopMoney?.amount);
 
@@ -1644,7 +1662,9 @@ export class ShopifyOrderSyncService implements OnModuleInit {
         const tax = amt(node.currentTotalTaxSet);
         // Merge order-time price + discount into the stored line items (same order/length only).
         let lines: string | null = null;
-        const edges = node.lineItems?.edges ?? [];
+        // Same live-lines rule as every mirror writer (removed lines dropped), so the
+        // positional merge lines up with the stored (current-only) list.
+        const edges = (node.lineItems?.edges ?? []).filter((e) => effectiveQty(e.node) > 0);
         const stored = Array.isArray(r.line_items) ? (r.line_items as Array<Record<string, unknown>>) : null;
         if (stored && stored.length === edges.length) {
           lines = JSON.stringify(

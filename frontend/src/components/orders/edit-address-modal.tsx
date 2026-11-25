@@ -53,6 +53,10 @@ export function EditAddressModal({
         name: name.trim() || undefined,
         phone: phone.trim() || undefined,
         address1: address1.trim(),
+        // This form holds the WHOLE street address in one box (the queue joins
+        // line 1 + line 2 into it), so clear Shopify's line 2 — otherwise the old
+        // line 2 stays and the slip prints it twice.
+        address2: '',
         city: city.trim(),
         countryCode,
       });

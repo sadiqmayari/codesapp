@@ -47,7 +47,6 @@ import {
   ListChecks,
 } from 'lucide-react';
 import Link from 'next/link';
-import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import CreateOrderModal from '@/components/inbox/create-order-modal';
 import OrderTrackingModal from '@/components/inbox/order-tracking-modal';
 import type { ContactOrder } from '@/lib/contact-orders';

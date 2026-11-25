@@ -1308,3 +1308,11 @@ Full audit of the contacts module (backend 11 files + frontend pages/components)
 - **v1 hotfixes** (still replies for `shadow` tenants): no episode cut on sales→order, closing can't kill a pending order, no "send more" reorder, semantic product hits ranked not dropped, no knowledge title filter, payment details from the profile only.
 - **Rollout:** tenants that had auto-reply → `shadow` (v1 replies, v2 dry + compared in Super-admin → AI → Quality); everyone else → `v2`. Flip per tenant in AI Control Center → Tenants once shadow looks better; delete v1 when no tenant uses it.
 - Migration `20261117000000_ai_agent_v2` (auto-applies). No new env vars. Tests: `modules/ai-agent/memory.spec.ts` (40, isolated jest).
+
+## 2026-11-26 — Order edit audit: courier gets the edited order + editor fixes
+- Audit preview: https://claude.ai/artifact/Q4iSMVb317QwaKME16ZMMq
+- Fixed the "edit done but courier still gets old details" bug (three causes: re-book reused the old consignment, syncs restored original quantities, address editable after booking). See ERRORS "[Orders] Edited order booked with the OLD items".
+- Items + address now locked once booked (address-issue orders stay editable). Booking reads items + COD from live Shopify.
+- Editor: no duplicate adds on re-save (modal closes), address line 2 kept separate, unsaved edits survive tab switches + discard confirm, board refreshes after drawer edits, stock checked on qty increases, stale preview guard, empty-order guard, real load errors, queue passes currency/prepaid.
+- No migration, no new env vars. Test: `npx jest -c jest.unit.config.js order-lines`.
+

@@ -73,6 +73,16 @@ interface WorkingLine {
   discType: DiscType;
   discValue: string; // this line's own discount (empty/0 = none)
   origDiscount: number; // discount currently on the line (for change detection)
+  /** Discount on the line when the editor loaded (scaled on qty change). */
+  loadDiscount: number;
+  /** The agent typed a discount for this line (vs the pre-filled existing one). */
+  discTouched: boolean;
+  /** Pool stock for this variant (null = unknown / not tracked). */
+  stock: number | null;
+  /** Variant is sellable at 0 (backorders allowed). */
+  backorder: boolean;
+  /** Raw qty text while typing (so clearing the box doesn't remove the line). */
+  qtyInput?: string;
 }
 
 // Shopify order-edit can only ADD a shipping charge (never modify/remove the
@@ -121,12 +131,15 @@ export function OrderItemsEditor({
   prepaid = false,
   onClose,
   onSaved,
+  onDirtyChange,
 }: {
   orderGid: string;
   currency?: string;
   prepaid?: boolean;
   onClose: () => void;
   onSaved: () => void;
+  /** Unsaved-changes signal for the parent (confirm before closing/discarding). */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const toast = useToast();
 
@@ -168,8 +181,15 @@ export function OrderItemsEditor({
   const [previewing, setPreviewing] = useState(false);
   const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    (async () => {
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [ratesError, setRatesError] = useState(false);
+  const [previewError, setPreviewError] = useState(false);
+  const previewSeq = useRef(0);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    {
       try {
         const res = await getOrderEditable(orderGid);
         setOrderStoreId(res.storeId ?? null);
@@ -196,17 +216,44 @@ export function OrderItemsEditor({
             discType: 'fixed' as DiscType,
             discValue: i.discountAmount > 0 ? String(Math.round(i.discountAmount)) : '',
             origDiscount: i.discountAmount,
+            loadDiscount: i.discountAmount,
+            discTouched: false,
+            stock: null,
+            backorder: false,
           })),
         );
+        setOrderDiscValue('');
+        setShipChoice({ kind: 'keep' });
+        setPreview(null);
+        // Pool stock for the existing lines (best-effort) so qty increases are checked.
+        const vids = res.items.map((i: EditableLineItem) => i.variantId).filter(Boolean) as string[];
+        if (vids.length) {
+          getAvailability({ variantGids: vids, storeId: res.storeId ?? undefined })
+            .then((av) => {
+              const by = new Map(av.items.map((x) => [x.variantId, x]));
+              setLines((prev) =>
+                prev.map((l) => {
+                  const st = l.variantId ? by.get(l.variantId) : undefined;
+                  return st && st.tracked
+                    ? { ...l, stock: st.available, backorder: st.sellable && st.available <= 0 }
+                    : l;
+                }),
+              );
+            })
+            .catch(() => undefined);
+        }
       } catch (e) {
-        toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load items');
-        setEditable(false);
+        // A load failure is NOT "already fulfilled" — show the real error + retry.
+        setLoadError(e instanceof ApiError ? e.userMessage : 'Could not load the order from Shopify.');
       } finally {
         setLoading(false);
       }
-    })();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderGid]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   // Product search — includes draft/unlisted (all=1); the AI auto-order stays strict.
   const runSearch = useCallback(async (q: string) => {
@@ -251,15 +298,52 @@ export function OrderItemsEditor({
     };
   }, [query, runSearch]);
 
-  const setQty = (idx: number, qty: number) =>
-    setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, quantity: Math.max(0, qty) } : l)));
+  const setQty = (idx: number, raw: number) => {
+    const qty = Math.max(0, raw);
+    const l = lines[idx];
+    if (!l) return;
+    // Stock check on increases: an existing line already holds its original
+    // units, so only the EXTRA units need stock; a new line needs all of them.
+    if (qty > l.quantity && l.stock != null && !l.backorder) {
+      const extra = l.isNew ? qty : qty - l.originalQuantity;
+      if (extra > l.stock) {
+        toast.error(
+          l.stock <= 0 ? `${l.title} is out of stock` : `Only ${l.stock} more of ${l.title} in stock`,
+        );
+        return;
+      }
+    }
+    setLines((prev) =>
+      prev.map((x, i) => {
+        if (i !== idx) return x;
+        const next: WorkingLine = { ...x, quantity: qty, qtyInput: undefined };
+        // An untouched existing discount follows the quantity (Shopify keeps and
+        // re-allocates it) — so a qty drop never turns the line "free".
+        if (!x.isNew && !x.discTouched && x.originalQuantity > 0 && x.loadDiscount > 0 && qty > 0) {
+          const scaled = (x.loadDiscount * qty) / x.originalQuantity;
+          next.discValue = String(Math.round(scaled));
+          next.origDiscount = scaled;
+        }
+        return next;
+      }),
+    );
+  };
+  const setQtyInput = (idx: number, text: string) => {
+    const digits = text.replace(/\D/g, '');
+    if (digits === '') {
+      // Empty while typing — keep the line, wait for a number.
+      setLines((prev) => prev.map((x, i) => (i === idx ? { ...x, qtyInput: '' } : x)));
+      return;
+    }
+    setQty(idx, Number(digits));
+  };
   const setDiscValue = (idx: number, raw: string) =>
     setLines((prev) =>
       prev.map((l, i) => {
         if (i !== idx) return l;
         let s = raw.replace(/[^\d.]/g, '');
         if (l.discType === 'percentage' && (parseFloat(s) || 0) > 100) s = '100';
-        return { ...l, discValue: s };
+        return { ...l, discValue: s, discTouched: true };
       }),
     );
   const setDiscType = (idx: number, type: DiscType) =>
@@ -268,19 +352,24 @@ export function OrderItemsEditor({
         if (i !== idx) return l;
         let s = l.discValue;
         if (type === 'percentage' && (parseFloat(s) || 0) > 100) s = '100';
-        return { ...l, discType: type, discValue: s };
+        return { ...l, discType: type, discValue: s, discTouched: true };
       }),
     );
 
   const addVariant = (v: ProductVariant) => {
-    if (v.stock != null && !v.available) {
+    if (!v.available) {
       toast.error(`${v.productTitle} is out of stock`);
       return;
     }
+    // Already on the order → bump that line (Shopify refuses a duplicate variant).
+    const existingIdx = lines.findIndex((l) => l.variantId === v.variantId);
+    if (existingIdx >= 0) {
+      setQty(existingIdx, lines[existingIdx].quantity + 1);
+      setQuery('');
+      setResults([]);
+      return;
+    }
     setLines((prev) => {
-      const existing = prev.findIndex((l) => l.variantId === v.variantId);
-      if (existing >= 0)
-        return prev.map((l, i) => (i === existing ? { ...l, quantity: l.quantity + 1 } : l));
       return [
         ...prev,
         {
@@ -297,6 +386,10 @@ export function OrderItemsEditor({
           discType: 'fixed' as DiscType,
           discValue: '',
           origDiscount: 0,
+          loadDiscount: 0,
+          discTouched: false,
+          stock: v.stock ?? null,
+          backorder: v.available && v.stock != null && v.stock <= 0,
         },
       ];
     });
@@ -317,8 +410,15 @@ export function OrderItemsEditor({
   );
   const shipChg = shipChoice.kind !== 'keep';
   const dirty = addedN > 0 || removedN > 0 || qtyChg || discChg || shipChg;
+  const dirtyCb = useRef(onDirtyChange);
+  dirtyCb.current = onDirtyChange;
+  useEffect(() => {
+    dirtyCb.current?.(dirty);
+  }, [dirty]);
   // A line the discount would wipe out entirely (100% off) blocks save.
   const freeLine = lines.some((l) => l.quantity > 0 && (targets.get(l) ?? 0) >= grossOf(l) && grossOf(l) > 0);
+  // An order can't be edited down to nothing (cancel it instead).
+  const allRemoved = lines.length > 0 && lines.every((l) => l.quantity === 0);
 
   const buildChanges = useCallback((): OrderEditChanges => {
     const updates = lines
@@ -365,6 +465,7 @@ export function OrderItemsEditor({
     }
     ratesTimer.current = setTimeout(async () => {
       setRatesLoading(true);
+      setRatesError(false);
       try {
         const r = await apiFetch<ShippingRate[]>('/shopify/shipping-rates', {
           method: 'POST',
@@ -378,6 +479,7 @@ export function OrderItemsEditor({
         setShipRates(Array.isArray(r) ? r : []);
       } catch {
         setShipRates([]);
+        setRatesError(true);
       } finally {
         setRatesLoading(false);
       }
@@ -392,19 +494,29 @@ export function OrderItemsEditor({
   const changesKey = useMemo(() => JSON.stringify(buildChanges()), [buildChanges]);
   useEffect(() => {
     if (previewTimer.current) clearTimeout(previewTimer.current);
+    const my = ++previewSeq.current;
     if (!dirty || !editable) {
       setPreview(null);
       setPreviewing(false);
+      setPreviewError(false);
       return;
     }
+    // Pending from the first keystroke: Save waits for Shopify's answer to THIS
+    // set of changes (old warnings/totals must never gate a newer edit), and a
+    // slower earlier answer can't overwrite a newer one.
+    setPreviewing(true);
     previewTimer.current = setTimeout(async () => {
-      setPreviewing(true);
       try {
-        setPreview(await previewOrderEdit(orderGid, JSON.parse(changesKey) as OrderEditChanges));
+        const r = await previewOrderEdit(orderGid, JSON.parse(changesKey) as OrderEditChanges);
+        if (my !== previewSeq.current) return;
+        setPreview(r);
+        setPreviewError(false);
       } catch {
+        if (my !== previewSeq.current) return;
         setPreview(null);
+        setPreviewError(true);
       } finally {
-        setPreviewing(false);
+        if (my === previewSeq.current) setPreviewing(false);
       }
     }, 600);
     return () => {
@@ -445,6 +557,9 @@ export function OrderItemsEditor({
     try {
       await editOrderItems(orderGid, changes);
       toast.success('Order updated in Shopify');
+      // Fresh baseline from Shopify: a second click must never re-send the same
+      // adds (that duplicated products on the order).
+      void load();
       onSaved();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to update order');
@@ -459,10 +574,22 @@ export function OrderItemsEditor({
         <Loader2 className="h-5 w-5 animate-spin" />
       </div>
     );
+  if (loadError)
+    return (
+      <div className="space-y-3 rounded-lg bg-rose-50 p-4 text-sm text-rose-700">
+        <p>{loadError}</p>
+        <button
+          onClick={() => void load()}
+          className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50"
+        >
+          Try again
+        </button>
+      </div>
+    );
   if (!editable)
     return (
       <div className="rounded-lg bg-amber-50 p-4 text-sm text-amber-800">
-        {blockedReason ?? 'This order is already fulfilled — it can no longer be edited.'}
+        {blockedReason ?? 'This order can no longer be edited.'}
       </div>
     );
 
@@ -543,7 +670,17 @@ export function OrderItemsEditor({
                       <button onClick={() => setQty(idx, l.quantity - 1)} className="p-2 text-gray-500 hover:bg-gray-50" aria-label="Decrease">
                         <Minus size={14} />
                       </button>
-                      <input value={l.quantity} onChange={(e) => setQty(idx, Number(e.target.value.replace(/\D/g, '')) || 0)} inputMode="numeric" className="w-9 border-x border-gray-200 py-1.5 text-center text-sm" />
+                      <input
+                        value={l.qtyInput ?? String(l.quantity)}
+                        onChange={(e) => setQtyInput(idx, e.target.value)}
+                        onBlur={() =>
+                          l.qtyInput !== undefined &&
+                          setLines((prev) => prev.map((x, i) => (i === idx ? { ...x, qtyInput: undefined } : x)))
+                        }
+                        inputMode="numeric"
+                        aria-label="Quantity"
+                        className="w-9 border-x border-gray-200 py-1.5 text-center text-sm"
+                      />
                       <button onClick={() => setQty(idx, l.quantity + 1)} className="p-2 text-gray-500 hover:bg-gray-50" aria-label="Increase">
                         <Plus size={14} />
                       </button>
@@ -653,7 +790,10 @@ export function OrderItemsEditor({
                 <span className="text-gray-700">{shipLabel(r)}</span>
               </label>
             ))}
-            {!ratesLoading && shipRates.length === 0 && (
+            {!ratesLoading && ratesError && (
+              <p className="px-1.5 text-xs text-rose-600">Couldn&apos;t load shipping rates from Shopify.</p>
+            )}
+            {!ratesLoading && !ratesError && shipRates.length === 0 && (
               <p className="px-1.5 text-xs text-gray-400">No shipping rates for this address.</p>
             )}
           </div>
@@ -686,10 +826,17 @@ export function OrderItemsEditor({
         <p className="mt-1 text-xs text-gray-400">
           {authoritative
             ? 'Live from Shopify — exactly what the order will become when you save.'
-            : dirty
-              ? 'Estimated — the live Shopify total appears in a moment.'
-              : 'Current order total.'}
+            : dirty && previewError
+              ? 'Estimated — Shopify didn’t return a live total. It checks the edit again when you save.'
+              : dirty
+                ? 'Estimated — the live Shopify total appears in a moment.'
+                : 'Current order total.'}
         </p>
+        {allRemoved && (
+          <p className="mt-1 text-xs text-rose-600">
+            Every item is removed — cancel the order instead of saving an empty one.
+          </p>
+        )}
         {authoritative && preview?.outstanding != null && preview.outstanding > 0 && (
           <div className="mt-1.5 flex items-center justify-between border-t border-gray-200 pt-1.5 text-xs">
             <span className="text-gray-500">Balance to collect</span>
@@ -707,7 +854,7 @@ export function OrderItemsEditor({
         </div>
         <div className="flex gap-2">
           <button onClick={onClose} className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50">Close</button>
-          <button onClick={save} disabled={saving || !dirty || warnings.length > 0 || freeLine} className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50">
+          <button onClick={save} disabled={saving || !dirty || previewing || warnings.length > 0 || freeLine || allRemoved} className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50">
             {saving && <Loader2 size={14} className="animate-spin" />}
             Save to Shopify
           </button>
