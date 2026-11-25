@@ -1103,3 +1103,8 @@ The old `/ad-report` had these defects; each is fixed by the Growth module (see 
 - **Symptom:** Bin Ali (company 9) onboarded on 2026-11-22, webhook verify passed, outbound templates sent, but zero inbound messages ever and every outbound stuck at `sent`. No webhook POSTs in the logs at all.
 - **Root cause:** the WABA had no subscribed app (`GET /{waba_id}/subscribed_apps` → `{"data":[]}`). Meta only delivers webhooks to apps subscribed to the WABA; setting the callback URL and passing the GET verify does not subscribe it. Our onboarding never made the `POST /{waba_id}/subscribed_apps` call, so every tenant using their own Meta app could hit this.
 - **Fix:** subscribed Bin Ali's WABA by hand, then added `WabaSubscriptionService` (auto-subscribe on token/WABA save, 6-hourly worker sweep, Settings card with "Fix now"). Old receipts are not resent; only events after the subscription arrive.
+
+## [PayFast statements] Gateway statement PDF shows "—" for courier invoice numbers (fixed 2026-11-26)
+- **Symptom:** the PayFast (gateway) settlement PDF and View modal showed no Invoice column / "—" for orders that do have `shopify_orders.courier_invoice_number`.
+- **Cause:** invoice numbers were snapshotted into `payment_settlements.batches` at UPLOAD time. A statement uploaded before the courier invoice file was imported (or before invoice-import was enabled) kept null forever; the PDF and view read only that snapshot.
+- **Fix:** `PayfastSettlementService.withLiveInvoiceNumbers` resolves invoice numbers live from the order mirror (by `orderGid`) in `generatePdf` and `getSettlement`; snapshot is fallback only. Still hidden when `invoice_import_enabled` is off. Re-download the PDF to pick them up (download always regenerates).

@@ -461,7 +461,10 @@ export class PayfastSettlementService implements OnModuleInit {
       where: { id: companyId },
       select: { company_name: true, address: true, logo_url: true, timezone: true },
     });
-    const batches = (s.batches as unknown as PayfastBatch[]) ?? [];
+    const batches = await this.withLiveInvoiceNumbers(
+      companyId,
+      (s.batches as unknown as PayfastBatch[]) ?? [],
+    );
     const summary = (s.summary as unknown as PayfastReconcileSummary) ?? ({} as PayfastReconcileSummary);
 
     const pdf = await buildPayfastStatementPdf({
@@ -501,9 +504,54 @@ export class PayfastSettlementService implements OnModuleInit {
     if (!s) throw new NotFoundException('Settlement not found.');
     return numifyDecimals({
       ...this.publicShape(s),
-      batches: s.batches as unknown as PayfastBatch[],
+      batches: await this.withLiveInvoiceNumbers(
+        companyId,
+        (s.batches as unknown as PayfastBatch[]) ?? [],
+      ),
       summary: s.summary as unknown as PayfastReconcileSummary,
     });
+  }
+
+  /**
+   * Courier invoice numbers used to be snapshotted into `batches` at upload
+   * time, so a statement uploaded BEFORE the invoice file was imported (or
+   * before invoice-import was switched on) showed "—" forever. Resolve them
+   * live from the order mirror at read/PDF time instead. Stored value is only
+   * a fallback; tenants without invoice-import see none (unchanged rule).
+   */
+  private async withLiveInvoiceNumbers(
+    companyId: number,
+    batches: PayfastBatch[],
+  ): Promise<PayfastBatch[]> {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { invoice_import_enabled: true },
+    });
+    if (!company?.invoice_import_enabled) {
+      return batches.map((b) => ({
+        ...b,
+        txns: b.txns.map((t) => ({ ...t, courierInvoiceNumber: null })),
+      }));
+    }
+    const gids = [
+      ...new Set(batches.flatMap((b) => b.txns.map((t) => t.orderGid)).filter((g): g is string => !!g)),
+    ];
+    const live = new Map<string, string | null>();
+    for (let i = 0; i < gids.length; i += 500) {
+      const rows = await this.prisma.shopifyOrder.findMany({
+        where: { company_id: companyId, shopify_order_gid: { in: gids.slice(i, i + 500) } },
+        select: { shopify_order_gid: true, courier_invoice_number: true },
+      });
+      for (const r of rows) live.set(r.shopify_order_gid, r.courier_invoice_number ?? null);
+    }
+    return batches.map((b) => ({
+      ...b,
+      txns: b.txns.map((t) => ({
+        ...t,
+        courierInvoiceNumber:
+          (t.orderGid ? live.get(t.orderGid) : null) ?? t.courierInvoiceNumber ?? null,
+      })),
+    }));
   }
 
   /**
