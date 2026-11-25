@@ -324,8 +324,8 @@ export interface CourierAdapter {
 
   /**
    * Send shipper advice on an attempted parcel (request re-attempt or return).
-   * Implemented by Trax/Leopards/PostEx/Rocket. Omit for couriers with no
-   * shipper-advice API (M&P).
+   * Implemented by Trax/Leopards/PostEx/Rocket/TCS/M&P. Omit for couriers with no
+   * shipper-advice API (RapidXpk).
    *
    * `reference` is an optional courier-side handle for the filed request — e.g.
    * Rocket returns a "Complaint Id" (its /shipperadvise files a complaint the

@@ -5,6 +5,7 @@ import {
   BookShipmentResult,
   CourierAdapter,
   GenerateLoadsheetResult,
+  ShipperAdviceAction,
   TrackingCheckpoint,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
@@ -379,6 +380,42 @@ export class MnpAdapter implements CourierAdapter {
     return /wrong address|address.*(not found|invalid)|non service area|consignee not available|out of city|no such (building|address|plot)/i.test(
       rawReason,
     );
+  }
+
+  /**
+   * Post shipper advice on an undelivered parcel (M&P COD API §5.2
+   * `GET ShipperAdvice/CloseShipperAdvice`). Credentials + params ride in the
+   * query string like the other M&P GETs. `adviceoption`: 2 = Return the
+   * Shipment, 3 = Re-Attempt; `reattempt`: 1 = Re-Attempt On Same Address
+   * (sent only with a re-attempt). Remarks are capped at M&P's 400 chars.
+   * Reply = `[{ isSuccess, message }]`. Never throws for a business rejection.
+   */
+  async sendShipperAdvice(
+    creds: MnpCredentials,
+    trackingNumber: string,
+    action: ShipperAdviceAction,
+    remarks: string,
+  ): Promise<{ ok: boolean; raw: unknown }> {
+    const q = new URLSearchParams({
+      username: creds.username,
+      password: creds.password,
+      accountno: creds.accountNo,
+      consignment: trackingNumber,
+      adviceoption: action === 'return' ? '2' : '3',
+      remarks: (remarks || (action === 'return' ? 'Return the shipment' : 'Please re-attempt')).slice(0, 400),
+    });
+    if (action === 'reattempt') q.set('reattempt', '1');
+    const res = await httpFetch(`${BASE_URL}/ShipperAdvice/CloseShipperAdvice?${q.toString()}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    const raw = await res.json().catch(() => ({}));
+    const row = Array.isArray(raw) ? raw[0] : raw;
+    const ok = res.ok && isTruthy((row as any)?.isSuccess);
+    if (!ok) {
+      this.logger.warn(`M&P shipper advice rejected for ${trackingNumber}: ${JSON.stringify(raw).slice(0, 300)}`);
+    }
+    return { ok, raw };
   }
 
   isAwaitingShipperAdvice(rawStatus: string, reason?: string): boolean {

@@ -456,7 +456,7 @@ export function OrderDetailContent({
   const canConfirmActions = !readOnly && active && unfulfilled;
   const canManualFulfil = !readOnly && active && unfulfilled && !d.shipment;
   const canMarkPaid = !readOnly && active && outstanding > 0;
-  const adviceCourier = sh && !['mnp', 'manual', 'rapidxpk'].includes(sh.courierType);
+  const adviceCourier = sh && !['manual', 'rapidxpk'].includes(sh.courierType);
 
   const items: DrawerItem[] =
     live?.ok && live.lineItems?.length

@@ -629,7 +629,7 @@ export class ShipmentTrackingService {
    * Bulk shipper advice — post ONE decision (re-attempt / return) + shared
    * remarks to many flagged parcels at once. Each parcel is an independent
    * courier API call, so this is per-parcel, never all-or-nothing: a courier
-   * rejection or an unsupported courier (M&P / manual — no shipper-advice API)
+   * rejection or an unsupported courier (RapidXpk / manual — no shipper-advice API)
    * is recorded and skipped, never fails the batch. Reuses the single
    * `sendShipperAdvice` path per parcel so behaviour stays identical.
    */
@@ -671,7 +671,7 @@ export class ShipmentTrackingService {
 
     for (const s of shipments) {
       const label = s.shopify_order_name ?? s.courier_tracking_number ?? `#${s.id}`;
-      // Courier without a shipper-advice API (M&P, manual) → skip + report.
+      // Courier without a shipper-advice API (RapidXpk, manual) → skip + report.
       let supported = false;
       try {
         supported = !!this.registry.getAdapter(s.courier_type)?.sendShipperAdvice;
