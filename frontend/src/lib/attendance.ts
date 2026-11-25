@@ -170,7 +170,9 @@ export interface AttendanceCell {
   checkOutAt: string | null; // ISO
   isLate: boolean;
   missedCheckout: boolean;
-  checkoutSource: 'self' | 'auto' | 'admin' | null;
+  checkoutSource: 'self' | 'auto' | 'auto_activity' | 'admin' | null;
+  /** Last app activity while the day was open (auto-checkout credit). */
+  lastActiveAt?: string | null;
   workedMinutes: number | null;
   note: string | null;
   overridden: boolean;
@@ -189,6 +191,16 @@ export interface MyToday {
   checkoutOpensAt: string;
   exemptLate: boolean;
   flexible: boolean;
+  /** "Relaxed" timing: fixed shift, never marked late. */
+  neverLate?: boolean;
+  /** Check-in restricted to office networks for this member. */
+  requireOfficeNetwork?: boolean;
+  /** Label of the office network the caller is on now, null = not on one. */
+  onOfficeNetwork?: string | null;
+  /** App locks after shift end for this member. */
+  lockAfterShift?: boolean;
+  /** ISO instant the app locks today (null = no lock ahead). */
+  appLocksAt?: string | null;
   requiredMinutes: number | null;
   autoCheckout: AutoCheckoutPolicy;
   excluded: boolean;
@@ -207,6 +219,11 @@ export interface AttendanceMember {
   effectiveEnd: string | null;
   effectiveGrace: number;
   exemptLate: boolean;
+  /** "Relaxed" timing (fixed shift, never late). */
+  neverLate?: boolean;
+  /** Per-member lock override (null = company default). */
+  lockAfterShift?: boolean | null;
+  effectiveLockAfterShift?: boolean;
   requiredMinutes: number | null;
   weeklyOff: number[] | null;
   effectiveWeeklyOff: number[];
@@ -220,12 +237,21 @@ export interface AttendanceMember {
   allowances: Allowance[];
 }
 
+export interface OfficeNetwork {
+  label: string;
+  ip: string;
+}
+
 export interface AttendanceSettings {
   timezone: string | null;
   workStartTime: string;
   workEndTime: string | null;
   graceMinutes: number;
   officeIps: string;
+  officeNetworks: OfficeNetwork[];
+  yourNetwork: string | null;
+  lockAfterShift: boolean;
+  lockBufferMinutes: number;
   checkinWindowMinutes: number;
   payrollPolicy: PayrollPolicy;
   autoCheckout: AutoCheckoutPolicy;
@@ -427,6 +453,9 @@ export const setAttendanceSettings = (body: {
   workEndTime?: string;
   graceMinutes?: number;
   officeIps?: string;
+  officeNetworks?: OfficeNetwork[];
+  lockAfterShift?: boolean;
+  lockBufferMinutes?: number | null;
   checkinWindowMinutes?: number;
   payrollPolicy?: Partial<PayrollPolicy>;
   autoCheckout?: Partial<AutoCheckoutPolicy>;
@@ -445,6 +474,8 @@ export interface MemberPatch {
   graceMinutes?: number | null;
   requireOfficeIp?: boolean;
   exemptLate?: boolean;
+  neverLate?: boolean;
+  lockAfterShift?: boolean | null;
   requiredMinutes?: number | null;
   weeklyOff?: number[] | null;
   joinedOn?: string;
@@ -454,6 +485,19 @@ export interface MemberPatch {
   overtimeRate?: number | null;
   allowances?: Allowance[];
 }
+/** App-activity heartbeat while checked in (auto-checkout credits real hours). */
+export const sendAttendanceHeartbeat = () =>
+  apiFetch<{ ok: true; open: boolean }>('/attendance/me/heartbeat', { method: 'POST' });
+
+export type TimingMode = 'fixed' | 'relaxed' | 'flexible';
+export const timingModeOf = (m: { exemptLate: boolean; neverLate?: boolean }): TimingMode =>
+  m.exemptLate ? 'flexible' : m.neverLate ? 'relaxed' : 'fixed';
+export const TIMING_LABEL: Record<TimingMode, string> = {
+  fixed: 'Fixed',
+  relaxed: 'Relaxed',
+  flexible: 'Flexible hours',
+};
+
 export const getMembers = () => apiFetch<AttendanceMember[]>('/attendance/members');
 export const updateMember = (userId: number, body: MemberPatch) =>
   apiFetch<{ ok: true }>(`/attendance/members/${userId}`, { method: 'PATCH', body });

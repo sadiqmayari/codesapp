@@ -40,8 +40,14 @@ export class AttendanceController {
 
   // ── self-service (every active member) ──────────────────────────────────
   @Get('me/today')
-  myToday(@CurrentUser() user: JwtUser) {
-    return this.attendance.myToday(user.companyId, user.userId);
+  myToday(@CurrentUser() user: JwtUser, @Req() req: Request) {
+    return this.attendance.myToday(user.companyId, user.userId, clientIp(req));
+  }
+
+  // App-activity heartbeat while checked in (auto-checkout credits real hours).
+  @Post('me/heartbeat')
+  heartbeat(@CurrentUser() user: JwtUser) {
+    return this.attendance.heartbeat(user.companyId, user.userId);
   }
 
   @Post('check-in')

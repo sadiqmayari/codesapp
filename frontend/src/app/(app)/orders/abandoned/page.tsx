@@ -19,6 +19,7 @@ import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { apiFetch, ApiError } from '@/lib/api';
 import { fmtDateTime, cn } from '@/lib/utils';
+import { useAnchoredPosition } from '@/components/ui/popover';
 import { useDebouncedValue } from '@/lib/use-list-query';
 import { SearchInput } from '@/components/ui/search-input';
 import { NoResults } from '@/components/ui/empty-state';
@@ -69,9 +70,10 @@ function PopoverChip({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
+  // Clamped inside the screen, flips up near the bottom (mobile audit).
+  const pos = useAnchoredPosition(open, btnRef, popRef, { align: 'start' });
 
   useEffect(() => {
     if (!open) return;
@@ -83,7 +85,11 @@ function PopoverChip({
         return;
       setOpen(false);
     };
-    const onScroll = () => setOpen(false);
+    // Scrolling inside the popover itself must not close it.
+    const onScroll = (e: Event) => {
+      if (e.type === 'scroll' && popRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
     document.addEventListener('mousedown', close);
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onScroll);
@@ -98,13 +104,6 @@ function PopoverChip({
     if (open) {
       setOpen(false);
       return;
-    }
-    const rect = btnRef.current?.getBoundingClientRect();
-    if (rect) {
-      setPos({
-        top: rect.bottom + 6,
-        left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
-      });
     }
     setOpen(true);
   };
@@ -123,10 +122,10 @@ function PopoverChip({
           className={cn('shrink-0 text-gray-400 transition-transform', open && 'rotate-180')}
         />
       </button>
-      {open && pos && (
+      {open && (
         <div
           ref={popRef}
-          style={{ position: 'fixed', top: pos.top, left: pos.left, width }}
+          style={{ position: 'fixed', top: pos?.top ?? 0, left: pos?.left ?? -9999, maxHeight: pos?.maxHeight, visibility: pos ? 'visible' : 'hidden', width: width, maxWidth: 'calc(100vw - 16px)', overflowY: 'auto' }}
           className="z-50 rounded-xl border border-gray-200 bg-white p-3 shadow-xl"
         >
           {children}

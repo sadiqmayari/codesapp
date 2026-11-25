@@ -6,11 +6,11 @@ import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
 import { useToast } from '@/components/toast';
 import { ApiError } from '@/lib/api';
-import { checkIn, checkOut } from '@/lib/attendance';
+import { checkIn, checkOut, fmtClock } from '@/lib/attendance';
 import { Button } from '@/components/ui/button';
 import { useMyToday } from '@/components/team/attendance/use-my-today';
 
-type Mode = 'checkin' | 'checkout' | null;
+type Mode = 'checkin' | 'checkout' | 'lock' | null;
 
 const dismissKey = (date: string, mode: Mode) => `ca_att_dismiss:${date}:${mode}`;
 const isDismissed = (date: string, mode: Mode) => {
@@ -54,6 +54,8 @@ export default function AttendanceReminderBanner() {
     if (!a.checkedIn && a.inWindow) mode = 'checkin';
     else if (a.open && a.shiftOver) mode = 'checkout';
   }
+  // "Lock app after shift end": warn 15 min before the app locks.
+  if (t && a.locksInMin != null && a.locksInMin <= 15) mode = 'lock';
   if (!t || !mode || isDismissed(t.date, mode)) return null;
 
   const punch = async () => {
@@ -80,7 +82,8 @@ export default function AttendanceReminderBanner() {
   const checkoutText =
     t.autoCheckout.mode === 'off'
       ? `Your shift ended at ${t.effectiveEnd}. Remember to check out.`
-      : `Your shift ended at ${t.effectiveEnd}. Check out now, or the day closes itself at ${t.effectiveEnd}.`;
+      : `Your shift ended at ${t.effectiveEnd}. Check out now, or the day closes itself at your last activity.`;
+  const lockText = `The app locks at ${fmtClock(t.appLocksAt ?? null)}${a.locksInMin ? ` (in ${a.locksInMin} min)` : ''}.${a.open ? ' Check out before you leave.' : ''}`;
 
   return (
     <div
@@ -92,11 +95,13 @@ export default function AttendanceReminderBanner() {
       }
     >
       <BellRing size={16} className="shrink-0" aria-hidden />
-      <span className="min-w-0 flex-1 truncate">{mode === 'checkin' ? checkinText : checkoutText}</span>
-      <Button size="sm" loading={busy} onClick={punch}>
-        {mode === 'checkin' ? <LogIn size={14} /> : <LogOut size={14} />}
-        {mode === 'checkin' ? 'Check in' : 'Check out'}
-      </Button>
+      <span className="min-w-0 flex-1 text-xs sm:text-sm sm:truncate">{mode === 'checkin' ? checkinText : mode === 'lock' ? lockText : checkoutText}</span>
+      {(mode !== 'lock' || a.open) && (
+        <Button size="sm" loading={busy} onClick={punch}>
+          {mode === 'checkin' ? <LogIn size={14} /> : <LogOut size={14} />}
+          {mode === 'checkin' ? 'Check in' : 'Check out'}
+        </Button>
+      )}
       <button type="button" onClick={dismiss} aria-label="Hide for today" className="p-1 rounded hover:bg-black/5">
         <X size={16} />
       </button>

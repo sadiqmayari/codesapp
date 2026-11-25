@@ -16,6 +16,7 @@ export class AutoCheckoutService implements OnModuleInit, OnModuleDestroy {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   private lastSweep = 0;
+  private readonly lockedUsers = new Set<number>();
 
   constructor(private readonly attendance: AttendanceService) {}
 
@@ -35,6 +36,9 @@ export class AutoCheckoutService implements OnModuleInit, OnModuleDestroy {
     try {
       const r = await this.attendance.runAutoCheckout();
       if (r.closed) this.log.log(`auto-checkout closed ${r.closed} open day(s)`);
+      // "Lock app after shift end": drop the sockets of members who just locked.
+      const l = await this.attendance.disconnectLockedMembers(this.lockedUsers);
+      if (l.dropped) this.log.log(`work-hours lock signed out ${l.dropped} member(s)`);
       // Auto-absent: the nightly sweep runs from here (hourly, idempotent) so it
       // no longer depends on an external cron entry — it was never scheduled.
       if (Date.now() - this.lastSweep >= 60 * 60_000) {

@@ -36,7 +36,7 @@ function monthDays(month: string) {
 }
 
 function dayTone(c: AttendanceCell | undefined, off: boolean, future: boolean) {
-  if (c?.checkoutSource === 'auto') return { cls: 'bg-violet-50 text-violet-700', label: 'Closed automatically' };
+  if ((c?.checkoutSource === 'auto' || c?.checkoutSource === 'auto_activity')) return { cls: 'bg-violet-50 text-violet-700', label: 'Closed automatically' };
   if (c?.status === 'present' && c.isLate) return { cls: 'bg-amber-50 text-amber-800', label: 'Late' };
   if (c?.status === 'present') return { cls: 'bg-emerald-50 text-emerald-700', label: 'Present' };
   if (c?.status === 'half_day') return { cls: 'bg-violet-50 text-violet-700', label: 'Half day' };
@@ -120,7 +120,7 @@ export default function MyAttendanceTab() {
                   ? 'Your day off'
                   : t.flexible
                     ? `Flexible · ${fmtHours(a.requiredMin)} a day`
-                    : `Shift ${t.workStart}–${t.effectiveEnd}${t.graceMinutes ? ` · ${t.graceMinutes} min grace` : ''}`
+                    : `Shift ${t.workStart}–${t.effectiveEnd}${t.neverLate ? ' · Relaxed (late not counted)' : t.graceMinutes ? ` · ${t.graceMinutes} min grace` : ''}`
               : undefined
           }
           action={t?.flexible ? <Badge tone="violet">Flexible</Badge> : undefined}
@@ -138,7 +138,7 @@ export default function MyAttendanceTab() {
                   {a.open
                     ? `Checked in ${fmtClock(a.rec?.checkInAt ?? null)}`
                     : a.checkedIn
-                      ? `${fmtClock(a.rec?.checkInAt ?? null)} – ${fmtClock(a.rec?.checkOutAt ?? null)}${a.rec?.checkoutSource === 'auto' ? ' · closed automatically' : ''}`
+                      ? `${fmtClock(a.rec?.checkInAt ?? null)} – ${fmtClock(a.rec?.checkOutAt ?? null)}${a.rec?.checkoutSource === 'auto' ? ' · closed automatically' : a.rec?.checkoutSource === 'auto_activity' ? ' · closed automatically at your last activity' : ''}`
                       : 'Not checked in'}
                 </p>
                 {a.requiredMin && a.checkedIn && (
@@ -147,6 +147,19 @@ export default function MyAttendanceTab() {
                   </div>
                 )}
               </div>
+              {t.requireOfficeNetwork && (!a.checkedIn || a.open) && (
+                <p
+                  className={
+                    t.onOfficeNetwork
+                      ? 'rounded-lg bg-brand-50 px-3 py-2 text-center text-xs text-brand-700'
+                      : 'rounded-lg bg-red-50 px-3 py-2 text-center text-xs text-red-700'
+                  }
+                >
+                  {t.onOfficeNetwork
+                    ? `On ${t.onOfficeNetwork}`
+                    : 'Not on office WiFi. Connect to an office network to check in or out.'}
+                </p>
+              )}
               <div className="flex gap-2">
                 {!a.checkedIn && (
                   <Button

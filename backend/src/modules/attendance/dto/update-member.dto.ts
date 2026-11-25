@@ -43,6 +43,16 @@ export class UpdateMemberDto {
   @IsBoolean()
   exemptLate?: boolean;
 
+  // "Relaxed" timing — fixed shift + grace, but never marked late.
+  @IsOptional()
+  @IsBoolean()
+  neverLate?: boolean;
+
+  // Lock the app after shift end: true/false override, null = company default.
+  @IsOptional()
+  @IsBoolean()
+  lockAfterShift?: boolean | null;
+
   // Monthly gross base salary. null clears it.
   @IsOptional()
   @IsNumber()

@@ -760,6 +760,14 @@ ALTER TABLE users ADD COLUMN attendance_required_minutes INT NULL,     -- flexib
                   ADD COLUMN attendance_weekly_off JSON NULL, ADD COLUMN joined_on DATE NULL,
                   ADD COLUMN left_on DATE NULL, ADD COLUMN annual_paid_leave INT NULL;
 ALTER TABLE attendance_records ADD COLUMN checkout_source VARCHAR(8) NULL;   -- self | auto | admin
+-- 20261127000000_attendance_followups: Relaxed timing, app lock after shift, activity auto-checkout
+ALTER TABLE users ADD COLUMN attendance_never_late BOOLEAN NOT NULL DEFAULT false,   -- Relaxed: fixed shift, never late
+                  ADD COLUMN attendance_lock_after_shift BOOLEAN NULL;              -- NULL = company default
+ALTER TABLE companies ADD COLUMN attendance_lock_after_shift BOOLEAN NOT NULL DEFAULT false,
+                      ADD COLUMN attendance_lock_buffer_min INT NULL;              -- NULL = 30
+ALTER TABLE attendance_records MODIFY checkout_source VARCHAR(16) NULL,          -- + auto_activity
+                               ADD COLUMN last_active_at DATETIME(3) NULL;       -- app heartbeat
+-- companies.attendance_office_ips now holds JSON [{label, ip}] (legacy CSV still parsed).
 ALTER TABLE attendance_leave_requests ADD COLUMN kind VARCHAR(16) NOT NULL DEFAULT 'leave', -- leave | correction
   ADD COLUMN paid BOOLEAN NOT NULL DEFAULT true, ADD COLUMN leave_type VARCHAR(16) NULL,
   ADD COLUMN req_check_in VARCHAR(5) NULL, ADD COLUMN req_check_out VARCHAR(5) NULL;

@@ -248,3 +248,103 @@ describe('commission-math', () => {
     expect(computePlan(c, users([[1, 50]]))[0].amount).toBe(5000);
   });
 });
+
+// ── Attendance follow-ups (Nov-2026) ──────────────────────────────────────────
+import { formatOpensAt, workLockState } from './work-lock';
+import { isValidIpEntry, matchOfficeNetwork, parseOfficeNetworks } from '../../common/utils/ip-match';
+
+describe('auto-checkout credits last activity', () => {
+  const policy = resolveAutoCheckout(null);
+  const sched = { start: '09:30', end: '18:30', flexible: false, requiredMinutes: null };
+  it('waits while still active, then credits the last activity', () => {
+    const day = { workDay: '2026-11-20', checkInAt: at('2026-11-20', '09:25'), lastActiveAt: at('2026-11-20', '20:40') };
+    expect(autoCheckoutDecision(day, sched, policy, TZ, at('2026-11-20', '21:00')).close).toBe(false);
+    const d = autoCheckoutDecision(day, sched, policy, TZ, at('2026-11-20', '21:15'));
+    expect(d.close && d.at.toISOString()).toBe(at('2026-11-20', '20:40').toISOString());
+    expect(d.close && d.creditedBy).toBe('activity');
+  });
+  it('never credits less than shift end', () => {
+    const day = { workDay: '2026-11-20', checkInAt: at('2026-11-20', '09:25'), lastActiveAt: at('2026-11-20', '14:00') };
+    const d = autoCheckoutDecision(day, sched, policy, TZ, at('2026-11-20', '19:05'));
+    expect(d.close && d.at.toISOString()).toBe(at('2026-11-20', '18:30').toISOString());
+    expect(d.close && d.creditedBy).toBe('schedule');
+  });
+  it('caps activity credit at max hours', () => {
+    const day = { workDay: '2026-11-20', checkInAt: at('2026-11-20', '09:00'), lastActiveAt: at('2026-11-20', '23:30') };
+    const d = autoCheckoutDecision(day, sched, policy, TZ, at('2026-11-21', '00:10'));
+    expect(d.close && d.at.toISOString()).toBe(at('2026-11-20', '21:00').toISOString());
+  });
+  it('flexible staff get their later activity', () => {
+    const day = { workDay: '2026-11-20', checkInAt: at('2026-11-20', '11:00'), lastActiveAt: at('2026-11-20', '21:30') };
+    const d = autoCheckoutDecision(day, { ...sched, flexible: true, requiredMinutes: 480 }, policy, TZ, at('2026-11-20', '23:05'));
+    expect(d.close && d.at.toISOString()).toBe(at('2026-11-20', '21:30').toISOString());
+  });
+});
+
+describe('payroll follow-ups', () => {
+  it('relaxed staff are never late but keep fixed-shift overtime', () => {
+    const policy = resolvePolicy({ overtimeMethod: 'per_minute', lateMethod: 'fixed_per_late', lateFixedAmount: 500 });
+    const p = computePayslip(
+      baseInput({
+        policy,
+        member: { ...baseMember, neverLate: true },
+        records: [rec('2026-11-02', 'present', '11:00', '19:30', { isLate: true })],
+      }),
+    )!;
+    expect(p.lateDeduction).toBe(0);
+    expect(p.overtimeMinutes).toBe(60);
+  });
+  it('auto_activity days earn overtime, plain auto days do not', () => {
+    const policy = resolvePolicy({ overtimeMethod: 'per_minute' });
+    const a = computePayslip(baseInput({ policy, records: [rec('2026-11-02', 'present', '09:30', '20:30', { checkoutSource: 'auto_activity' })] }))!;
+    const b = computePayslip(baseInput({ policy, records: [rec('2026-11-02', 'present', '09:30', '20:30', { checkoutSource: 'auto' })] }))!;
+    expect(a.overtimeMinutes).toBe(120);
+    expect(b.overtimeMinutes).toBe(0);
+    expect(a.autoClosed).toBe(1);
+  });
+});
+
+describe('work-hours lock', () => {
+  const base = { tz: TZ, start: '09:30', end: '18:30', flexible: false, bufferMin: 30, isWorkDay: (d: string) => d !== '2026-11-22' };
+  it('open inside the window, locked after shift end + buffer until next opening', () => {
+    expect(workLockState({ ...base, now: at('2026-11-20', '12:00') }).locked).toBe(false);
+    expect(workLockState({ ...base, now: at('2026-11-20', '18:55') }).locked).toBe(false);
+    const s = workLockState({ ...base, now: at('2026-11-20', '19:05') });
+    expect(s.locked).toBe(true);
+    expect(s.opensAt?.toISOString()).toBe(at('2026-11-21', '09:00').toISOString());
+    expect(formatOpensAt(s.opensAt, at('2026-11-20', '19:05'), TZ)).toBe('Sat 09:00');
+  });
+  it('locked before opening on a work day', () => {
+    const s = workLockState({ ...base, now: at('2026-11-20', '07:00') });
+    expect(s.locked).toBe(true);
+    expect(formatOpensAt(s.opensAt, at('2026-11-20', '07:00'), TZ)).toBe('09:00');
+  });
+  it('never locks a day off and unlocks at its midnight', () => {
+    expect(workLockState({ ...base, now: at('2026-11-22', '23:00') }).locked).toBe(false);
+    const s = workLockState({ ...base, now: at('2026-11-21', '20:00') });
+    expect(s.opensAt?.toISOString()).toBe(at('2026-11-22', '00:00').toISOString());
+  });
+  it('night shift stays open past midnight', () => {
+    const n = { ...base, start: '22:00', end: '06:00' };
+    expect(workLockState({ ...n, now: at('2026-11-21', '03:00') }).locked).toBe(false);
+    expect(workLockState({ ...n, now: at('2026-11-21', '07:00') }).locked).toBe(true);
+  });
+  it('flexible staff are never locked', () => {
+    expect(workLockState({ ...base, flexible: true, now: at('2026-11-20', '23:00') }).locked).toBe(false);
+  });
+});
+
+describe('office networks', () => {
+  it('parses JSON and legacy CSV, matches by label', () => {
+    const legacy = parseOfficeNetworks('39.45.120.18, 10.0.0.0/8 junk');
+    expect(legacy).toEqual([
+      { label: 'Network 1', ip: '39.45.120.18' },
+      { label: 'Network 2', ip: '10.0.0.0/8' },
+    ]);
+    const nets = parseOfficeNetworks(JSON.stringify([{ label: 'Office WiFi 1', ip: '39.45.120.18' }, { label: 'WiFi 2', ip: '203.99.48.0/28' }]));
+    expect(matchOfficeNetwork('203.99.48.5', nets)).toBe('WiFi 2');
+    expect(matchOfficeNetwork('182.185.4.9', nets)).toBeNull();
+    expect(isValidIpEntry('10.0.0.0/')).toBe(false);
+    expect(isValidIpEntry('2001:db8::1')).toBe(true);
+  });
+});

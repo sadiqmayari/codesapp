@@ -10,6 +10,7 @@ import {
 import { Package, ChevronDown, Mail, MapPin, Phone, ShoppingBag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { fetchVariantImages } from '@/lib/couriers';
+import { useAnchoredPosition } from '@/components/ui/popover';
 
 /**
  * Shopify-style hover popovers for the Orders queue rows. Both are
@@ -20,15 +21,13 @@ import { fetchVariantImages } from '@/lib/couriers';
  */
 function useAnchor() {
   const ref = useRef<HTMLSpanElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const show = () => {
-    const rect = ref.current?.getBoundingClientRect();
-    if (rect) setPos({ top: rect.bottom + 6, left: rect.left });
-    setOpen(true);
-  };
+  // Clamped inside the screen + flips up near the bottom (mobile audit).
+  const pos = useAnchoredPosition(open, ref, panelRef, { align: 'start' });
+  const show = () => setOpen(true);
   const hide = () => setOpen(false);
-  return { ref, pos, open, show, hide };
+  return { ref, panelRef, pos, open, show, hide };
 }
 
 // Module-level cache: ProductVariant gid → image URL (or null once fetched with
@@ -56,37 +55,29 @@ export function ItemsPopover({
   trailing?: ReactNode;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const pos = useAnchoredPosition(open && count > 0, ref, panelRef, { align: 'start' });
   const [, force] = useState(0);
   const unfulfilled = (fulfillmentStatus ?? 'unfulfilled') === 'unfulfilled';
 
   // Click to toggle (a chevron = a dropdown, not a hover card). Close on an
-  // outside click, or on scroll/resize (the fixed popover would otherwise drift).
+  // outside click; the position follows scroll/resize.
   useEffect(() => {
     if (!open) return;
     const onDown = (e: Event) => {
       if (ref.current && ref.current.contains(e.target as Node)) return;
       setOpen(false);
     };
-    const close = () => setOpen(false);
     document.addEventListener('mousedown', onDown);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
-    };
+    return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
 
-  const toggle = (e: ReactMouseEvent<HTMLButtonElement>) => {
+  const toggle = (_e: ReactMouseEvent<HTMLButtonElement>) => {
     if (open) {
       setOpen(false);
       return;
     }
-    const rect = e.currentTarget.getBoundingClientRect();
-    setPos({ top: rect.bottom + 6, left: rect.left });
     setOpen(true);
     // Lazy-load thumbnails for any variant we haven't resolved yet.
     const need = Array.from(
@@ -124,10 +115,11 @@ export function ItemsPopover({
         )}
       </button>
       {trailing}
-      {open && pos && count > 0 && (
+      {open && count > 0 && (
         <div
-          style={{ top: pos.top, left: pos.left }}
-          className="fixed z-50 w-72 rounded-xl border border-gray-200 bg-white p-3 shadow-xl"
+          ref={panelRef}
+          style={{ top: pos?.top ?? 0, left: pos?.left ?? -9999, maxHeight: pos?.maxHeight, visibility: pos ? 'visible' : 'hidden' }}
+          className="fixed z-50 w-72 max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain whitespace-normal rounded-xl border border-gray-200 bg-white p-3 shadow-xl"
         >
           <span
             className={cn(
@@ -195,16 +187,17 @@ export function CustomerPopover({
   address: string | null;
   ordersCount: number | null;
 }) {
-  const { ref, pos, open, show, hide } = useAnchor();
+  const { ref, panelRef, pos, open, show, hide } = useAnchor();
   return (
     <span ref={ref} onMouseEnter={show} onMouseLeave={hide} className="inline-block">
       <button type="button" className="text-left text-gray-800 hover:text-gray-900 hover:underline">
         {name || '—'}
       </button>
-      {open && pos && (
+      {open && (
         <div
-          style={{ top: pos.top, left: pos.left }}
-          className="fixed z-50 w-72 rounded-xl border border-gray-200 bg-white p-3 text-xs shadow-xl"
+          ref={panelRef}
+          style={{ top: pos?.top ?? 0, left: pos?.left ?? -9999, maxHeight: pos?.maxHeight, visibility: pos ? 'visible' : 'hidden' }}
+          className="fixed z-50 w-72 max-w-[calc(100vw-16px)] overflow-y-auto whitespace-normal rounded-xl border border-gray-200 bg-white p-3 text-xs shadow-xl"
         >
           <p className="mb-1 text-sm font-semibold text-gray-900">{name || 'Customer'}</p>
           {(city || address) && (

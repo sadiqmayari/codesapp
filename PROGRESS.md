@@ -6,6 +6,13 @@
 
 ## Current Status
 
+**Attendance follow-ups + mobile dropdown audit (2026-11-26, latest):** migration `20261127000000_attendance_followups` (auto-applies). Preview: https://claude.ai/artifact/NXGqiw8CaXWXsNfdBcYb4w
+- New timing mode **Relaxed** (fixed shift + grace, never marked late, no late deduction; overtime/early leave still apply) beside Fixed and Flexible hours.
+- Auto-checkout now credits the later of shift end and the last app activity (heartbeat every ≤5 min while checked in) → extra hours count as overtime (`auto_activity`).
+- Optional **lock app after shift end** (+ buffer): login/refresh/every request refused until the next check-in window; owner/admin/HR and flexible staff exempt; days off never locked; open tabs signed out; 15-min warning.
+- Office IP lock → **named office networks** with "Add the network I'm on", label shown to staff ("On Office WiFi 2"); legacy CSV still read.
+- Mobile: shared anchored popover (clamp + flip + scroll); fixed ~11 menus that ran off phones (attendance chip, orders date/sync/confirm/items/customer, message menu, thread kebab, Growth tooltip/columns, contacts More).
+
 **TCS courier — 7th courier (2026-11-23, latest):** migration `20261126000000_courier_type_tcs` (auto-applies; enum only). Built from TCS's E-COM API guide + its live Swagger specs (the PDF shows GET bodies; the real API takes query params).
 - Book (single + bulk queue), cancel/unbook, TCS label PDF per parcel (`print/label`, layout picked in Settings), in-app dispatch manifest (TCS has no loadsheet API), tracking timeline + status sync (no webhooks — pulled on the courier sync schedule), shipper advice (`shipperadvice/*`, ids resolved by name), city list seeded from TCS (`citylistbycountry`), cost centers prefill the pickup block.
 - COD: statements are FETCHED from TCS by invoice number (`booking/paymentinvoice`) into the normal preview → apply flow (Courier payments → statement → pick TCS).

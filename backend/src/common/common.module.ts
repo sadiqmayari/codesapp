@@ -17,6 +17,7 @@ import { WabaSubscriptionService } from './services/waba-subscription.service';
 import { CallingReadinessService } from './services/calling-readiness.service';
 import { SharedStateService } from './services/shared-state.service';
 import { OrderAttributionService } from './services/order-attribution.service';
+import { WorkHoursLockService } from './services/work-hours-lock.service';
 import { InventoryLedgerService } from '../modules/inventory/core/inventory-ledger.service';
 
 @Global()
@@ -41,6 +42,7 @@ import { InventoryLedgerService } from '../modules/inventory/core/inventory-ledg
     SharedStateService,
     OrderAttributionService,
     InventoryLedgerService,
+    WorkHoursLockService,
   ],
   exports: [
     EncryptionService,
@@ -62,6 +64,7 @@ import { InventoryLedgerService } from '../modules/inventory/core/inventory-ledg
     SharedStateService,
     OrderAttributionService,
     InventoryLedgerService,
+    WorkHoursLockService,
   ],
 })
 export class CommonModule {}

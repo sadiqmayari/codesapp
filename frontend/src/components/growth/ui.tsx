@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { count, fullMoney, money, pct, ratio, type NumberMode } from '@/lib/format-number';
 import type { GrowthQuery, MetricDef } from '@/lib/growth';
 import { useGrowth } from './growth-filters';
+import { AnchoredPopover } from '@/components/ui/popover';
 
 /** Fetch with abort + stale guard, re-run on filter change and on live updates. */
 export function useGrowthData<T>(fetcher: (q: GrowthQuery, signal: AbortSignal) => Promise<T>, extraKey = '') {
@@ -62,16 +63,40 @@ export function fmtMetric(v: number | null | undefined, unit: MetricDef['unit'],
 
 /** Info popover: formula + plain-English definition from the metric catalogue. */
 export function MetricInfo({ def }: { def?: MetricDef }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
   if (!def) return null;
+  // Portalled + clamped (it ran ~80px off the left edge in 2-column KPI grids on phones).
   return (
-    <span className="group relative inline-flex" onClick={(e) => e.stopPropagation()}>
-      <button type="button" aria-label={`How ${def.label} is calculated`} className="rounded-full text-muted hover:text-ink focus-visible:text-ink">
+    <span
+      className="relative inline-flex"
+      onClick={(e) => e.stopPropagation()}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label={`How ${def.label} is calculated`}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        className="rounded-full text-muted hover:text-ink focus-visible:text-ink"
+      >
         <Info size={13} />
       </button>
-      <span role="tooltip" className="pointer-events-none invisible absolute right-0 top-5 z-30 w-64 rounded-lg bg-gray-900 p-2.5 text-left text-xs font-normal leading-relaxed text-white opacity-0 shadow-xl transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+      <AnchoredPopover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchorRef={btnRef}
+        align="center"
+        role="tooltip"
+        className="pointer-events-none w-64 rounded-lg bg-gray-900 p-2.5 text-xs font-normal leading-relaxed text-white shadow-xl"
+      >
         {def.description}
         <span className="mt-1.5 block font-mono text-[11px] text-white/70">{def.formula}</span>
-      </span>
+      </AnchoredPopover>
     </span>
   );
 }

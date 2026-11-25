@@ -149,7 +149,7 @@ export function CorrectionModal({
         {cell && (
           <p className="text-sm text-muted">
             Recorded: {cell.checkInAt ? fmtClock(cell.checkInAt) : 'no check-in'} – {cell.checkOutAt ? fmtClock(cell.checkOutAt) : 'no check-out'}
-            {cell.checkoutSource === 'auto' ? ' (closed automatically)' : ''}
+            {cell.checkoutSource === 'auto' || cell.checkoutSource === 'auto_activity' ? ' (closed automatically)' : ''}
           </p>
         )}
         <div className="grid gap-3 sm:grid-cols-3">

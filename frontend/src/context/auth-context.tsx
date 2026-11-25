@@ -7,7 +7,7 @@ import {
   useEffect,
   useState,
 } from 'react';
-import { api, apiFetch, setAccessToken } from '@/lib/api';
+import { SESSION_ENDED_EVENT, api, apiFetch, setAccessToken } from '@/lib/api';
 import { setActiveTimeZone } from '@/lib/utils';
 
 interface Company {
@@ -203,6 +203,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const company = await fetchMe();
     if (company === undefined) return;
     setState((s) => (s.user ? { ...s, user: { ...s.user, company } } : s));
+  }, []);
+
+  // The server ended this session (e.g. "lock app after shift end"): drop the
+  // user so the (app) layout sends them to /login, where the reason is shown.
+  useEffect(() => {
+    const onEnded = () => {
+      setAccessToken(null);
+      setState((st) => (st.user ? { user: null, loading: false } : st));
+    };
+    window.addEventListener(SESSION_ENDED_EVENT, onEnded);
+    return () => window.removeEventListener(SESSION_ENDED_EVENT, onEnded);
   }, []);
 
   const logout = useCallback(async () => {

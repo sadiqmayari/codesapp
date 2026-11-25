@@ -3589,6 +3589,7 @@ function BubbleMenu({
   // UPWARD so it isn't clipped by the scroll container / composer (the bottom
   // voice note's menu otherwise lands flush against — or under — the edge).
   const [dropUp, setDropUp] = useState(false);
+  const [alignLeft, setAlignLeft] = useState(false);
   // Close on outside-click or on a genuine USER scroll gesture — WITHOUT a
   // full-screen overlay. The previous `fixed inset-0` click-catcher swallowed
   // wheel/touch so the list couldn't scroll while open; that's fixed. But we
@@ -3620,15 +3621,19 @@ function BubbleMenu({
   useEffect(() => {
     if (!open) {
       setDropUp(false);
+      setAlignLeft(false);
       return;
     }
     const btn = menuRef.current?.querySelector('button');
     const scroller = menuRef.current?.closest('.overflow-y-auto');
     if (!btn || !scroller) return;
-    const spaceBelow =
-      scroller.getBoundingClientRect().bottom - btn.getBoundingClientRect().bottom;
+    const b = btn.getBoundingClientRect();
+    const spaceBelow = scroller.getBoundingClientRect().bottom - b.bottom;
     // ~4 items + padding ≈ 170px; flip up when there isn't room below.
     setDropUp(spaceBelow < 180);
+    // A right-aligned 192px menu on a short (left-side) bubble ran off the
+    // left edge on phones: open it rightwards when it wouldn't fit.
+    setAlignLeft(b.right - 192 < 8);
   }, [open]);
 
   return (
@@ -3656,7 +3661,8 @@ function BubbleMenu({
         <>
           <div
             className={cn(
-              'absolute right-0 z-30 w-48 rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg',
+              'absolute z-30 w-48 max-w-[calc(100vw-16px)] rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg',
+              alignLeft ? 'left-0' : 'right-0',
               dropUp ? 'bottom-6' : 'top-6',
             )}
           >

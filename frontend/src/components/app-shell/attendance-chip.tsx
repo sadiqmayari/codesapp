@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { Clock, LogIn, LogOut } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { useMyToday } from '@/components/team/attendance/use-my-today';
+import { AnchoredPopover } from '@/components/ui/popover';
 
 /**
  * Navbar attendance chip — the always-there, never-in-the-way control.
@@ -23,21 +24,7 @@ export function AttendanceChip() {
   const toast = useToast();
   const [openPop, setOpenPop] = useState(false);
   const [busy, setBusy] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!openPop) return;
-    const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpenPop(false);
-    };
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && setOpenPop(false);
-    document.addEventListener('mousedown', h);
-    document.addEventListener('keydown', k);
-    return () => {
-      document.removeEventListener('mousedown', h);
-      document.removeEventListener('keydown', k);
-    };
-  }, [openPop]);
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   if (!a.tracked || !a.loaded || !a.today) return null;
   const t = a.today;
@@ -67,8 +54,9 @@ export function AttendanceChip() {
       : `Done · ${fmtHours(a.workedMin)}`;
 
   return (
-    <div className="relative shrink-0" ref={ref}>
+    <div className="relative shrink-0">
       <button
+        ref={btnRef}
         type="button"
         onClick={() => setOpenPop((v) => !v)}
         aria-expanded={openPop}
@@ -95,15 +83,37 @@ export function AttendanceChip() {
         {a.open && target && <span className="hidden sm:inline font-medium text-muted">/ {Math.round(target / 60)}h</span>}
       </button>
 
-      {openPop && (
-        <div className="absolute right-0 top-11 z-50 w-72 rounded-xl border border-line bg-surface p-4 shadow-xl space-y-3">
+      <AnchoredPopover
+        open={openPop}
+        onClose={() => setOpenPop(false)}
+        anchorRef={btnRef}
+        align="end"
+        className="w-72 rounded-xl border border-line bg-surface p-4 shadow-xl space-y-3"
+      >
           <div className="flex items-center gap-2">
             <p className="text-sm font-semibold text-ink">
               {t.dayKind === 'holiday' ? t.holidayName ?? 'Holiday' : t.dayKind === 'weekly_off' ? 'Day off' : 'Today'}
             </p>
             <span className="flex-1" />
-            {t.flexible ? <Badge tone="violet">Flexible</Badge> : <Badge>{t.workStart}–{t.effectiveEnd}</Badge>}
+            {t.flexible ? (
+              <Badge tone="violet">Flexible</Badge>
+            ) : (
+              <Badge>
+                {t.workStart}–{t.effectiveEnd}
+                {t.neverLate ? ' · Relaxed' : ''}
+              </Badge>
+            )}
           </div>
+          {t.requireOfficeNetwork && (
+            <p className={cn('rounded-lg px-2.5 py-1.5 text-xs', t.onOfficeNetwork ? 'bg-brand-50 text-brand-700' : 'bg-red-50 text-red-700')}>
+              {t.onOfficeNetwork ? `On ${t.onOfficeNetwork}` : 'Not on office WiFi. Connect to an office network to check in or out.'}
+            </p>
+          )}
+          {a.locksInMin != null && a.locksInMin <= 60 && (
+            <p className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">
+              App locks at {fmtClock(t.appLocksAt ?? null)}{a.locksInMin <= 15 ? ` (in ${a.locksInMin} min)` : ''}.
+            </p>
+          )}
           {a.checkedIn ? (
             <>
               <div className="flex text-xs text-muted tabular-nums">
@@ -120,13 +130,13 @@ export function AttendanceChip() {
               {a.open && (
                 <p className="text-xs text-muted">
                   {t.flexible
-                    ? `Check out any time. We remind you after ${fmtHours(target)}. If you forget, the day closes itself after ${t.autoCheckout.maxHours}h, credited ${fmtHours(target)}.`
+                    ? `Check out any time. We remind you after ${fmtHours(target)}. If you forget, the day closes itself after ${t.autoCheckout.maxHours}h, credited ${fmtHours(target)} or until your last activity, whichever is later.`
                     : t.autoCheckout.mode === 'off'
                       ? `Shift ends at ${t.effectiveEnd}.`
-                      : `Shift ends at ${t.effectiveEnd}. If you forget, the day closes itself at ${t.effectiveEnd}.`}
+                      : `Shift ends at ${t.effectiveEnd}. If you forget, the day closes itself and counts until your last activity in the app.`}
                 </p>
               )}
-              {a.rec?.checkoutSource === 'auto' && (
+              {(a.rec?.checkoutSource === 'auto' || a.rec?.checkoutSource === 'auto_activity') && (
                 <p className="text-xs text-amber-700">Closed automatically. Wrong time? Ask for a fix under My attendance.</p>
               )}
             </>
@@ -153,8 +163,7 @@ export function AttendanceChip() {
               </Button>
             )}
           </div>
-        </div>
-      )}
+      </AnchoredPopover>
     </div>
   );
 }

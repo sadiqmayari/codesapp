@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CalendarDays, ChevronDown, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AnimatedNumber } from '@/components/ui/animated-number';
+import { AnchoredPopover } from '@/components/ui/popover';
 import { PERIOD_OPTIONS, PeriodKey } from '@/lib/date-period';
 
 /* ─────────────────────────── Pipeline lanes ─────────────────────────── */
@@ -234,19 +235,6 @@ export function PeriodChip({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
 
   const set = period !== 'all';
   const label =
@@ -289,12 +277,17 @@ export function PeriodChip({
           </button>
         )}
       </span>
-      {open && (
-        <div
-          role="dialog"
-          aria-label="Date range"
-          className="absolute left-0 top-full z-30 mt-1 w-64 rounded-xl border border-line bg-surface p-2 shadow-lg"
-        >
+      {/* Portalled + clamped: the toolbar row scrolls sideways on phones and
+          used to clip an absolute popover. */}
+      <AnchoredPopover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchorRef={ref}
+        align="start"
+        role="dialog"
+        ariaLabel="Date range"
+        className="w-64 rounded-xl border border-line bg-surface p-2 shadow-lg"
+      >
           <div className="grid grid-cols-2 gap-1">
             {PERIOD_OPTIONS.map((o) => (
               <button
@@ -337,8 +330,7 @@ export function PeriodChip({
               </label>
             </div>
           )}
-        </div>
-      )}
+      </AnchoredPopover>
     </span>
   );
 }

@@ -9,7 +9,8 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InboxGateway } from '../inbox/inbox.gateway';
-import { ipInAllowlist } from '../../common/utils/ip-match';
+import { OfficeNetwork, isValidIpEntry, matchOfficeNetwork, parseOfficeNetworks } from '../../common/utils/ip-match';
+import { WorkHoursLockService } from '../../common/services/work-hours-lock.service';
 import { CommissionsService } from '../commissions/commissions.service';
 import {
   AttendanceStatusValue,
@@ -25,8 +26,11 @@ import {
   DEFAULT_REQUIRED_MINUTES,
   DEFAULT_SHIFT_LENGTH_MIN,
   autoCheckoutDecision,
+  autoEarnsOvertime,
+  isAutoSource,
   resolveAutoCheckout,
 } from './auto-checkout';
+import { DEFAULT_LOCK_BUFFER_MIN } from './work-lock';
 import { Payslip, PayslipRecord, computePayslip, isAdditiveAdjustment } from './payroll-math';
 import {
   MONTH_RE,
@@ -67,6 +71,7 @@ export interface AttendanceCell {
   isLate: boolean;
   missedCheckout: boolean;
   checkoutSource: string | null;
+  lastActiveAt: string | null; // ISO, last app heartbeat while the day was open
   workedMinutes: number | null;
   note: string | null;
   overridden: boolean;
@@ -111,6 +116,7 @@ type DbRow = {
   missed_checkout: boolean;
   system_marked: boolean;
   checkout_source: string | null;
+  last_active_at?: Date | null;
   note: string | null;
   marked_by_user_id: number | null;
 };
@@ -126,6 +132,8 @@ type MemberRow = {
   attendance_grace_minutes: number | null;
   attendance_require_office_ip: boolean;
   attendance_exempt_late: boolean;
+  attendance_never_late: boolean;
+  attendance_lock_after_shift: boolean | null;
   attendance_required_minutes: number | null;
   attendance_weekly_off: unknown;
   joined_on: Date | null;
@@ -147,6 +155,8 @@ const MEMBER_SELECT = {
   attendance_grace_minutes: true,
   attendance_require_office_ip: true,
   attendance_exempt_late: true,
+  attendance_never_late: true,
+  attendance_lock_after_shift: true,
   attendance_required_minutes: true,
   attendance_weekly_off: true,
   joined_on: true,
@@ -169,7 +179,9 @@ type CompanyDefaults = {
   start: string;
   end: string | null;
   grace: number;
-  officeIps: string | null;
+  officeNetworks: OfficeNetwork[];
+  lockAfterShift: boolean;
+  lockBufferMin: number;
   policy: PayrollPolicy;
   checkinWindow: number;
   autoCheckout: AutoCheckoutPolicy;
@@ -186,6 +198,7 @@ export class AttendanceService {
     private readonly gateway: InboxGateway,
     private readonly commissions: CommissionsService,
     private readonly feature: FeatureService,
+    private readonly workLock: WorkHoursLockService,
   ) {}
 
   // ── company defaults + per-user schedule ──────────────────────────────────
@@ -203,6 +216,8 @@ export class AttendanceService {
         attendance_auto_checkout: true,
         attendance_weekly_off: true,
         attendance_annual_paid_leave: true,
+        attendance_lock_after_shift: true,
+        attendance_lock_buffer_min: true,
       },
     });
     return {
@@ -210,7 +225,9 @@ export class AttendanceService {
       start: c?.work_start_time || DEFAULT_WORK_START,
       end: c?.work_end_time || null,
       grace: c?.attendance_grace_minutes ?? 0,
-      officeIps: c?.attendance_office_ips ?? null,
+      officeNetworks: parseOfficeNetworks(c?.attendance_office_ips),
+      lockAfterShift: c?.attendance_lock_after_shift ?? false,
+      lockBufferMin: c?.attendance_lock_buffer_min ?? DEFAULT_LOCK_BUFFER_MIN,
       policy: resolvePolicy(c?.attendance_payroll_policy),
       checkinWindow: c?.attendance_checkin_window_minutes ?? DEFAULT_CHECKIN_WINDOW_MIN,
       autoCheckout: resolveAutoCheckout(c?.attendance_auto_checkout),
@@ -227,6 +244,9 @@ export class AttendanceService {
       end,
       grace: m.attendance_grace_minutes ?? co.grace,
       flexible: m.attendance_exempt_late,
+      // Relaxed = fixed shift, never late. Flexible already implies never late.
+      neverLate: !m.attendance_exempt_late && m.attendance_never_late,
+      lockAfterShift: m.attendance_lock_after_shift ?? co.lockAfterShift,
       requiredMinutes: m.attendance_required_minutes ?? null,
       weeklyOff: m.attendance_weekly_off == null ? co.weeklyOff : resolveWeeklyOff(m.attendance_weekly_off, co.weeklyOff),
       joinedOn: day(m.joined_on) ?? day(m.created_at),
@@ -260,7 +280,8 @@ export class AttendanceService {
       role: u.role,
       name: u.name,
       requireOfficeIp: u.attendance_require_office_ip,
-      officeIps: co.officeIps,
+      officeNetworks: co.officeNetworks,
+      lockBufferMin: co.lockBufferMin,
       policy: co.policy,
       autoCheckout: co.autoCheckout,
       checkinWindow: co.checkinWindow,
@@ -329,6 +350,7 @@ export class AttendanceService {
       isLate: row.is_late,
       missedCheckout: row.missed_checkout,
       checkoutSource: row.checkout_source ?? null,
+      lastActiveAt: row.last_active_at ? row.last_active_at.toISOString() : null,
       workedMinutes: this.workedMinutes(row),
       note: row.note,
       overridden: row.marked_by_user_id != null && !row.system_marked,
@@ -341,12 +363,12 @@ export class AttendanceService {
     }
   }
 
-  private assertOnOfficeNetwork(u: { requireOfficeIp: boolean; officeIps: string | null }, ip: string) {
-    if (!u.requireOfficeIp || !u.officeIps?.trim()) return;
-    if (!ipInAllowlist(ip, u.officeIps)) {
+  private assertOnOfficeNetwork(u: { requireOfficeIp: boolean; officeNetworks: OfficeNetwork[] }, ip: string) {
+    if (!u.requireOfficeIp || !u.officeNetworks.length) return;
+    if (!matchOfficeNetwork(ip, u.officeNetworks)) {
+      const names = u.officeNetworks.map((n) => n.label).join(', ');
       throw new ForbiddenException(
-        `You must be on an approved office network to mark attendance. ` +
-          `Detected IP: "${ip || 'unknown'}". Ask your admin to add it.`,
+        `Check-in only from office WiFi. You're on ${ip || 'an unknown network'}, not one of: ${names}.`,
       );
     }
   }
@@ -365,7 +387,7 @@ export class AttendanceService {
   }
 
   // ── self-service ────────────────────────────────────────────────────────
-  async myToday(companyId: number, userId: number) {
+  async myToday(companyId: number, userId: number, ip = '') {
     const u = await this.resolveUser(companyId, userId);
     const now = new Date();
     const open = NOT_TRACKED_ROLES.includes(u.role) ? null : await this.openRow(companyId, userId);
@@ -395,6 +417,11 @@ export class AttendanceService {
       checkoutOpensAt: u.checkoutOpensAt,
       exemptLate: u.flexible,
       flexible: u.flexible,
+      neverLate: u.neverLate,
+      requireOfficeNetwork: u.requireOfficeIp && u.officeNetworks.length > 0,
+      onOfficeNetwork: ip ? matchOfficeNetwork(ip, u.officeNetworks) : null,
+      lockAfterShift: u.lockAfterShift && !u.flexible,
+      appLocksAt: await this.appLocksAt(companyId, userId, u.role),
       requiredMinutes: u.flexible ? u.requiredMinutes ?? DEFAULT_REQUIRED_MINUTES : null,
       autoCheckout: u.autoCheckout,
       excluded: NOT_TRACKED_ROLES.includes(u.role),
@@ -428,7 +455,7 @@ export class AttendanceService {
       }
     }
 
-    const isLate = !u.flexible && kind === 'work' && sinceStart > u.grace;
+    const isLate = !u.flexible && !u.neverLate && kind === 'work' && sinceStart > u.grace;
     const status: AttendanceStatusValue =
       isLate && u.policy.lateMethod === 'half_day' && sinceStart > u.policy.halfDayAfterMin
         ? 'half_day'
@@ -496,6 +523,27 @@ export class AttendanceService {
     })) as DbRow;
     this.safeEmit(() => this.gateway.emitToCompany(companyId, 'attendance.changed', { userId, at: now.toISOString() }));
     return this.toCell(updated);
+  }
+
+  /** App-activity heartbeat: stamps the open day so auto-checkout can credit real hours. */
+  async heartbeat(companyId: number, userId: number) {
+    const now = new Date();
+    const res = await this.prisma.attendanceRecord.updateMany({
+      where: {
+        company_id: companyId,
+        user_id: userId,
+        check_in_at: { not: null, gte: new Date(now.getTime() - OPEN_ROW_MAX_MS) },
+        check_out_at: null,
+      },
+      data: { last_active_at: now },
+    });
+    return { ok: true, open: res.count > 0 };
+  }
+
+  /** When the app locks for this member today (ISO), null when no lock applies. */
+  private async appLocksAt(companyId: number, userId: number, role: string): Promise<string | null> {
+    const st = await this.workLock.state({ id: userId, company_id: companyId, role });
+    return st?.locksAt ? st.locksAt.toISOString() : null;
   }
 
   async myHistory(companyId: number, userId: number, fromStr: string, toStr: string) {
@@ -569,6 +617,9 @@ export class AttendanceService {
         effectiveEnd: s.end,
         effectiveGrace: s.grace,
         exemptLate: m.attendance_exempt_late,
+        neverLate: s.neverLate,
+        lockAfterShift: m.attendance_lock_after_shift,
+        effectiveLockAfterShift: s.lockAfterShift && !s.flexible,
         requiredMinutes: m.attendance_required_minutes,
         weeklyOff: m.attendance_weekly_off == null ? null : resolveWeeklyOff(m.attendance_weekly_off, co.weeklyOff),
         effectiveWeeklyOff: s.weeklyOff,
@@ -600,7 +651,15 @@ export class AttendanceService {
     if (dto.workEndTime !== undefined) data.attendance_work_end = dto.workEndTime || null;
     if (dto.graceMinutes !== undefined) data.attendance_grace_minutes = dto.graceMinutes ?? null;
     if (dto.requireOfficeIp !== undefined) data.attendance_require_office_ip = dto.requireOfficeIp;
+    if (dto.exemptLate === true && dto.neverLate === true) {
+      throw new BadRequestException('Pick one timing mode: Relaxed or Flexible hours.');
+    }
     if (dto.exemptLate !== undefined) data.attendance_exempt_late = dto.exemptLate;
+    if (dto.neverLate !== undefined) data.attendance_never_late = dto.neverLate;
+    // One timing mode at a time: Flexible and Relaxed are exclusive.
+    if (dto.exemptLate === true && dto.neverLate === undefined) data.attendance_never_late = false;
+    if (dto.neverLate === true && dto.exemptLate === undefined) data.attendance_exempt_late = false;
+    if (dto.lockAfterShift !== undefined) data.attendance_lock_after_shift = dto.lockAfterShift;
     if (dto.requiredMinutes !== undefined) data.attendance_required_minutes = dto.requiredMinutes ?? null;
     if (dto.weeklyOff !== undefined)
       data.attendance_weekly_off = dto.weeklyOff == null ? Prisma.DbNull : resolveWeeklyOff(dto.weeklyOff, []);
@@ -617,6 +676,7 @@ export class AttendanceService {
     if (dto.overtimeRate !== undefined) data.salary_overtime_rate = dto.overtimeRate ?? null;
     if (dto.allowances !== undefined) data.salary_allowances = resolveAllowances(dto.allowances);
     await this.prisma.user.update({ where: { id: userId }, data });
+    this.workLock.invalidate(companyId);
     return { ok: true };
   }
 
@@ -707,15 +767,15 @@ export class AttendanceService {
       else if (r.status === 'half_day') a.halfDay += 1;
       else if (r.status === 'holiday') a.holiday += 1;
       if (r.is_late) a.late += 1;
-      if (r.checkout_source === 'auto') a.autoClosed += 1;
+      if (isAutoSource(r.checkout_source)) a.autoClosed += 1;
       const worked = this.workedMinutes(r) ?? 0;
       a.totalMinutes += worked;
       if (r.status !== 'present' && r.status !== 'half_day') continue;
       const perDay = s.flexible ? s.requiredMinutes ?? DEFAULT_REQUIRED_MINUTES : shiftMinutes(s.start, s.end);
       if (perDay == null) continue;
       a.expectedMinutes += perDay;
-      if (r.checkout_source !== 'auto' && worked > perDay) a.overtimeMinutes += worked - perDay;
-      if (r.check_out_at && !s.flexible && s.end && r.checkout_source !== 'auto') {
+      if (autoEarnsOvertime(r.checkout_source) && worked > perDay) a.overtimeMinutes += worked - perDay;
+      if (r.check_out_at && !s.flexible && s.end && !isAutoSource(r.checkout_source)) {
         const date = r.work_date.toISOString().slice(0, 10);
         if (r.check_out_at < shiftEndInstant(date, s.start, s.end, co.tz)) a.earlyLeaves += 1;
       }
@@ -750,7 +810,7 @@ export class AttendanceService {
         openYesterday?.check_in_at && !openYesterday.check_out_at && isOvernight(s.start, s.end)
           ? openYesterday
           : byKey.get(key(m.id, today));
-      const autoYesterday = byKey.get(key(m.id, yesterday))?.checkout_source === 'auto';
+      const autoYesterday = isAutoSource(byKey.get(key(m.id, yesterday))?.checkout_source);
       const kind = dayKind(today, { weeklyOff: s.weeklyOff, holidays: hol.holidays });
       const cutoffPassed =
         !s.flexible && minutesSinceShiftStart(now, today, s.start, co.tz) > co.checkinWindow;
@@ -865,6 +925,7 @@ export class AttendanceService {
           allowances: resolveAllowances(m.salary_allowances),
           overtimeRate: m.salary_overtime_rate == null ? null : Number(m.salary_overtime_rate),
           flexible: s.flexible,
+          neverLate: s.neverLate,
           start: s.start,
           end: s.end,
           grace: s.grace,
@@ -1129,7 +1190,7 @@ export class AttendanceService {
           if (!m || !r.check_in_at) continue;
           const s = this.schedule(m, co);
           const d = autoCheckoutDecision(
-            { workDay: r.work_date.toISOString().slice(0, 10), checkInAt: r.check_in_at },
+            { workDay: r.work_date.toISOString().slice(0, 10), checkInAt: r.check_in_at, lastActiveAt: r.last_active_at ?? null },
             { start: s.start, end: s.end, flexible: s.flexible, requiredMinutes: s.requiredMinutes },
             co.autoCheckout,
             co.tz,
@@ -1138,7 +1199,11 @@ export class AttendanceService {
           if (!d.close) continue;
           const res = await this.prisma.attendanceRecord.updateMany({
             where: { id: r.id, check_out_at: null },
-            data: { check_out_at: d.at, checkout_source: 'auto', missed_checkout: true },
+            data: {
+              check_out_at: d.at,
+              checkout_source: d.creditedBy === 'activity' ? 'auto_activity' : 'auto',
+              missed_checkout: true,
+            },
           });
           if (res.count) {
             closed += 1;
@@ -1153,6 +1218,41 @@ export class AttendanceService {
       }
     }
     return { closed };
+  }
+
+  /**
+   * Worker tick: drop live sockets of members whose app just locked (after
+   * shift end). REST is already refused by JwtStrategy; this ends realtime.
+   * `known` carries the locked set between ticks so each lock fires once.
+   */
+  async disconnectLockedMembers(known: Set<number>, now = new Date()) {
+    const granted = await this.feature.companiesWith('attendance');
+    if (!granted.size) return { dropped: 0 };
+    const users = await this.prisma.user.findMany({
+      where: {
+        company_id: { in: [...granted] },
+        status: 'active',
+        role: { notIn: ['owner', 'super_admin', 'admin', 'hr_manager'] as never },
+        attendance_exempt_late: false,
+        OR: [{ attendance_lock_after_shift: true }, { attendance_lock_after_shift: null, company: { attendance_lock_after_shift: true } }],
+      },
+      select: { id: true, company_id: true, role: true },
+      take: 5000,
+    });
+    let dropped = 0;
+    const lockedNow = new Set<number>();
+    for (const u of users) {
+      const st = await this.workLock.state(u, now);
+      if (!st?.locked) continue;
+      lockedNow.add(u.id);
+      if (!known.has(u.id)) {
+        dropped += 1;
+        this.safeEmit(() => this.gateway.disconnectUser(u.id));
+      }
+    }
+    known.clear();
+    for (const id of lockedNow) known.add(id);
+    return { dropped };
   }
 
   // ── admin override ────────────────────────────────────────────────────────
@@ -1203,7 +1303,7 @@ export class AttendanceService {
     }
 
     const effStatus = (dto.status ?? existing?.status ?? 'present') as AttendanceStatusValue;
-    if (!u.flexible && checkIn && (effStatus === 'present' || effStatus === 'half_day')) {
+    if (!u.flexible && !u.neverLate && checkIn && (effStatus === 'present' || effStatus === 'half_day')) {
       data.is_late = minutesSinceShiftStart(checkIn, dateStr, u.start, u.tz) > u.grace;
     } else {
       data.is_late = false;
@@ -1239,7 +1339,11 @@ export class AttendanceService {
       workStartTime: co.start,
       workEndTime: co.end,
       graceMinutes: co.grace,
-      officeIps: co.officeIps ?? '',
+      officeNetworks: co.officeNetworks,
+      officeIps: co.officeNetworks.map((n) => n.ip).join(', '), // legacy readers
+      yourNetwork: yourIp ? matchOfficeNetwork(yourIp, co.officeNetworks) : null,
+      lockAfterShift: co.lockAfterShift,
+      lockBufferMinutes: co.lockBufferMin,
       checkinWindowMinutes: co.checkinWindow,
       payrollPolicy: co.policy,
       autoCheckout: co.autoCheckout,
@@ -1255,7 +1359,17 @@ export class AttendanceService {
     if (dto.workStartTime !== undefined) data.work_start_time = dto.workStartTime || null;
     if (dto.workEndTime !== undefined) data.work_end_time = dto.workEndTime || null;
     if (dto.graceMinutes !== undefined) data.attendance_grace_minutes = dto.graceMinutes ?? null;
-    if (dto.officeIps !== undefined) data.attendance_office_ips = dto.officeIps?.trim() || null;
+    if (dto.officeNetworks !== undefined) {
+      const bad = dto.officeNetworks.find((n) => !isValidIpEntry(n.ip));
+      if (bad) throw new BadRequestException(`"${bad.ip}" is not a valid IP address or range.`);
+      const nets = dto.officeNetworks.map((n, i) => ({ label: n.label.trim().slice(0, 40) || `Network ${i + 1}`, ip: n.ip.trim() }));
+      data.attendance_office_ips = nets.length ? JSON.stringify(nets) : null;
+    } else if (dto.officeIps !== undefined) {
+      const nets = parseOfficeNetworks(dto.officeIps);
+      data.attendance_office_ips = nets.length ? JSON.stringify(nets) : null;
+    }
+    if (dto.lockAfterShift !== undefined) data.attendance_lock_after_shift = dto.lockAfterShift;
+    if (dto.lockBufferMinutes !== undefined) data.attendance_lock_buffer_min = dto.lockBufferMinutes ?? null;
     if (dto.checkinWindowMinutes !== undefined) data.attendance_checkin_window_minutes = dto.checkinWindowMinutes ?? null;
     if (dto.payrollPolicy !== undefined) {
       data.attendance_payroll_policy = resolvePolicy({ ...co.policy, ...dto.payrollPolicy }) as unknown as object;
@@ -1266,6 +1380,7 @@ export class AttendanceService {
     if (dto.weeklyOff !== undefined) data.attendance_weekly_off = resolveWeeklyOff(dto.weeklyOff, []);
     if (dto.annualPaidLeave !== undefined) data.attendance_annual_paid_leave = dto.annualPaidLeave ?? null;
     await this.prisma.company.update({ where: { id: companyId }, data });
+    this.workLock.invalidate(companyId);
     return this.getSettings(companyId);
   }
 

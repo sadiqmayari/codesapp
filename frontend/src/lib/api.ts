@@ -50,10 +50,46 @@ function processQueue(error: unknown, token: string | null) {
   failQueue = [];
 }
 
+// "Lock app after shift end" (attendance): the server answers 403 with
+// code WORK_HOURS_LOCKED. Remember why (the login page shows it) and tell the
+// AuthProvider to end the session.
+export const WORK_HOURS_LOCKED = 'WORK_HOURS_LOCKED';
+export const SESSION_ENDED_EVENT = 'ca:session-ended';
+const LOCK_NOTE_KEY = 'ca_work_lock_note';
+
+function noteWorkLock(err: unknown): boolean {
+  const data = (err as AxiosError<{ code?: string; message?: string; details?: { opensAtLabel?: string } }>)?.response?.data;
+  if (data?.code !== WORK_HOURS_LOCKED) return false;
+  if (typeof window !== 'undefined') {
+    try {
+      sessionStorage.setItem(LOCK_NOTE_KEY, data.message || 'Outside your working hours.');
+    } catch {
+      /* private mode */
+    }
+    window.dispatchEvent(new CustomEvent(SESSION_ENDED_EVENT, { detail: { reason: 'work_hours', message: data.message } }));
+  }
+  return true;
+}
+
+/** The last work-hours lock message (login page), cleared once read. */
+export function takeWorkLockNote(): string | null {
+  try {
+    const v = sessionStorage.getItem(LOCK_NOTE_KEY);
+    if (v) sessionStorage.removeItem(LOCK_NOTE_KEY);
+    return v;
+  } catch {
+    return null;
+  }
+}
+
 // 401 → refresh → retry
 api.interceptors.response.use(
   (res) => res,
   async (error: AxiosError) => {
+    if (error.response?.status === 403 && noteWorkLock(error)) {
+      setAccessToken(null);
+      return Promise.reject(error);
+    }
     const original = error.config as InternalAxiosRequestConfig & {
       _retry?: boolean;
     };
@@ -124,6 +160,7 @@ api.interceptors.response.use(
         // router.replace('/login') when there is no user; a hard
         // window.location redirect here caused reload loops on public
         // pages (which also mount AuthProvider).
+        noteWorkLock(refreshError);
         processQueue(refreshError, null);
         setAccessToken(null);
         return Promise.reject(refreshError);

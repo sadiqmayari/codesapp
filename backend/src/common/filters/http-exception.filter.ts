@@ -26,6 +26,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'Internal server error';
+    // Machine-readable error code (+ its extra fields) when a handler throws
+    // `new XException({ code, message, ... })` — e.g. WORK_HOURS_LOCKED.
+    let code: string | undefined;
+    let details: Record<string, unknown> | undefined;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -35,6 +39,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
           ? exceptionResponse
           : (exceptionResponse as { message?: string }).message ??
             exception.message;
+      if (exceptionResponse && typeof exceptionResponse === 'object') {
+        const { code: c, message: _m, statusCode: _s, error: _e, ...rest } = exceptionResponse as Record<string, unknown>;
+        if (typeof c === 'string') {
+          code = c;
+          details = rest;
+        }
+      }
     } else if (exception instanceof Error) {
       this.logger.error(exception.message, exception.stack);
     }
@@ -43,6 +54,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       success: false,
       data: null,
       message: Array.isArray(message) ? message.join('; ') : message,
+      ...(code ? { code, details } : {}),
     });
   }
 }

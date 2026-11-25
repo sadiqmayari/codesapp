@@ -71,6 +71,61 @@ export function ipInAllowlist(ip: string, csvList: string | null | undefined): b
   return entries.some((e) => (e.includes('/') ? inCidr(norm, e) : sameIp(norm, e)));
 }
 
+/** A valid allow-list entry: IPv4, IPv4 CIDR or IPv6. */
+export function isValidIpEntry(entry: string): boolean {
+  const e = normalizeIp(entry);
+  if (!e) return false;
+  if (e.includes('/')) {
+    const [range, bits] = e.split('/');
+    return toLong(range) !== null && /^\d{1,2}$/.test(bits ?? '') && Number(bits) <= 32;
+  }
+  return toLong(e) !== null || expandV6(e) !== null;
+}
+
+/** A named office network: a label people recognise + its public IP / range. */
+export interface OfficeNetwork {
+  label: string;
+  ip: string;
+}
+
+/**
+ * Parse `companies.attendance_office_ips`: JSON `[{label, ip}]` (current) or the
+ * legacy comma/space separated list (auto-labelled "Network 1", "Network 2"…).
+ * Invalid entries are dropped.
+ */
+export function parseOfficeNetworks(raw: string | null | undefined): OfficeNetwork[] {
+  const t = (raw ?? '').trim();
+  if (!t) return [];
+  if (t.startsWith('[')) {
+    try {
+      const arr = JSON.parse(t) as unknown;
+      if (Array.isArray(arr)) {
+        return arr
+          .map((x, i) => {
+            const o = (x && typeof x === 'object' ? x : {}) as Record<string, unknown>;
+            const ip = typeof o.ip === 'string' ? o.ip.trim() : '';
+            const label = (typeof o.label === 'string' ? o.label.trim() : '').slice(0, 40) || `Network ${i + 1}`;
+            return { label, ip };
+          })
+          .filter((n) => isValidIpEntry(n.ip));
+      }
+    } catch {
+      /* fall through to CSV */
+    }
+  }
+  return t
+    .split(/[,\s]+/)
+    .filter(Boolean)
+    .filter(isValidIpEntry)
+    .map((ip, i) => ({ label: `Network ${i + 1}`, ip }));
+}
+
+/** The office network `ip` is on (its label), or null. */
+export function matchOfficeNetwork(ip: string, networks: OfficeNetwork[]): string | null {
+  for (const n of networks) if (ipInAllowlist(ip, n.ip)) return n.label;
+  return null;
+}
+
 // Cloudflare edge ranges (https://www.cloudflare.com/ips/). Only when the hop
 // that reached our proxy is one of these do we believe CF-Connecting-IP.
 const CF_V4 = [

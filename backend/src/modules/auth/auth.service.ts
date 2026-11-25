@@ -14,6 +14,7 @@ import * as nodemailer from 'nodemailer';
 import * as https from 'https';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FeatureService } from '../../common/services/feature.service';
+import { WorkHoursLockService } from '../../common/services/work-hours-lock.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 
@@ -31,6 +32,7 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly feature: FeatureService,
+    private readonly workLock: WorkHoursLockService,
   ) {
     const port = Number(this.config.get('SMTP_PORT') ?? 587);
     // Port 465 = implicit TLS (secure:true). 587/25 = STARTTLS (secure:false).
@@ -151,6 +153,7 @@ export class AuthService {
     if (user.status !== 'active') {
       throw new UnauthorizedException('Account not active. Contact support.');
     }
+    await this.workLock.assertMayUseApp(user);
 
     const payload = {
       sub: user.id,
@@ -195,6 +198,7 @@ export class AuthService {
     if (!user || user.status !== 'active') throw new UnauthorizedException();
     // Sessions revoked (password change / suspend / role change) since issue.
     if ((payload.tv ?? 0) !== user.token_version) throw new UnauthorizedException('Session expired');
+    await this.workLock.assertMayUseApp(user);
 
     const newPayload = {
       sub: user.id,

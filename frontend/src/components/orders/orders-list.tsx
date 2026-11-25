@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { fmtDate, zonedPresetRange, zonedStartOfDay, zonedYMDString, cn } from '@/lib/utils';
+import { useAnchoredPosition } from '@/components/ui/popover';
 import {
   listCreatedOrders,
   type CreatedOrderRow,
@@ -76,9 +77,10 @@ function ItemsCell({
   adminUrl: string | null;
 }) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
+  // Clamped inside the screen, flips up near the bottom (mobile audit).
+  const pos = useAnchoredPosition(open, btnRef, popRef, { align: 'start' });
 
   useEffect(() => {
     if (!open) return;
@@ -90,7 +92,11 @@ function ItemsCell({
         return;
       setOpen(false);
     };
-    const onScroll = () => setOpen(false);
+    // Scrolling inside the popover itself must not close it.
+    const onScroll = (e: Event) => {
+      if (e.type === 'scroll' && popRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
     document.addEventListener('mousedown', close);
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onScroll);
@@ -109,14 +115,6 @@ function ItemsCell({
       setOpen(false);
       return;
     }
-    const rect = btnRef.current?.getBoundingClientRect();
-    if (rect) {
-      const width = 320;
-      setPos({
-        top: rect.bottom + 6,
-        left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
-      });
-    }
     setOpen(true);
   };
 
@@ -134,10 +132,10 @@ function ItemsCell({
           className={cn('transition-transform', open && 'rotate-180')}
         />
       </button>
-      {open && pos && (
+      {open && (
         <div
           ref={popRef}
-          style={{ position: 'fixed', top: pos.top, left: pos.left, width: 320 }}
+          style={{ position: 'fixed', top: pos?.top ?? 0, left: pos?.left ?? -9999, maxHeight: pos?.maxHeight, visibility: pos ? 'visible' : 'hidden', width: 320, maxWidth: 'calc(100vw - 16px)', overflowY: 'auto' }}
           className="z-50 rounded-xl border border-gray-200 bg-white p-3 shadow-xl"
         >
           {fulfillmentStatus && (

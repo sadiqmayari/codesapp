@@ -77,8 +77,14 @@ function EditDayModal({
       }
     >
       <div className="space-y-3">
-        {target?.cell?.checkoutSource === 'auto' && (
-          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">This day was closed automatically. Set the real check-out time if you know it.</p>
+        {(target?.cell?.checkoutSource === 'auto' || target?.cell?.checkoutSource === 'auto_activity') && (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            This day was closed automatically
+            {target.cell.checkoutSource === 'auto_activity' && target.cell.lastActiveAt
+              ? ` at the last app activity (${fmtClock(target.cell.lastActiveAt)})`
+              : ''}
+            . Set the real check-out time if you know it.
+          </p>
         )}
         <Field label="Status" htmlFor="ed-status">
           <select id="ed-status" className={inputCls} value={status} onChange={(e) => setStatus(e.target.value as AttendanceStatus)}>
@@ -201,7 +207,7 @@ export default function GridTab() {
                         const cc = cellCode(c, off.has(d));
                         const future = d > report.today;
                         const self = m.userId === user?.id && user?.role !== 'owner';
-                        const label = `${m.name}, ${dayShort(d)}: ${cc.name}${c?.checkInAt ? `, ${fmtClock(c.checkInAt)} to ${fmtClock(c.checkOutAt)}` : ''}${c?.workedMinutes ? `, ${fmtHours(c.workedMinutes)}` : ''}${c?.checkoutSource === 'auto' ? ', closed automatically' : ''}`;
+                        const label = `${m.name}, ${dayShort(d)}: ${cc.name}${c?.checkInAt ? `, ${fmtClock(c.checkInAt)} to ${fmtClock(c.checkOutAt)}` : ''}${c?.workedMinutes ? `, ${fmtHours(c.workedMinutes)}` : ''}${c?.checkoutSource === 'auto' ? ', closed automatically' : c?.checkoutSource === 'auto_activity' ? ', closed automatically at last activity' : ''}`;
                         return (
                           <td key={d} className="p-0.5 text-center">
                             <button
@@ -217,7 +223,7 @@ export default function GridTab() {
                               )}
                             >
                               {cc.code}
-                              {c?.checkoutSource === 'auto' && <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-violet-500" aria-hidden />}
+                              {(c?.checkoutSource === 'auto' || c?.checkoutSource === 'auto_activity') && <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-violet-500" aria-hidden />}
                               {c?.overridden && <span className="absolute left-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-gray-400" aria-hidden />}
                             </button>
                           </td>

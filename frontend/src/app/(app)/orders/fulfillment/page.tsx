@@ -92,6 +92,7 @@ import { useToast } from '@/components/toast';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
 import { AnimatedNumber } from '@/components/ui/animated-number';
+import { FloatingAtRect } from '@/components/ui/popover';
 import { Modal, ConfirmDialog } from '@/components/ui/modal';
 import { PeriodSelect } from '@/components/orders/period-select';
 import { periodRange, PeriodKey, PERIOD_OPTIONS } from '@/lib/date-period';
@@ -2084,6 +2085,7 @@ function FulfillmentQueue({
   const [cursor, setCursor] = useState(-1);
   const cursorRef = useRef(-1);
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
+  const [syncBtnRect, setSyncBtnRect] = useState<{ left: number; right: number; top: number; bottom: number } | null>(null);
   const syncMenuRef = useRef<HTMLDivElement>(null);
   // Filter the board to a single courier (or 'all'). Applies under every tab.
   const [courierFilter, setCourierFilter] = useState<CourierType | 'all'>('all');
@@ -2134,8 +2136,7 @@ function FulfillmentQueue({
   // is never clipped by the table's overflow-x-auto wrapper.
   const [confMenu, setConfMenu] = useState<{
     gid: string;
-    x: number;
-    y: number;
+    rect: { left: number; right: number; top: number; bottom: number };
   } | null>(null);
   // Close the dropdown on any scroll/resize (a fixed menu would otherwise drift
   // away from its chevron) or an outside click. A click INSIDE the menu or on
@@ -3413,7 +3414,11 @@ function FulfillmentQueue({
         <div className="relative" ref={syncMenuRef}>
           <button
             type="button"
-            onClick={() => setSyncMenuOpen((o) => !o)}
+            onClick={(e) => {
+              const rc = e.currentTarget.getBoundingClientRect();
+              setSyncBtnRect({ left: rc.left, right: rc.right, top: rc.top, bottom: rc.bottom });
+              setSyncMenuOpen((o) => !o);
+            }}
             disabled={importing || reconciling || syncing}
             aria-haspopup="menu"
             aria-expanded={syncMenuOpen}
@@ -3433,10 +3438,12 @@ function FulfillmentQueue({
                   : 'Sync'}
             <ChevronDown size={13} className="opacity-60" />
           </button>
-          {syncMenuOpen && (
-            <div
+          {syncMenuOpen && syncBtnRect && (
+            <FloatingAtRect
               role="menu"
-              className="absolute right-0 z-40 mt-1 w-72 rounded-xl border border-line bg-surface p-1 shadow-lg"
+              rect={syncBtnRect}
+              align="end"
+              className="z-40 w-72 rounded-xl border border-line bg-surface p-1 shadow-lg"
             >
               {stores.length > 1 && (
                 <div className="border-b border-line px-3 py-1.5 text-xs text-muted">
@@ -3511,7 +3518,7 @@ function FulfillmentQueue({
                   Re-read what is already stored — no external call.
                 </span>
               </button>
-            </div>
+            </FloatingAtRect>
           )}
         </div>
         <button
@@ -4280,8 +4287,7 @@ function FulfillmentQueue({
                                               e.currentTarget.getBoundingClientRect();
                                             return {
                                               gid: r.orderGid,
-                                              x: Math.min(rc.left - 80, window.innerWidth - 232),
-                                              y: rc.bottom + 4,
+                                              rect: { left: rc.left, right: rc.right, top: rc.top, bottom: rc.bottom },
                                             };
                                           })(),
                                     )
@@ -4298,11 +4304,12 @@ function FulfillmentQueue({
                                 </button>
                               )}
                               {hasActions && open && confMenu && (
-                                <div
+                                <FloatingAtRect
                                   data-conf-menu
                                   role="menu"
-                                  style={{ left: Math.max(8, confMenu.x), top: confMenu.y }}
-                                  className="fixed z-50 w-56 rounded-xl border border-line bg-surface p-1.5 text-ink shadow-lg"
+                                  rect={confMenu.rect}
+                                  align="center"
+                                  className="z-50 w-56 rounded-xl border border-line bg-surface p-1.5 text-ink shadow-lg"
                                 >
                                   <button
                                     role="menuitem"
@@ -4372,7 +4379,7 @@ function FulfillmentQueue({
                                       {noRespGid === r.orderGid ? 'Marking…' : 'No response'}
                                     </button>
                                   )}
-                                </div>
+                                </FloatingAtRect>
                               )}
                             </div>
                           );

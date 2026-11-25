@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { WorkHoursLockService } from '../../../common/services/work-hours-lock.service';
 
 export interface JwtPayload {
   sub: number;
@@ -18,6 +19,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(
     config: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly workLock: WorkHoursLockService,
   ) {
     const secret = config.get<string>('JWT_SECRET');
     if (!secret) {
@@ -44,6 +46,8 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     if (payload.role !== 'super_admin' && (payload.tv ?? 0) !== user.token_version) {
       throw new UnauthorizedException('Session expired');
     }
+    // "Lock app after shift end" (403 WORK_HOURS_LOCKED; exempt roles skip).
+    await this.workLock.assertMayUseApp(user);
 
     return {
       userId: user.id,

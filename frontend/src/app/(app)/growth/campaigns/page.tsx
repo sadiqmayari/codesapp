@@ -1,12 +1,13 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ChevronDown, ChevronRight, Columns3, Download, History, Lock, Megaphone, Plus, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { count, fullMoney, money, pct, ratio } from '@/lib/format-number';
 import { growthApi, MODEL_LABEL, type CampaignNode, type Campaigns, type Overview } from '@/lib/growth';
 import { SkeletonRows } from '@/components/ui/skeleton';
+import { AnchoredPopover } from '@/components/ui/popover';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useGrowth } from '@/components/growth/growth-filters';
 import { EChart, useChartTheme } from '@/components/growth/echart';
@@ -195,6 +196,7 @@ function CampaignsView() {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [cols, setCols] = useState<ColId[]>(DEFAULT_COLS);
   const [picker, setPicker] = useState(false);
+  const pickerBtnRef = useRef<HTMLButtonElement>(null);
   const [sort, setSort] = useState<{ id: ColId; dir: 1 | -1 }>({ id: 'spend', dir: -1 });
   const [platform, setPlatform] = useState<string>('all');
   const [onlyActive, setOnlyActive] = useState(false);
@@ -363,11 +365,16 @@ function CampaignsView() {
               </select>
             )}
             <div className="relative">
-              <button type="button" onClick={() => setPicker((v) => !v)} aria-expanded={picker} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-semibold text-ink">
+              <button ref={pickerBtnRef} type="button" onClick={() => setPicker((v) => !v)} aria-expanded={picker} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-semibold text-ink">
                 <Columns3 size={14} /> Columns
               </button>
-              {picker && (
-                <div className="absolute right-0 z-30 mt-1 w-56 rounded-xl border border-line bg-surface p-2 shadow-xl">
+              <AnchoredPopover
+                open={picker}
+                onClose={() => setPicker(false)}
+                anchorRef={pickerBtnRef}
+                align="end"
+                className="w-56 rounded-xl border border-line bg-surface p-2 shadow-xl"
+              >
                   {COLS.map((c) => (
                     <label key={c.id} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs text-ink hover:bg-sunken">
                       <input type="checkbox" checked={cols.includes(c.id)} onChange={() => saveCols(cols.includes(c.id) ? cols.filter((x) => x !== c.id) : [...cols, c.id])} />
@@ -375,8 +382,7 @@ function CampaignsView() {
                     </label>
                   ))}
                   <button type="button" onClick={() => saveCols(DEFAULT_COLS)} className="mt-1 w-full rounded-md px-2 py-1 text-left text-xs font-semibold text-brand-700 hover:bg-sunken dark:text-brand-300">Reset to default</button>
-                </div>
-              )}
+              </AnchoredPopover>
             </div>
             <Link href="/growth/activity" className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-semibold text-ink hover:bg-sunken">
               <History size={14} /> Activity

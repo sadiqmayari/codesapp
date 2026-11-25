@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { AnchoredPopover } from '@/components/ui/popover';
 
 export interface DropdownItem {
   key: string;
@@ -15,7 +16,8 @@ export interface DropdownItem {
 /**
  * Keyboard-navigable menu (UI foundation — Phase A).
  * Up/Down move, Enter selects, Esc closes and returns focus to the trigger,
- * outside click closes.
+ * outside click closes. The menu is an AnchoredPopover: portalled, clamped
+ * inside the screen, flips up near the bottom and scrolls when long.
  */
 export function Dropdown({
   trigger,
@@ -47,17 +49,7 @@ export function Dropdown({
     setOpen(false);
     if (refocus) triggerRef.current?.focus();
   }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        close(false);
-      }
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open, close]);
+  const closeQuiet = useCallback(() => close(false), [close]);
 
   useEffect(() => {
     if (open) itemRefs.current[active]?.focus();
@@ -108,16 +100,16 @@ export function Dropdown({
       >
         {trigger}
       </button>
-      {open && (
-        <div
-          id={menuId}
-          role="menu"
-          onKeyDown={onMenuKey}
-          className={cn(
-            'absolute z-50 mt-2 min-w-[12rem] bg-surface border border-line rounded-xl shadow-lg py-1',
-            align === 'right' ? 'right-0' : 'left-0',
-          )}
-        >
+      <AnchoredPopover
+        open={open}
+        onClose={closeQuiet}
+        anchorRef={triggerRef}
+        align={align === 'right' ? 'end' : 'start'}
+        id={menuId}
+        role="menu"
+        onKeyDown={onMenuKey}
+        className="min-w-[12rem] bg-surface border border-line rounded-xl shadow-lg py-1"
+      >
           {items.map((it, i) => {
             const Icon = it.icon;
             return (
@@ -146,8 +138,7 @@ export function Dropdown({
               </button>
             );
           })}
-        </div>
-      )}
+      </AnchoredPopover>
     </div>
   );
 }

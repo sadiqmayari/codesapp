@@ -467,6 +467,10 @@ model Company {
   attendance_auto_checkout          Json?
   attendance_weekly_off             Json?
   attendance_annual_paid_leave      Int?
+  // Follow-ups (Nov-2026): lock the app for tracked staff after their shift end
+  // (+ buffer minutes, NULL = 30) until the next check-in window opens.
+  attendance_lock_after_shift       Boolean           @default(false)
+  attendance_lock_buffer_min        Int?
   created_at                        DateTime          @default(now())
 
   subscription         Subscription             @relation(fields: [subscription_id], references: [id])
@@ -528,6 +532,11 @@ model User {
   // but are NEVER marked late / early-leave and are excluded from every late or
   // absence-conversion penalty (relaxed by management).
   attendance_exempt_late       Boolean    @default(false)
+  // "Relaxed" timing: fixed shift + grace like everyone else, but NEVER marked
+  // late (no late deduction). Ignored when attendance_exempt_late (flexible).
+  attendance_never_late        Boolean    @default(false)
+  // Per-user override of companies.attendance_lock_after_shift (NULL = company).
+  attendance_lock_after_shift  Boolean?
   // Monthly gross base salary (tenant currency). NULL = no salary set (payroll
   // row shows blanks). salary_allowances = JSON array of {label, amount} lines
   // (fuel, food, etc.) added to gross. salary_overtime_rate = optional per-user
@@ -588,8 +597,11 @@ model AttendanceRecord {
   // created (auto-absent) or set (approved leave) rather than a self check-in.
   missed_checkout   Boolean          @default(false)
   system_marked     Boolean          @default(false)
-  // How the day was closed: self | auto (auto-checkout) | admin (override).
-  checkout_source   String?          @db.VarChar(8)
+  // How the day was closed: self | auto (auto-checkout, credited by schedule) |
+  // auto_activity (auto-checkout credited at the last app activity) | admin.
+  checkout_source   String?          @db.VarChar(16)
+  // Last app activity heartbeat while the row was open (auto-checkout credit).
+  last_active_at    DateTime?        @db.DateTime(3)
   note              String?          @db.VarChar(255)
   marked_by_user_id Int?
   created_at        DateTime         @default(now())

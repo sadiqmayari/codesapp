@@ -6,7 +6,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Lock } from 'lucide-react';
+import { WORK_HOURS_LOCKED, takeWorkLockNote } from '@/lib/api';
 import { useAuth } from '@/context/auth-context';
 import { CodesAppLogo } from '@/components/brand/codesapp-logo';
 
@@ -22,6 +23,9 @@ export default function LoginPage() {
   const router = useRouter();
   const [error, setError] = useState('');
   const [showPw, setShowPw] = useState(false);
+  // "Lock app after shift end": why the session ended (set by lib/api).
+  const [lockNote, setLockNote] = useState<string | null>(null);
+  useEffect(() => setLockNote(takeWorkLockNote()), []);
 
   // Already signed in (silent refresh restored the session) → go straight in.
   useEffect(() => {
@@ -44,10 +48,14 @@ export default function LoginPage() {
       // the credentials were VALID but the tenant is not yet activated.
       // A wrong password returns "Invalid credentials" → generic message,
       // so surfacing this does not leak account existence.
-      const msg = (
-        err as { response?: { data?: { message?: string } } }
-      )?.response?.data?.message;
-      if (msg && /not active/i.test(msg)) {
+      const data = (
+        err as { response?: { data?: { message?: string; code?: string } } }
+      )?.response?.data;
+      const msg = data?.message;
+      if (data?.code === WORK_HOURS_LOCKED) {
+        takeWorkLockNote();
+        setLockNote(msg ?? 'Outside your working hours.');
+      } else if (msg && /not active/i.test(msg)) {
         setError(
           'Your account is pending admin approval. You will be able to sign in once an administrator activates it.',
         );
@@ -66,6 +74,13 @@ export default function LoginPage() {
           </h1>
           <p className="text-gray-500 mt-1">Sign in to your account</p>
         </div>
+
+        {lockNote && (
+          <div role="status" className="mb-4 flex gap-3 rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-900">
+            <Lock size={18} className="mt-0.5 shrink-0 text-orange-700" aria-hidden />
+            <p>{lockNote}</p>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>

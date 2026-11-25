@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
+import { startAttendanceHeartbeat } from '@/lib/attendance-heartbeat';
 import { getMyToday, onAttendanceChanged, tenantHHMM, tenantNowHHMM, toMin, type MyToday } from '@/lib/attendance';
 
 /**
@@ -66,6 +67,18 @@ export function useMyToday() {
   const rec = today?.record ?? null;
   const checkedIn = !!rec?.checkInAt;
   const open = checkedIn && !rec?.checkOutAt;
+
+  // While the day is open, report app activity so a forgotten check-out is
+  // credited at the last activity (extra hours count).
+  useEffect(() => {
+    if (!tracked || !open) return;
+    return startAttendanceHeartbeat();
+  }, [tracked, open]);
+
+  // "Lock app after shift end": minutes until the lock (null = no lock ahead).
+  const locksInMin = today?.appLocksAt
+    ? Math.max(0, Math.round((new Date(today.appLocksAt).getTime() - now) / 60000))
+    : null;
   const workedMin =
     rec?.checkInAt != null
       ? Math.max(0, Math.round(((rec.checkOutAt ? new Date(rec.checkOutAt).getTime() : now) - new Date(rec.checkInAt).getTime()) / 60000))
@@ -105,5 +118,6 @@ export function useMyToday() {
     inWindow,
     shiftOver,
     doneForToday,
+    locksInMin,
   };
 }

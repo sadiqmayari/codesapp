@@ -27,7 +27,10 @@ import {
   getHolidays,
   getMembers,
   setAttendanceSettings,
+  timingModeOf,
+  TIMING_LABEL,
   updateMember,
+  type TimingMode,
   type Allowance,
   type AttendanceMember,
   type AttendanceSettings,
@@ -37,8 +40,10 @@ import {
   type LateMethod,
   type MemberPatch,
   type OvertimeMethod,
+  type OfficeNetwork,
   type StatutoryDeduction,
 } from '@/lib/attendance';
+import { ipMatchesEntry } from '@/lib/ip-match';
 import { cn } from '@/lib/utils';
 import { Field, errMsg, inputCls } from './shared';
 
@@ -76,6 +81,83 @@ function Row({ title, hint, children }: { title: string; hint?: string; children
 }
 
 const num = (v: string) => (v === '' ? 0 : Number(v));
+
+function OfficeNetworksEditor({
+  value,
+  onChange,
+  yourIp,
+}: {
+  value: OfficeNetwork[];
+  onChange: (v: OfficeNetwork[]) => void;
+  yourIp: string;
+}) {
+  const yours = yourIp ? value.findIndex((n) => ipMatchesEntry(yourIp, n.ip)) : -1;
+  const setAt = (i: number, x: Partial<OfficeNetwork>) => onChange(value.map((n, j) => (j === i ? { ...n, ...x } : n)));
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-ink">Office networks</p>
+          <p className="text-xs text-muted">
+            Members set to &quot;Office network only&quot; can check in from any of these. Use each office WiFi&apos;s public IP
+            (ask your internet provider for a static IP, or add it again if it changes).
+          </p>
+        </div>
+        {yourIp && yours < 0 && value.length < 30 && (
+          <Button
+            size="sm"
+            className="shrink-0"
+            onClick={() => onChange([...value, { label: `Office WiFi ${value.length + 1}`, ip: yourIp }])}
+          >
+            <Plus size={14} /> Add the network I&apos;m on
+          </Button>
+        )}
+      </div>
+      {value.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-line px-3 py-4 text-center text-xs text-muted">
+          No office networks yet. Open this page on the office WiFi and press &quot;Add the network I&apos;m on&quot;.
+        </p>
+      ) : (
+        <ul className="divide-y divide-line rounded-xl border border-line">
+          {value.map((n, i) => (
+            <li key={i} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 p-2.5 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_auto_auto] sm:items-center">
+              <input
+                aria-label={`Network ${i + 1} name`}
+                className={inputCls}
+                value={n.label}
+                maxLength={40}
+                placeholder="Office WiFi 1"
+                onChange={(e) => setAt(i, { label: e.target.value })}
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="sm:order-last"
+                aria-label={`Remove ${n.label || 'network'}`}
+                onClick={() => onChange(value.filter((_, j) => j !== i))}
+              >
+                <Trash2 size={14} />
+              </Button>
+              <input
+                aria-label={`Network ${i + 1} public IP`}
+                className={cn(inputCls, 'tabular-nums')}
+                value={n.ip}
+                maxLength={64}
+                placeholder="203.0.113.10 or 10.0.0.0/24"
+                onChange={(e) => setAt(i, { ip: e.target.value.trim() })}
+              />
+              <span className="self-center">{i === yours ? <Badge tone="success">You&apos;re here</Badge> : null}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-xs text-muted tabular-nums">
+        Your IP now: {yourIp || 'unknown'}
+        {yours >= 0 ? ` · matches ${value[yours].label}` : ''}
+      </p>
+    </div>
+  );
+}
 
 function HolidaysCard() {
   const toast = useToast();
@@ -188,6 +270,8 @@ function MemberSheet({
       graceMinutes: f.graceMinutes,
       requireOfficeIp: f.requireOfficeIp,
       exemptLate: f.exemptLate,
+      neverLate: !f.exemptLate && !!f.neverLate,
+      lockAfterShift: f.lockAfterShift ?? null,
       requiredMinutes: f.requiredMinutes,
       weeklyOff: f.weeklyOff,
       joinedOn: f.joinedOn ?? '',
@@ -223,10 +307,36 @@ function MemberSheet({
       <div className="space-y-5">
         <section className="space-y-3">
           <h3 className="text-sm font-semibold text-ink">Schedule</h3>
-          <label className="flex items-center gap-3">
-            <Switch checked={f.exemptLate} onChange={(v) => set({ exemptLate: v })} label="Flexible timing" />
-            <span className="text-sm text-ink">Flexible timing — no fixed shift, never late; works to a daily hours target</span>
-          </label>
+          <div className="space-y-1.5">
+            <p id="ms-timing" className="text-xs font-semibold text-muted">Timing</p>
+            <div role="radiogroup" aria-labelledby="ms-timing" className="grid grid-cols-3 gap-1 rounded-xl bg-sunken p-1">
+              {(['fixed', 'relaxed', 'flexible'] as TimingMode[]).map((m) => {
+                const on = timingModeOf(f) === m;
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    onClick={() => set({ exemptLate: m === 'flexible', neverLate: m === 'relaxed' })}
+                    className={cn(
+                      'h-10 rounded-lg px-2 text-sm font-semibold transition-colors',
+                      on ? 'bg-surface text-brand-700 shadow-sm' : 'text-muted hover:text-ink',
+                    )}
+                  >
+                    {TIMING_LABEL[m]}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted">
+              {timingModeOf(f) === 'fixed'
+                ? 'Fixed shift with a grace period. Late arrivals are marked and follow the late policy.'
+                : timingModeOf(f) === 'relaxed'
+                  ? 'Fixed shift, check-in window, shift end and overtime, but never marked late (no late deduction).'
+                  : 'No fixed shift and never late. Works to a daily hours target.'}
+            </p>
+          </div>
           {f.exemptLate ? (
             <Field label="Required hours a day" htmlFor="ms-req" hint="Check-out reminder and auto-checkout credit use this.">
               <input
@@ -241,7 +351,7 @@ function MemberSheet({
               />
             </Field>
           ) : (
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <Field label="Shift start" htmlFor="ms-start" hint={`Default ${settings.workStartTime}`}>
                 <input id="ms-start" type="time" className={inputCls} value={f.workStart ?? ''} onChange={(e) => set({ workStart: e.target.value || null })} />
               </Field>
@@ -274,8 +384,29 @@ function MemberSheet({
           </div>
           <label className="flex items-center gap-3">
             <Switch checked={f.requireOfficeIp} onChange={(v) => set({ requireOfficeIp: v })} label="Office network only" />
-            <span className="text-sm text-ink">Can only check in/out from the office network</span>
+            <span className="text-sm text-ink">
+              Can only check in/out from office WiFi
+              {settings.officeNetworks.length ? ` (${settings.officeNetworks.map((n) => n.label).join(', ')})` : ' (add networks in General settings first)'}
+            </span>
           </label>
+          {!f.exemptLate && (
+            <Field
+              label="Lock app after shift end"
+              htmlFor="ms-lock"
+              hint={`Company default: ${settings.lockAfterShift ? `on, ${settings.lockBufferMinutes} min after shift end` : 'off'}. Days off are never locked.`}
+            >
+              <select
+                id="ms-lock"
+                className={`${inputCls} sm:w-72`}
+                value={f.lockAfterShift == null ? 'default' : f.lockAfterShift ? 'on' : 'off'}
+                onChange={(e) => set({ lockAfterShift: e.target.value === 'default' ? null : e.target.value === 'on' })}
+              >
+                <option value="default">Company default ({settings.lockAfterShift ? 'lock' : "don't lock"})</option>
+                <option value="on">Lock after shift end</option>
+                <option value="off">Don&apos;t lock</option>
+              </select>
+            </Field>
+          )}
         </section>
 
         <section className="space-y-3">
@@ -369,6 +500,7 @@ export default function SettingsTab() {
   const [members, setMembers] = useState<AttendanceMember[] | null>(null);
   const [edit, setEdit] = useState<AttendanceMember | null>(null);
   const [saving, setSaving] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const load = useCallback(() => {
     getAttendanceSettings()
@@ -380,6 +512,18 @@ export default function SettingsTab() {
     getMembers().then(setMembers).catch(() => setMembers([]));
   }, [toast]);
   useEffect(load, [load]);
+
+  const setOfficeOnlyForAll = async (on: boolean) => {
+    if (!members) return;
+    setBulkBusy(true);
+    const todo = members.filter((m) => m.requireOfficeIp !== on);
+    const res = await Promise.allSettled(todo.map((m) => updateMember(m.userId, { requireOfficeIp: on })));
+    const failed = res.filter((r) => r.status === 'rejected').length;
+    if (failed) toast.error(`${failed} member(s) could not be updated`);
+    else toast.success(on ? 'Office WiFi required for everyone' : 'Office WiFi no longer required');
+    getMembers().then(setMembers).catch(() => undefined);
+    setBulkBusy(false);
+  };
 
   const dirty = useMemo(() => JSON.stringify(saved) !== JSON.stringify(draft), [saved, draft]);
   if (!draft || !saved) return <SkeletonRows rows={8} />;
@@ -395,7 +539,9 @@ export default function SettingsTab() {
         workStartTime: draft.workStartTime,
         workEndTime: draft.workEndTime ?? '',
         graceMinutes: draft.graceMinutes,
-        officeIps: draft.officeIps,
+        officeNetworks: draft.officeNetworks.filter((n) => n.ip.trim()),
+        lockAfterShift: draft.lockAfterShift,
+        lockBufferMinutes: draft.lockBufferMinutes,
         checkinWindowMinutes: draft.checkinWindowMinutes,
         payrollPolicy: { ...p, statutory: p.statutory.filter((x) => x.label.trim()) },
         autoCheckout: draft.autoCheckout,
@@ -442,16 +588,46 @@ export default function SettingsTab() {
           <Row title="Check-in window" hint={`Opens 30 min before the shift, closes this long after it starts (${fmtHours(draft.checkinWindowMinutes)}).`}>
             <input aria-label="Check-in window minutes" type="number" min="15" max="1440" className={`${inputCls} w-24`} value={draft.checkinWindowMinutes} onChange={(e) => setDraft({ ...draft, checkinWindowMinutes: num(e.target.value) })} />
           </Row>
-          <Row title="Office network" hint={`IPs or ranges, comma separated. Your IP now: ${draft.yourIp || 'unknown'}`}>
-            <div className="flex w-72 gap-2">
-              <input aria-label="Office IPs" className={inputCls} value={draft.officeIps} placeholder="203.0.113.10, 10.0.0.0/24" onChange={(e) => setDraft({ ...draft, officeIps: e.target.value })} />
-              {draft.yourIp && !draft.officeIps.includes(draft.yourIp) && (
-                <Button variant="secondary" size="sm" onClick={() => setDraft({ ...draft, officeIps: [draft.officeIps.trim(), draft.yourIp].filter(Boolean).join(', ') })}>
-                  Add mine
-                </Button>
-              )}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader title="Office WiFi" description="Optional: restrict check-in to office networks for chosen members." />
+        <CardBody>
+          <OfficeNetworksEditor
+            value={draft.officeNetworks}
+            yourIp={draft.yourIp}
+            onChange={(v) => setDraft({ ...draft, officeNetworks: v })}
+          />
+          {members && members.length > 0 && draft.officeNetworks.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
+              <span className="text-xs text-muted">
+                {members.filter((m) => m.requireOfficeIp).length} of {members.length} members are office-only.
+              </span>
+              <span className="flex-1" />
+              <Button variant="secondary" size="sm" loading={bulkBusy} onClick={() => setOfficeOnlyForAll(true)}>
+                Turn on for all
+              </Button>
+              <Button variant="ghost" size="sm" loading={bulkBusy} onClick={() => setOfficeOnlyForAll(false)}>
+                Turn off for all
+              </Button>
             </div>
+          )}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader title="App access" description="Stop fixed-shift staff using the app after their shift." />
+        <CardBody>
+          <Row title="Lock app after shift end" hint="Signed out after shift end + buffer until their next check-in window. Owner, admins, HR managers and flexible staff are never locked. Days off are never locked.">
+            <Switch checked={draft.lockAfterShift} onChange={(v) => setDraft({ ...draft, lockAfterShift: v })} label="Lock app after shift end" />
           </Row>
+          {draft.lockAfterShift && (
+            <Row title="Buffer after shift end (min)" hint="Time to wrap up and check out before the lock.">
+              <input aria-label="Lock buffer minutes" type="number" min="0" max="240" className={`${inputCls} w-24`} value={draft.lockBufferMinutes} onChange={(e) => setDraft({ ...draft, lockBufferMinutes: num(e.target.value) })} />
+            </Row>
+          )}
+          <p className="pt-2 text-xs text-muted">Each member can override this in their settings.</p>
         </CardBody>
       </Card>
 
@@ -463,7 +639,7 @@ export default function SettingsTab() {
           </Row>
           {draft.autoCheckout.mode !== 'off' && (
             <>
-              <Row title="Fixed-shift staff" hint="Credited up to the shift end, never past it.">
+              <Row title="Fixed-shift staff" hint="Credited at shift end, or the last activity in the app if later (extra hours count).">
                 <select aria-label="Fixed-shift auto-checkout" className={`${inputCls} w-56`} value={draft.autoCheckout.mode} onChange={(e) => setA({ mode: e.target.value as 'shift_end' | 'max_hours' })}>
                   <option value="shift_end">At shift end + {draft.autoCheckout.afterEndMin} min</option>
                   <option value="max_hours">After {draft.autoCheckout.maxHours} hours open</option>
@@ -474,7 +650,7 @@ export default function SettingsTab() {
                   <input aria-label="Wait after shift end" type="number" min="0" max="600" className={`${inputCls} w-24`} value={draft.autoCheckout.afterEndMin} onChange={(e) => setA({ afterEndMin: num(e.target.value) })} />
                 </Row>
               )}
-              <Row title="Max hours open" hint="Flexible staff are closed after this, credited their required hours.">
+              <Row title="Max hours open" hint="Hard limit. Flexible staff are closed after this, credited their required hours or last activity, whichever is later.">
                 <input aria-label="Max hours" type="number" min="2" max="20" className={`${inputCls} w-24`} value={draft.autoCheckout.maxHours} onChange={(e) => setA({ maxHours: num(e.target.value) })} />
               </Row>
             </>
@@ -584,7 +760,7 @@ export default function SettingsTab() {
 
       <div className="xl:col-span-2">
         <Card>
-          <CardHeader title="Members" description="Click a member to set their shift, flexible timing, salary and allowances." />
+          <CardHeader title="Members" description="Click a member to set their shift, timing (Fixed, Relaxed or Flexible), app lock, salary and allowances." />
           <CardBody>
             {!members ? (
               <SkeletonRows rows={4} />
@@ -607,6 +783,7 @@ export default function SettingsTab() {
                         <span className="tabular-nums">
                           {m.effectiveStart}–{m.effectiveEnd ?? '+8h'}
                           {m.workStart || m.workEnd ? <Badge className="ml-1.5">own</Badge> : null}
+                          {m.neverLate ? <Badge tone="info" className="ml-1.5">Relaxed</Badge> : null}
                         </span>
                       ),
                   },
@@ -614,6 +791,7 @@ export default function SettingsTab() {
                   { key: 'salary', header: 'Salary', align: 'right', sortValue: (m) => m.salaryAmount ?? 0, render: (m) => (m.payHidden ? <span className="text-muted">hidden</span> : m.salaryAmount ? fmtMoney(m.salaryAmount, p.currency) : <span className="text-amber-700">not set</span>) },
                   { key: 'allow', header: 'Allowances', align: 'right', render: (m) => (m.allowances.length ? fmtMoney(m.allowances.reduce((s, a) => s + a.amount, 0), p.currency) : '—') },
                   { key: 'ip', header: 'Office only', render: (m) => (m.requireOfficeIp ? 'Yes' : '—') },
+                  { key: 'lock', header: 'App lock', render: (m) => (m.effectiveLockAfterShift ? 'After shift' : '—') },
                 ]}
               />
             )}

@@ -1,6 +1,8 @@
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
+  IsNotEmpty,
   IsIn,
   IsInt,
   IsObject,
@@ -17,6 +19,17 @@ import { PayrollPolicyDto } from './payroll.dto';
 
 // Declared BEFORE AttendanceSettingsDto: decorator metadata references it at
 // class-definition time (a later class = TDZ ReferenceError at boot).
+export class OfficeNetworkDto {
+  @IsString()
+  @MaxLength(40)
+  label!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  ip!: string;
+}
+
 export class AutoCheckoutDto {
   @IsOptional()
   @IsIn(['off', 'shift_end', 'max_hours'])
@@ -98,4 +111,23 @@ export class AttendanceSettingsDto {
   @Min(0)
   @Max(365)
   annualPaidLeave?: number | null;
+
+  // Named office networks (supersedes the legacy `officeIps` CSV string).
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(30)
+  @ValidateNested({ each: true })
+  @Type(() => OfficeNetworkDto)
+  officeNetworks?: OfficeNetworkDto[];
+
+  // Lock the app for tracked staff after their shift end (+ buffer minutes).
+  @IsOptional()
+  @IsBoolean()
+  lockAfterShift?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(240)
+  lockBufferMinutes?: number | null;
 }

@@ -12,7 +12,7 @@ import {
   shiftEndInstant,
   shiftMinutes,
 } from './schedule';
-import { DEFAULT_REQUIRED_MINUTES } from './auto-checkout';
+import { DEFAULT_REQUIRED_MINUTES, autoEarnsOvertime, isAutoSource } from './auto-checkout';
 
 export interface PayslipMember {
   userId: number;
@@ -22,6 +22,8 @@ export interface PayslipMember {
   allowances: Allowance[];
   overtimeRate: number | null;
   flexible: boolean;
+  /** "Relaxed" timing: fixed shift, never late (no late count / deduction). */
+  neverLate?: boolean;
   start: string;
   end: string | null;
   grace: number;
@@ -185,7 +187,7 @@ export function computePayslip(input: PayslipInput): Payslip | null {
       offDays += 1;
       if (r?.checkInAt && w > 0) {
         offDaysWorked += 1;
-        if (r.checkoutSource !== 'auto' && w >= policy.minOvertimeMinutes) otMinutes += w;
+        if (autoEarnsOvertime(r.checkoutSource) && w >= policy.minOvertimeMinutes) otMinutes += w;
       }
       continue;
     }
@@ -211,14 +213,14 @@ export function computePayslip(input: PayslipInput): Payslip | null {
     const attended = r.status === 'present' || r.status === 'half_day';
     if (!attended) continue;
 
-    if (r.checkoutSource === 'auto') autoClosed += 1;
+    if (isAutoSource(r.checkoutSource)) autoClosed += 1;
 
-    if (!m.flexible && r.isLate && r.checkInAt) {
+    if (!m.flexible && !m.neverLate && r.isLate && r.checkInAt) {
       lateCount += 1;
       lateMinutes += Math.max(0, minutesSinceShiftStart(r.checkInAt, d, m.start, tz) - m.grace);
     }
 
-    if (r.checkoutSource === 'auto' || !r.checkOutAt || !r.checkInAt) continue;
+    if (!autoEarnsOvertime(r.checkoutSource) || !r.checkOutAt || !r.checkInAt) continue;
     let dayOt = 0;
     if (!m.flexible && policy.otOnlyAfterShiftEnd && m.end) {
       const endAt = shiftEndInstant(d, m.start, m.end, tz);
@@ -235,7 +237,7 @@ export function computePayslip(input: PayslipInput): Payslip | null {
   const unpaidLeaveDeduction = unpaidLeave * dayRate;
   const halfDayDeduction = halfDay * 0.5 * dayRate;
   let lateDeduction = 0;
-  if (!m.flexible) {
+  if (!m.flexible && !m.neverLate) {
     if (policy.lateMethod === 'n_lates_absent') lateDeduction = Math.floor(lateCount / policy.latesPerAbsent) * dayRate;
     else if (policy.lateMethod === 'fixed_per_late') lateDeduction = lateCount * policy.lateFixedAmount;
     else if (policy.lateMethod === 'per_minute') lateDeduction = lateMinutes * minuteRate;
