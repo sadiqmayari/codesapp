@@ -24,7 +24,7 @@ import {
 import { buildCourierInvoicePdf } from '../courier-invoice-pdf.util';
 import { CourierInvoiceRegistry } from './courier-invoice.registry';
 import { CourierRegistryService } from '../courier-registry.service';
-import { TcsAdapter, TcsCredentials } from '../adapters/tcs.adapter';
+import { TcsAdapter, TcsCredentials, scopeTcsInvoiceRows, tcsInvoiceToParsed } from '../adapters/tcs.adapter';
 import {
   DeductionComponent,
   ParsedInvoice,
@@ -143,12 +143,31 @@ export class CourierInvoiceService implements OnModuleInit {
     if (!no) throw new BadRequestException('Enter the TCS invoice number.');
     const { creds } = await this.couriers.requireCredentials(companyId, 'tcs');
     const adapter = this.couriers.getAdapter('tcs') as TcsAdapter;
-    let parsed: ParsedInvoice;
+    let rows: any[];
     try {
-      parsed = await adapter.getPaymentInvoice(creds as TcsCredentials, no);
+      rows = await adapter.getPaymentInvoiceRows(creds as TcsCredentials, no);
     } catch (err) {
       throw new BadRequestException((err as Error)?.message || 'TCS invoice could not be fetched.');
     }
+    // A TCS account can be shared by several businesses (one cost center
+    // each); keep only this tenant's parcels and report the rest.
+    const cns = [...new Set(rows.map((r) => String(r?.cnsg_no ?? '').trim()).filter(Boolean))];
+    const own = new Set<string>();
+    for (let i = 0; i < cns.length; i += 500) {
+      const found = await this.prisma.shipment.findMany({
+        where: { company_id: companyId, courier_tracking_number: { in: cns.slice(i, i + 500) } },
+        select: { courier_tracking_number: true },
+      });
+      for (const f of found) if (f.courier_tracking_number) own.add(f.courier_tracking_number);
+    }
+    const { kept, excluded } = scopeTcsInvoiceRows(rows, own, (creds as TcsCredentials).costCenterCode);
+    if (!kept.length) {
+      throw new BadRequestException(
+        `None of the ${rows.length} parcels on TCS invoice ${no} belong to your account (they are other businesses on the same TCS account).`,
+      );
+    }
+    const parsed: ParsedInvoice = tcsInvoiceToParsed(no, kept);
+    if (excluded.lines) parsed.excludedOtherAccount = excluded;
     return this.previewParsed(companyId, 'tcs', parsed, {
       userId,
       providedInvoiceNumber: no,
@@ -201,6 +220,7 @@ export class CourierInvoiceService implements OnModuleInit {
     // Carry display-only settlement details (cheque no., settlement-level charges)
     // through the persisted summary JSON so the PDF + in-app View can show them.
     summary.chequeNumber = parsed.chequeNumber ?? null;
+    if (parsed.excludedOtherAccount) summary.excludedOtherAccount = parsed.excludedOtherAccount;
     summary.extraDeductions = parsed.extraDeductions;
 
     // Archive the original file alongside the reconciliation that consumed it.

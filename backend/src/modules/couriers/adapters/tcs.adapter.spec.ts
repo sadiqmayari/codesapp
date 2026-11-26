@@ -5,6 +5,7 @@ import {
   splitTcsAddress,
   splitTcsName,
   maskSecrets,
+  scopeTcsInvoiceRows,
   tcsErrorText,
   tcsInvoiceToParsed,
   toTcsMobile,
@@ -134,6 +135,17 @@ describe('TcsAdapter', () => {
     ).toThrow(/Invalid COD/);
     const noCc = { ...base, costCenterCode: '', pickupAddress: 'Addr', pickupCity: 'Karachi', pickupPhone: '03001234567' };
     expect(() => a.buildBookingBody(noCc as any, { ...input, codAmount: 10 })).toThrow(/cost center not configured/);
+  });
+
+  it('scopes a shared-account invoice to this tenant (own CN or own cost center)', () => {
+    const rows = [
+      { cnsg_no: '1', codamount: 1000, status: 'Delivered' },
+      { cnsg_no: '2', codamount: 500, costcentername: 'Bin Ali Perfume', status: 'Delivered' },
+      { cnsg_no: '3', codamount: 700, costcentername: 'Other Shop', status: 'Delivered' },
+    ];
+    const { kept, excluded } = scopeTcsInvoiceRows(rows, new Set(['1']), 'bin ali perfume');
+    expect(kept.map((r) => r.cnsg_no)).toEqual(['1', '2']);
+    expect(excluded).toEqual({ lines: 1, cod: 700 });
   });
 
   it('masks every secret in messages', () => {

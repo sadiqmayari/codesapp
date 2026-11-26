@@ -286,6 +286,15 @@ export function CourierInvoiceModal({
             </p>
           </div>
 
+          {summary.excludedOtherAccount && summary.excludedOtherAccount.lines > 0 && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {summary.excludedOtherAccount.lines} parcel{summary.excludedOtherAccount.lines === 1 ? '' : 's'} on
+              this courier invoice belong to other businesses on the same courier account (
+              {preview.currency ?? 'PKR'} {Math.round(summary.excludedOtherAccount.cod).toLocaleString()} COD) and
+              were left out. The totals below are yours only.
+            </p>
+          )}
+
           <div className="grid grid-cols-3 gap-2">
             {tile('COD collected', money(preview.totals.codCollected))}
             {tile('Deductions', `- ${money(preview.totals.deductions)}`, 'amber')}

@@ -78,6 +78,9 @@ export interface ParsedInvoice {
   invoiceNumber: string | null;
   /** Optional cheque/payment reference printed under the invoice number. */
   chequeNumber?: string | null;
+  /** Lines on the courier's invoice that belong to OTHER businesses on a
+   *  shared courier account (TCS) — left out of this statement + totals. */
+  excludedOtherAccount?: { lines: number; cod: number } | null;
   /** The date the courier generated the statement. */
   reportDate: Date | null;
   currency: string | null;
@@ -166,6 +169,8 @@ export interface ReconcileSummary {
   }>;
   /** Cheque/payment reference carried through for display (e.g. Leopards). */
   chequeNumber?: string | null;
+  /** See ParsedInvoice.excludedOtherAccount. */
+  excludedOtherAccount?: { lines: number; cod: number } | null;
   /** Settlement-level deduction components (see ParsedInvoice.extraDeductions). */
   extraDeductions?: DeductionComponent[];
   /**

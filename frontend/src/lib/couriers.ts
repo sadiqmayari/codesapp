@@ -944,6 +944,8 @@ export interface CourierInvoiceLine {
 }
 
 export interface CourierInvoiceSummary {
+  /** Lines for OTHER businesses on a shared courier account (TCS), left out. */
+  excludedOtherAccount?: { lines: number; cod: number } | null;
   totalRows: number;
   paidRows: number;
   matched: number;
@@ -1011,6 +1013,8 @@ export interface CourierInvoice {
   courierName: string;
   invoiceNumber: string | null;
   chequeNumber?: string | null;
+  /** Lines for OTHER businesses on a shared courier account (TCS), left out. */
+  excludedOtherAccount?: { lines: number; cod: number } | null;
   reportDate: string | null;
   currency: string | null;
   sourceFileUrl: string | null;

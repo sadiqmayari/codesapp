@@ -965,6 +965,11 @@ export class TcsAdapter implements CourierAdapter {
 
   /** TCS payment invoice → the normalized statement shape. */
   async getPaymentInvoice(c: TcsCredentials, invoiceNo: string): Promise<ParsedInvoice> {
+    return tcsInvoiceToParsed(invoiceNo, await this.getPaymentInvoiceRows(c, invoiceNo));
+  }
+
+  /** Raw `paymentinvoice` rows (so the caller can scope a shared account). */
+  async getPaymentInvoiceRows(c: TcsCredentials, invoiceNo: string): Promise<any[]> {
     const { res, json } = await this.call(c, '/ecom/api/booking/paymentinvoice', {
       query: { invoicenumber: invoiceNo },
       withAccess: true,
@@ -974,8 +979,40 @@ export class TcsAdapter implements CourierAdapter {
     if (!res.ok || !rows.length) {
       throw new Error(`TCS returned no lines for invoice ${invoiceNo}: ${maskSecrets(tcsErrorText(json), c)}`);
     }
-    return tcsInvoiceToParsed(invoiceNo, rows);
+    return rows;
   }
+}
+
+/**
+ * Scope a TCS payment invoice to ONE tenant. A TCS account can be SHARED
+ * (a reseller account with one cost center per business), and its payment
+ * invoice then lists every business's parcels. Keep a row when its CN is one
+ * of the tenant's own parcels OR the row names the tenant's cost center; the
+ * rest are dropped and reported. Works the same for a non-shared account
+ * (its rows all match). Pure + unit-tested.
+ */
+export function scopeTcsInvoiceRows(
+  rows: any[],
+  ownCns: Set<string>,
+  costCenterCode?: string | null,
+): { kept: any[]; excluded: { lines: number; cod: number } } {
+  const cc = String(costCenterCode ?? '').trim().toLowerCase();
+  const rowCc = (r: any) =>
+    str(r?.costcentercode ?? r?.costcenter ?? r?.costcentername ?? pick(r, /cost.?cent/i)).toLowerCase();
+  const kept: any[] = [];
+  let lines = 0;
+  let cod = 0;
+  for (const r of rows) {
+    const cn = str(r?.cnsg_no ?? r?.consignmentno ?? r?.cn);
+    const mine = (cn && ownCns.has(cn)) || (!!cc && rowCc(r) === cc);
+    if (mine) kept.push(r);
+    else {
+      lines++;
+      const n = Number(String(r?.codamount ?? '').replace(/[^\d.-]/g, ''));
+      if (Number.isFinite(n)) cod += n;
+    }
+  }
+  return { kept, excluded: { lines, cod: Math.round(cod * 100) / 100 } };
 }
 
 /** Pure: TCS `paymentinvoice` rows → ParsedInvoice (unit-tested). */
