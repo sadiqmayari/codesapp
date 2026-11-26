@@ -22,7 +22,8 @@ import {
   TargetQueryDto,
 } from './dtos/ad-manage.dto';
 import { GrowthTargetService } from './services/growth-target.service';
-import { AskGrowthDto, ConnectAdAccountDto, GrowthRangeDto, GrowthStoreDto, UpdateAdAccountDto } from './dtos/growth.dto';
+import { AskGrowthDto, ConnectAdAccountDto, GrowthRangeDto, GrowthStoreDto, TikTokConnectDto, TikTokExchangeDto, UpdateAdAccountDto } from './dtos/growth.dto';
+import { TikTokOAuthService } from './platforms/tiktok/tiktok-oauth.service';
 import { ModuleGuard } from '../../common/guards/module.guard';
 import { RequireModule } from '../../common/decorators/require-module.decorator';
 import { PRIVILEGED } from '../../common/auth/roles';
@@ -44,6 +45,7 @@ export class GrowthController {
     private readonly manage: AdManageService,
     private readonly creator: AdCreateService,
     private readonly targets: GrowthTargetService,
+    private readonly tiktok: TikTokOAuthService,
   ) {}
 
   // ── Monthly net sales target + coach ───────────────────────────────────────
@@ -126,6 +128,22 @@ export class GrowthController {
   @Post('accounts')
   connect(@CurrentUser() u: U, @Body() dto: ConnectAdAccountDto) {
     return this.growth.connect(u.companyId, dto);
+  }
+
+  // ── TikTok "Connect with TikTok" (advertiser authorisation) ────────────────
+  @Post('tiktok/oauth/url')
+  tiktokAuthUrl(@CurrentUser() u: U) {
+    return this.tiktok.authUrl(u.companyId, u.userId);
+  }
+
+  @Post('tiktok/oauth/exchange')
+  tiktokExchange(@CurrentUser() u: U, @Body() dto: TikTokExchangeDto) {
+    return this.tiktok.exchange(u.companyId, u.userId, dto.authCode, dto.state);
+  }
+
+  @Post('tiktok/oauth/connect')
+  tiktokConnect(@CurrentUser() u: U, @Body() dto: TikTokConnectDto) {
+    return this.growth.connectTikTok(u.companyId, dto);
   }
 
   @Patch('accounts/:id')

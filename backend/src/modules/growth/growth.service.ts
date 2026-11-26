@@ -1,3 +1,4 @@
+import { TikTokOAuthService } from './platforms/tiktok/tiktok-oauth.service';
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
@@ -31,6 +32,7 @@ export class GrowthService {
     readonly forecast: GrowthForecastService,
     readonly opportunities: GrowthOpportunityService,
     readonly ai: GrowthAiService,
+    private readonly tiktokOAuth: TikTokOAuthService,
   ) {}
 
   catalog() {
@@ -62,6 +64,27 @@ export class GrowthService {
     const acc = await this.accounts.connect(companyId, dto);
     await this.sync.request(acc.id, 90); // backfill 90 days of history right away
     return acc;
+  }
+
+  /** Connect the advertisers picked after "Connect with TikTok" (token parked server-side by TikTokOAuthService). */
+  async connectTikTok(companyId: number, dto: { pickId: string; advertiserIds: string[]; storeId?: number | null }) {
+    const pick = await this.tiktokOAuth.takePick(companyId, dto.pickId);
+    const allowed = new Set(pick.advertisers.map((a) => a.id));
+    const connected: number[] = [];
+    const failed: Array<{ advertiserId: string; error: string }> = [];
+    for (const id of [...new Set(dto.advertiserIds)]) {
+      if (!allowed.has(id)) {
+        failed.push({ advertiserId: id, error: 'Not part of this TikTok sign-in.' });
+        continue;
+      }
+      try {
+        const acc = await this.connect(companyId, { platform: 'tiktok', externalId: id, token: pick.token, storeId: dto.storeId ?? null });
+        connected.push(acc.id);
+      } catch (e) {
+        failed.push({ advertiserId: id, error: (e as Error).message });
+      }
+    }
+    return { connected: connected.length, failed };
   }
 
   async disconnect(companyId: number, id: number) {

@@ -159,6 +159,21 @@ export default function GrowthConnectionsPage() {
           <select id="cn-platform" value={form.platform} onChange={(e) => setForm({ ...form, platform: e.target.value })} className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink">
             {(acc?.platforms ?? []).map((p) => <option key={p.platform} value={p.platform} disabled={!p.available}>{p.label}{p.available ? '' : ' — coming soon'}</option>)}
           </select>
+          {form.platform === 'tiktok' ? (
+            <div className="sm:col-start-2">
+              <p className="mb-2 text-sm text-muted">Sign in to TikTok for Business and approve CodesApp. You then pick which advertiser accounts to bring in.</p>
+              <button type="button" disabled={busy === 'tiktok' || !available.some((p) => p.platform === 'tiktok')}
+                onClick={() => {
+                  setBusy('tiktok');
+                  growthApi.tiktokAuthUrl()
+                    .then((r) => { window.location.href = r.url; })
+                    .catch((e) => { toast.error(err(e, 'Could not start TikTok sign-in')); setBusy(null); });
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                {busy === 'tiktok' ? <Loader2 size={15} className="animate-spin" /> : <Plug size={15} />} Connect with TikTok
+              </button>
+            </div>
+          ) : (<>
           <label htmlFor="cn-id" className="text-sm font-semibold text-ink sm:pt-2">Ad account id</label>
           <div>
             <input id="cn-id" required value={form.externalId} onChange={(e) => setForm({ ...form, externalId: e.target.value })} className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink" placeholder={form.platform === 'meta' ? '1234567890' : ''} />
@@ -175,6 +190,7 @@ export default function GrowthConnectionsPage() {
               {busy === 'connect' ? <Loader2 size={15} className="animate-spin" /> : <Plug size={15} />} Connect
             </button>
           </div>
+          </>)}
         </form>
       </Panel>
 

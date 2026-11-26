@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
+  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsIn,
@@ -121,4 +122,34 @@ export class AskGrowthDto extends GrowthRangeDto {
   @ValidateNested({ each: true })
   @Type(() => AskTurnDto)
   history?: AskTurnDto[];
+}
+
+export class TikTokExchangeDto {
+  @IsString()
+  @MinLength(4)
+  @MaxLength(512)
+  authCode!: string;
+
+  @IsString()
+  @MinLength(10)
+  @MaxLength(512)
+  state!: string;
+}
+
+export class TikTokConnectDto {
+  @IsString()
+  @MinLength(8)
+  @MaxLength(64)
+  pickId!: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  advertiserIds!: string[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  storeId?: number | null;
 }

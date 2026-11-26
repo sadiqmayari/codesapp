@@ -24,6 +24,7 @@ import { CannedRepliesModule } from './modules/canned-replies/canned-replies.mod
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { CommissionsModule } from './modules/commissions/commissions.module';
 import { TicketsModule } from './modules/tickets/tickets.module';
+import { SocialCommentsModule } from './modules/social-comments/social-comments.module';
 import { PublicModule } from './modules/public/public.module';
 import { AiModule } from './modules/ai/ai.module';
 import { GamificationModule } from './modules/gamification/gamification.module';
@@ -70,6 +71,7 @@ import { AppController } from './app.controller';
     AttendanceModule,
     CommissionsModule,
     TicketsModule,
+    SocialCommentsModule,
     PublicModule,
     AiModule,
     GamificationModule,

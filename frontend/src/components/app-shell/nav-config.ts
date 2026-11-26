@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   MessagesSquare,
   MessageCircle,
+  MessageSquareText,
   Users,
   FileText,
   Megaphone,
@@ -112,6 +113,7 @@ export function buildNav(user: AuthUser | null): NavSection[] {
         },
         TEAM,
         { href: '/contacts', label: 'Contacts', icon: Users },
+        ...(has('social_comments') ? [{ href: '/comments', label: 'Comments', icon: MessageSquareText }] : []),
       ],
     },
     {
@@ -246,6 +248,7 @@ export const MODULE_ROUTES: { prefix: string; module: string; label: string }[] 
   { prefix: '/pr', module: 'pr', label: 'PR' },
   { prefix: '/leaderboard', module: 'leaderboard', label: 'Leaderboard' },
   { prefix: '/tickets', module: 'tickets', label: 'Tickets' },
+  { prefix: '/comments', module: 'social_comments', label: 'Social comments' },
   { prefix: '/orders/pack', module: 'pack', label: 'Pack station' },
 ];
 

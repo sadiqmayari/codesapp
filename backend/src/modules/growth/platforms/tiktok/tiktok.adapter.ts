@@ -7,6 +7,7 @@ import {
   AdPlatformAdapter,
   AdPlatformAuthError,
   AdPlatformRateLimitError,
+  AdStatusRow,
 } from '../ad-platform.types';
 import { httpJson } from '../http';
 
@@ -26,10 +27,35 @@ interface TtPage<T> {
 
 const num = (v: unknown) => Number(v ?? 0) || 0;
 
+/** TikTok `operation_status` → the Meta-style vocabulary the Growth UI filters on. */
+export function ttStatus(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const u = s.toUpperCase();
+  if (u === 'ENABLE') return 'ACTIVE';
+  if (u === 'DISABLE') return 'PAUSED';
+  if (u === 'DELETE') return 'DELETED';
+  return u;
+}
+
+/** Split [since, until] (YYYY-MM-DD) into ≤30-day windows — TikTok's daily-report range limit. */
+export function ttWindows(since: string, until: string, days = 30): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  const end = new Date(`${until}T00:00:00Z`).getTime();
+  let start = new Date(`${since}T00:00:00Z`).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) return [[since, until]];
+  while (start <= end) {
+    const stop = Math.min(end, start + (days - 1) * 86_400_000);
+    out.push([new Date(start).toISOString().slice(0, 10), new Date(stop).toISOString().slice(0, 10)]);
+    start = stop + 86_400_000;
+  }
+  return out;
+}
+
 /**
  * TikTok Marketing API adapter. `token` = the advertiser access token obtained
  * through the TikTok for Business OAuth app (long-lived until revoked).
- * Available once TIKTOK_APP_ID is configured (app approved by TikTok).
+ * Available once TIKTOK_APP_ID + TIKTOK_APP_SECRET are configured; accounts are
+ * added via TikTokOAuthService (Connect with TikTok).
  */
 @Injectable()
 export class TikTokAdsAdapter implements AdPlatformAdapter {
@@ -37,7 +63,7 @@ export class TikTokAdsAdapter implements AdPlatformAdapter {
   readonly available: boolean;
 
   constructor(config: ConfigService) {
-    this.available = !!config.get<string>('TIKTOK_APP_ID');
+    this.available = !!config.get<string>('TIKTOK_APP_ID') && !!config.get<string>('TIKTOK_APP_SECRET');
   }
 
   private async call<T>(path: string, token: string): Promise<T> {
@@ -79,25 +105,51 @@ export class TikTokAdsAdapter implements AdPlatformAdapter {
     type C = { campaign_id: string; campaign_name?: string; operation_status?: string; objective_type?: string; budget?: number };
     for (const c of await this.paged<C>(`/campaign/get/?${adv}`, token)) {
       out.push({ level: 'campaign', externalId: String(c.campaign_id), parentExternalId: null, campaignId: String(c.campaign_id),
-        name: c.campaign_name ?? null, status: c.operation_status ?? null, objective: c.objective_type ?? null,
+        name: c.campaign_name ?? null, status: ttStatus(c.operation_status), configuredStatus: ttStatus(c.operation_status), objective: c.objective_type ?? null,
         dailyBudget: c.budget ?? null, creativeThumbUrl: null, destinationUrl: null });
     }
     type G = { adgroup_id: string; adgroup_name?: string; campaign_id?: string; operation_status?: string; budget?: number };
     for (const g of await this.paged<G>(`/adgroup/get/?${adv}`, token)) {
       out.push({ level: 'adset', externalId: String(g.adgroup_id), parentExternalId: g.campaign_id ? String(g.campaign_id) : null,
-        campaignId: g.campaign_id ? String(g.campaign_id) : null, name: g.adgroup_name ?? null, status: g.operation_status ?? null,
+        campaignId: g.campaign_id ? String(g.campaign_id) : null, name: g.adgroup_name ?? null, status: ttStatus(g.operation_status), configuredStatus: ttStatus(g.operation_status),
         objective: null, dailyBudget: g.budget ?? null, creativeThumbUrl: null, destinationUrl: null });
     }
     type A = { ad_id: string; ad_name?: string; adgroup_id?: string; campaign_id?: string; operation_status?: string; landing_page_url?: string };
     for (const a of await this.paged<A>(`/ad/get/?${adv}`, token)) {
       out.push({ level: 'ad', externalId: String(a.ad_id), parentExternalId: a.adgroup_id ? String(a.adgroup_id) : null,
-        campaignId: a.campaign_id ? String(a.campaign_id) : null, name: a.ad_name ?? null, status: a.operation_status ?? null,
+        campaignId: a.campaign_id ? String(a.campaign_id) : null, name: a.ad_name ?? null, status: ttStatus(a.operation_status), configuredStatus: ttStatus(a.operation_status),
         objective: null, dailyBudget: null, creativeThumbUrl: null, destinationUrl: a.landing_page_url ?? null });
     }
     return out;
   }
 
+  async listStatuses(token: string, externalId: string): Promise<AdStatusRow[]> {
+    const adv = `advertiser_id=${encodeURIComponent(externalId)}`;
+    type S = { campaign_id?: string; adgroup_id?: string; ad_id?: string; operation_status?: string; schedule_end_time?: string };
+    const out: AdStatusRow[] = [];
+    const levels: Array<['campaign' | 'adset' | 'ad', string, keyof S]> = [
+      ['campaign', '/campaign/get/', 'campaign_id'],
+      ['adset', '/adgroup/get/', 'adgroup_id'],
+      ['ad', '/ad/get/', 'ad_id'],
+    ];
+    for (const [level, path, idKey] of levels) {
+      for (const r of await this.paged<S>(`${path}?${adv}`, token)) {
+        const id = r[idKey];
+        if (!id) continue;
+        const st = ttStatus(r.operation_status);
+        out.push({ level, externalId: String(id), status: st, configuredStatus: st, endTime: r.schedule_end_time ?? null });
+      }
+    }
+    return out;
+  }
+
   async fetchInsights(token: string, externalId: string, since: string, until: string): Promise<AdInsightRow[]> {
+    const rows: AdInsightRow[] = [];
+    for (const [a, b] of ttWindows(since, until)) rows.push(...(await this.fetchWindow(token, externalId, a, b)));
+    return rows;
+  }
+
+  private async fetchWindow(token: string, externalId: string, since: string, until: string): Promise<AdInsightRow[]> {
     const metrics = ['campaign_id', 'adgroup_id', 'spend', 'impressions', 'reach', 'clicks', 'complete_payment',
       'complete_payment_roas', 'video_watched_2s', 'video_views_p100'];
     const q = [

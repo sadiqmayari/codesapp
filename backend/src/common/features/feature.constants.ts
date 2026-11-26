@@ -119,7 +119,8 @@ export type ModuleGrantKey =
   | 'calls'
   | 'leaderboard'
   | 'couriers'
-  | 'tickets';
+  | 'tickets'
+  | 'social_comments';
 
 export type ModuleKey = ModuleGrantKey | 'content' | 'pr' | 'inventory';
 
@@ -138,6 +139,7 @@ export const MODULE_REGISTRY: ModuleDef[] = [
   { key: 'pack', group: 'Commerce', label: 'Pack station', description: '/orders/pack scan-and-pack' },
   { key: 'inventory', group: 'Commerce', label: 'Inventory', description: 'Catalogue mirror, stock push, product analytics', legacyColumn: 'inventory_enabled' },
   { key: 'tickets', group: 'Commerce', label: 'Tickets', description: 'Support tickets and replacement parcels' },
+  { key: 'social_comments', group: 'Communication', label: 'Social comments', description: 'TikTok ad comments (list, reply, hide); Meta later' },
   { key: 'growth', group: 'Growth', label: 'Growth', description: 'Ad sync, attribution, forecast, Growth AI' },
   { key: 'growth_publish', group: 'Growth', parent: 'growth', label: 'Allow publishing ads', description: 'Off = Growth is read-only (no budget edits, no new ads)' },
   { key: 'content', group: 'Growth', label: 'Content', description: 'Content planning, Drive media, approvals', legacyColumn: 'content_enabled' },

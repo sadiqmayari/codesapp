@@ -1,0 +1,28 @@
+-- Social comments (TikTok ad comments first). New table only — additive.
+CREATE TABLE `social_comments` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `company_id` INT NOT NULL,
+  `platform` VARCHAR(16) NOT NULL,
+  `source` VARCHAR(16) NOT NULL DEFAULT 'ad',
+  `account_id` INT NULL,
+  `external_id` VARCHAR(64) NOT NULL,
+  `parent_external_id` VARCHAR(64) NULL,
+  `ad_id` VARCHAR(64) NULL,
+  `ad_name` VARCHAR(255) NULL,
+  `post_id` VARCHAR(64) NULL,
+  `author_name` VARCHAR(255) NULL,
+  `author_id` VARCHAR(128) NULL,
+  `text` TEXT NOT NULL,
+  `status` VARCHAR(16) NOT NULL DEFAULT 'visible',
+  `commented_at` DATETIME(3) NOT NULL,
+  `reply_text` TEXT NULL,
+  `replied_by_user_id` INT NULL,
+  `replied_at` DATETIME(3) NULL,
+  `raw` JSON NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL,
+  UNIQUE INDEX `social_comments_company_id_platform_external_id_key`(`company_id`, `platform`, `external_id`),
+  INDEX `social_comments_company_id_commented_at_idx`(`company_id`, `commented_at`),
+  INDEX `social_comments_company_id_status_idx`(`company_id`, `status`),
+  PRIMARY KEY (`id`)
+);

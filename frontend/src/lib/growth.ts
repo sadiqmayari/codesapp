@@ -350,6 +350,11 @@ export const growthApi = {
   updateAccount: (id: number, body: Partial<{ syncIntervalMin: number | null; storeId: number | null; token: string | null; capiEnabled: boolean; capiDatasetId: string | null }>) =>
     apiFetch('/growth/accounts/' + id, { method: 'PATCH', body }),
   disconnect: (id: number) => apiFetch('/growth/accounts/' + id, { method: 'DELETE' }),
+  tiktokAuthUrl: () => apiFetch<{ url: string; redirectUri: string }>('/growth/tiktok/oauth/url', { method: 'POST' }),
+  tiktokExchange: (authCode: string, state: string) =>
+    apiFetch<{ pickId: string; advertisers: Array<{ id: string; name: string | null }> }>('/growth/tiktok/oauth/exchange', { method: 'POST', body: { authCode, state } }),
+  tiktokConnect: (body: { pickId: string; advertiserIds: string[]; storeId?: number | null }) =>
+    apiFetch<{ connected: number; failed: Array<{ advertiserId: string; error: string }> }>('/growth/tiktok/oauth/connect', { method: 'POST', body }),
   syncAccount: (id: number) => apiFetch('/growth/accounts/' + id + '/sync', { method: 'POST' }),
   syncToday: () => apiFetch<{ started: number; accounts: number }>('/growth/sync/today', { method: 'POST' }),
   syncAll: () => apiFetch<{ started: true; accounts: number }>('/growth/sync', { method: 'POST' }),

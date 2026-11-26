@@ -3425,3 +3425,34 @@ model CommissionPlan {
   @@index([company_id, active])
   @@map("commission_plans")
 }
+
+// Comments on ads / social posts (TikTok ad comments first; Meta FB/IG later).
+// One row per comment, pulled by SocialCommentsService (worker poller).
+model SocialComment {
+  id                 Int       @id @default(autoincrement())
+  company_id         Int
+  platform           String    @db.VarChar(16)
+  source             String    @default("ad") @db.VarChar(16) // ad | organic
+  account_id         Int?      // ad_accounts.id
+  external_id        String    @db.VarChar(64) // platform comment id
+  parent_external_id String?   @db.VarChar(64)
+  ad_id              String?   @db.VarChar(64)
+  ad_name            String?   @db.VarChar(255)
+  post_id            String?   @db.VarChar(64)
+  author_name        String?   @db.VarChar(255)
+  author_id          String?   @db.VarChar(128)
+  text               String    @db.Text
+  status             String    @default("visible") @db.VarChar(16) // visible | hidden
+  commented_at       DateTime
+  reply_text         String?   @db.Text
+  replied_by_user_id Int?
+  replied_at         DateTime?
+  raw                Json?
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+
+  @@unique([company_id, platform, external_id])
+  @@index([company_id, commented_at])
+  @@index([company_id, status])
+  @@map("social_comments")
+}
