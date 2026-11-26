@@ -60,6 +60,7 @@ function Logo({ courier, size = 'sm' }: { courier: CourierType; size?: 'xs' | 's
 
 function statusBadge(row?: CourierStatusRow) {
   if (!row?.configured) return <Badge>Not connected</Badge>;
+  if (row.needsReconnect) return <Badge tone="warn">Reconnect required</Badge>;
   return row.bookingEnabled ? (
     <Badge tone="success">Connected · Booking on</Badge>
   ) : (
@@ -350,15 +351,19 @@ function CourierSheet({
     const payload: Record<string, string> = {};
     for (const f of fields) {
       const v = values[f.key] ?? '';
-      if (f.type === 'secret') {
+      if (f.type === 'secret' || f.type === 'textarea') {
         if (v.trim()) payload[f.key] = v.trim();
       } else {
         payload[f.key] = v;
       }
     }
+    const legacyPair = !!(values.clientId?.trim() && (values.clientSecret?.trim() || row?.secretSet?.clientSecret));
     const missing = fields.filter((f) => {
-      if (f.optional || f.type === 'toggle') return false;
-      if (f.type === 'secret') return !configured && !payload[f.key]?.trim();
+      if (f.optional || f.type === 'toggle' || f.group === 'legacy') return false;
+      if (f.key === 'bearerToken' && legacyPair) return false;
+      if (f.type === 'secret' || f.type === 'textarea') {
+        return !row?.secretSet?.[f.key] && !payload[f.key]?.trim();
+      }
       // API-loaded dropdowns can't populate until the credentials are saved,
       // so they're not required on the FIRST save.
       if (f.dynamic) return configured && !payload[f.key]?.trim();
@@ -415,6 +420,89 @@ function CourierSheet({
       ? `${window.location.origin}${row.webhookUrl}`
       : null;
 
+  const renderField = (f: CourierField) => {
+      const val = values[f.key] ?? '';
+      const set = (v: string) => setValues((m) => ({ ...m, [f.key]: v }));
+      const id = `cr-${courierType}-${f.key}`;
+      if (f.type === 'toggle') {
+        return (
+          <SettingRow key={f.key} title={f.label} description={f.hint}>
+            <Switch checked={val === '1'} onChange={(v) => set(v ? '1' : '0')} label={f.label} />
+          </SettingRow>
+        );
+      }
+      let control: React.ReactNode;
+      if (f.type === 'select' && f.dynamic) {
+        const opts = dynOpts[f.key];
+        const err = dynErr[f.key];
+        control = (
+          <select id={id} value={val} disabled={!opts} onChange={(e) => set(e.target.value)} className={inputCls}>
+            <option value="">
+              {opts ? 'Choose…' : err ? 'Unavailable' : configured ? 'Loading…' : 'Save the credentials first, then reopen'}
+            </option>
+            {!opts && val && <option value={val}>{`Saved (id ${val})`}</option>}
+            {opts?.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        );
+      } else if (f.type === 'select') {
+        control = (
+          <select id={id} value={val} onChange={(e) => set(e.target.value)} className={inputCls}>
+            <option value="">Choose…</option>
+            {f.options?.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        );
+      } else if (f.type === 'textarea') {
+        control = (
+          <textarea
+            id={id}
+            rows={4}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder={secretPlaceholder(f)}
+            value={val}
+            onChange={(e) => set(e.target.value)}
+            className={`${inputCls} font-mono text-xs break-all`}
+          />
+        );
+      } else {
+        control = (
+          <input
+            id={id}
+            type={f.type === 'secret' ? 'password' : 'text'}
+            autoComplete="new-password"
+            placeholder={f.type === 'secret' ? secretPlaceholder(f) : undefined}
+            value={val}
+            onChange={(e) => set(e.target.value)}
+            className={inputCls}
+          />
+        );
+      }
+      const err = dynErr[f.key];
+      return (
+        <FormField
+          key={f.key}
+          label={
+            <>
+              {f.label}
+              {f.optional && <span className="font-normal text-muted"> (optional)</span>}
+            </>
+          }
+          htmlFor={id}
+          hint={err ? <span className="text-red-600">{err}</span> : f.hint}
+        >
+          {control}
+        </FormField>
+      );
+  };
+
   return (
     <SideSheet
       open
@@ -447,75 +535,13 @@ function CourierSheet({
         Credentials are encrypted. Saved secrets are never shown — leave a field blank to keep it.
       </Callout>
 
-      {fields.map((f) => {
-        const val = values[f.key] ?? '';
-        const set = (v: string) => setValues((m) => ({ ...m, [f.key]: v }));
-        const id = `cr-${courierType}-${f.key}`;
-        if (f.type === 'toggle') {
-          return (
-            <SettingRow key={f.key} title={f.label} description={f.hint}>
-              <Switch checked={val === '1'} onChange={(v) => set(v ? '1' : '0')} label={f.label} />
-            </SettingRow>
-          );
-        }
-        let control: React.ReactNode;
-        if (f.type === 'select' && f.dynamic) {
-          const opts = dynOpts[f.key];
-          const err = dynErr[f.key];
-          control = (
-            <select id={id} value={val} disabled={!opts} onChange={(e) => set(e.target.value)} className={inputCls}>
-              <option value="">
-                {opts ? 'Choose…' : err ? 'Unavailable' : configured ? 'Loading…' : 'Save the credentials first, then reopen'}
-              </option>
-              {!opts && val && <option value={val}>{`Saved (id ${val})`}</option>}
-              {opts?.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.label}
-                </option>
-              ))}
-            </select>
-          );
-        } else if (f.type === 'select') {
-          control = (
-            <select id={id} value={val} onChange={(e) => set(e.target.value)} className={inputCls}>
-              <option value="">Choose…</option>
-              {f.options?.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          );
-        } else {
-          control = (
-            <input
-              id={id}
-              type={f.type === 'secret' ? 'password' : 'text'}
-              autoComplete="new-password"
-              placeholder={f.type === 'secret' ? secretPlaceholder(f) : undefined}
-              value={val}
-              onChange={(e) => set(e.target.value)}
-              className={inputCls}
-            />
-          );
-        }
-        const err = dynErr[f.key];
-        return (
-          <FormField
-            key={f.key}
-            label={
-              <>
-                {f.label}
-                {f.optional && <span className="font-normal text-muted"> (optional)</span>}
-              </>
-            }
-            htmlFor={id}
-            hint={err ? <span className="text-red-600">{err}</span> : f.hint}
-          >
-            {control}
-          </FormField>
-        );
-      })}
+      {fields.filter((f) => f.group !== 'legacy').map(renderField)}
+      {fields.some((f) => f.group === 'legacy') && (
+        <details className="rounded-lg border border-line p-3 text-sm">
+          <summary className="cursor-pointer font-medium text-ink">Legacy: generate bearer token from Client ID/Secret</summary>
+          <div className="mt-3 space-y-4">{fields.filter((f) => f.group === 'legacy').map(renderField)}</div>
+        </details>
+      )}
 
       {(courierType === 'mnp' || courierType === 'tcs') && configured && (
         <SettingRow title="City list" description={`Fetch ${label}’s cities from their API (re-run to refresh).`}>

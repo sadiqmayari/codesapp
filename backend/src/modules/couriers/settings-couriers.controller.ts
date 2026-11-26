@@ -40,6 +40,11 @@ import { TcsAdapter, TcsCredentials } from './adapters/tcs.adapter';
  * (pickup address, product type, insurance toggle, etc.) is echoed so the form
  * pre-fills and can be edited in isolation.
  */
+/** Stored but never sent to the browser (internal token metadata). */
+const HIDDEN_CRED_KEYS: Partial<Record<CourierType, string[]>> = {
+  tcs: ['ecomToken', 'ecomTokenExpiry', 'environment'],
+};
+
 const SECRET_CRED_KEYS: Record<CourierType, string[]> = {
   trax: ['bearerToken'],
   leopards: ['apiKey', 'apiPassword'],
@@ -48,7 +53,7 @@ const SECRET_CRED_KEYS: Record<CourierType, string[]> = {
   mnp: ['password', 'webhookToken'],
   manual: [], // no credentials — not a real courier
   rapidxpk: ['apiKey', 'webhookSecret'],
-  tcs: ['clientSecret', 'password'],
+  tcs: ['bearerToken', 'password', 'clientSecret', 'ecomToken'],
 };
 import {
   SetCourierCredentialsDto,
@@ -101,12 +106,14 @@ export class SettingsCouriersController {
       const savedValues: Record<string, string> = {};
       const secretSet: Record<string, boolean> = {};
       const secretKeys = SECRET_CRED_KEYS[courierType] ?? [];
+      const hiddenKeys = HIDDEN_CRED_KEYS[courierType] ?? [];
       if (row?.credentials_encrypted) {
         try {
           const creds = JSON.parse(
             this.encryption.decrypt(row.credentials_encrypted),
           ) as Record<string, unknown>;
           for (const [k, v] of Object.entries(creds)) {
+            if (hiddenKeys.includes(k)) continue;
             if (secretKeys.includes(k)) {
               secretSet[k] = !!(typeof v === 'string' ? v.trim() : v);
             } else {
@@ -129,6 +136,8 @@ export class SettingsCouriersController {
         updatedAt: row?.updated_at ?? null,
         savedValues,
         secretSet,
+        // TCS saved before the bearer-token change (Client ID/Secret only).
+        needsReconnect: courierType === 'tcs' && !!row && !secretSet.bearerToken,
       };
     });
   }
@@ -346,6 +355,7 @@ export class SettingsCouriersController {
     }
     const merged: Record<string, string> = { ...base };
     for (const [k, raw] of Object.entries(dto.credentials ?? {})) {
+      if ((HIDDEN_CRED_KEYS[courierType] ?? []).includes(k) || k === 'ecomToken') continue;
       const val = typeof raw === 'string' ? raw : String(raw ?? '');
       if (secretKeys.includes(k)) {
         if (val.trim()) merged[k] = val.trim(); // blank secret = keep existing
@@ -357,16 +367,44 @@ export class SettingsCouriersController {
     if (courierType === 'rapidxpk') {
       await this.rapidxpk.assertKeyValid(merged as unknown as RapidxpkCredentials);
     }
-    // TCS: mint both tokens BEFORE saving (rejects bad creds with TCS's own
-    // message), then prefill the pickup block from the chosen cost center.
+    // TCS: validate BEFORE saving (never books): bearer token via a dummy
+    // tracking lookup, then username/password via a fresh e-com token, which is
+    // stored (encrypted) with its expiry. Then prefill pickup from the cost center.
     if (courierType === 'tcs') {
       const tcs = this.registry.getAdapter('tcs') as TcsAdapter;
+      delete merged.environment;
+      // Legacy: generate the bearer token from an old Client ID/Secret.
+      if (!String(merged.bearerToken ?? '').trim() && merged.clientId?.trim() && merged.clientSecret?.trim()) {
+        merged.bearerToken = await this.tcsCall(() =>
+          tcs.generateLegacyBearer(merged.clientId.trim(), merged.clientSecret.trim()),
+        );
+      }
+      const required: Array<[string, string]> = [
+        ['bearerToken', 'Bearer token'],
+        ['username', 'Username'],
+        ['password', 'Password'],
+        ['accountNo', 'Account number'],
+        ['costCenterCode', 'Cost center code'],
+      ];
+      const missing = required.filter(([k]) => !String(merged[k] ?? '').trim()).map(([, l]) => l);
+      if (missing.length) throw new BadRequestException(`TCS: fill in ${missing.join(', ')}.`);
+      // A changed identity invalidates the stored e-com token.
+      if (['bearerToken', 'username', 'password'].some((k) => (base[k] ?? '') !== (merged[k] ?? ''))) {
+        delete merged.ecomToken;
+        delete merged.ecomTokenExpiry;
+      }
       const c = merged as unknown as TcsCredentials;
-      await this.tcsCall(() => tcs.validate(c));
-      if (c.costCenterCode && (!c.pickupAddress || !c.pickupCity || !c.pickupPhone)) {
-        const centers = await tcs.listCostCenters(c).catch(() => [] as Awaited<ReturnType<TcsAdapter['listCostCenters']>>);
+      const { ecomToken, expiry } = await this.tcsCall(() => tcs.validateConnection(c));
+      merged.ecomToken = ecomToken;
+      if (expiry) merged.ecomTokenExpiry = expiry;
+      else delete merged.ecomTokenExpiry;
+      if (!merged.pickupAddress || !merged.pickupCity || !merged.pickupPhone) {
+        const centers = await tcs
+          .listCostCenters(c)
+          .catch(() => [] as Awaited<ReturnType<TcsAdapter['listCostCenters']>>);
+        const want = String(merged.costCenterCode).trim().toLowerCase();
         const cc = centers.find(
-          (x) => x.code === c.costCenterCode,
+          (x) => x.code.toLowerCase() === want || x.code.toLowerCase().split(/\s*-\s*/)[0] === want,
         );
         if (cc) {
           if (!merged.pickupAddress) merged.pickupAddress = cc.pickupAddress;

@@ -73,7 +73,7 @@ export const TRAX_PRODUCT_TYPES: Array<{ value: string; label: string }> = [
   { value: '24', label: 'Other' },
 ];
 
-export type CourierFieldType = 'secret' | 'text' | 'select' | 'toggle';
+export type CourierFieldType = 'secret' | 'text' | 'select' | 'toggle' | 'textarea';
 
 export interface CourierField {
   key: string;
@@ -86,6 +86,8 @@ export interface CourierField {
   dynamic?: 'traxPickupAddresses' | 'mnpLocations' | 'tcsCostCenters';
   /** Not required to save. */
   optional?: boolean;
+  /** 'legacy' = shown inside a collapsed "Legacy" section, never required. */
+  group?: 'legacy';
   /** Default value when nothing is saved yet (e.g. a toggle that's on by default). */
   default?: string;
   hint?: string;
@@ -277,28 +279,26 @@ export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
   ],
   tcs: [
     {
-      key: 'environment',
-      label: 'Environment',
-      type: 'select',
-      default: 'production',
-      options: [
-        { value: 'production', label: 'Production (live bookings)' },
-        { value: 'sandbox', label: 'Sandbox / UAT (test only)' },
-      ],
+      key: 'bearerToken',
+      label: 'Bearer token',
+      type: 'textarea',
+      hint: 'Provided by TCS. Sent as the Authorization header on every request.',
     },
-    { key: 'clientId', label: 'Client ID', type: 'text', hint: 'From TCS (API authorization).' },
-    { key: 'clientSecret', label: 'Client secret', type: 'secret' },
-    { key: 'username', label: 'API username', type: 'text', hint: 'TCS e-com API username (not your portal login, unless TCS said so).' },
-    { key: 'password', label: 'API password', type: 'secret' },
-    { key: 'accountNo', label: 'Account number', type: 'text', hint: 'Your TCS customer / account no (e.g. 04011K1). Checked with TCS on save.' },
+    {
+      key: 'username',
+      label: 'Username',
+      type: 'text',
+      hint: 'Your TCS COD portal username (used to get the e-com access token).',
+    },
+    { key: 'password', label: 'Password', type: 'secret' },
+    { key: 'accountNo', label: 'Account number', type: 'text', hint: 'Your TCS account number, e.g. ABC123' },
     {
       key: 'costCenterCode',
-      label: 'Cost center (pickup)',
-      type: 'select',
-      dynamic: 'tcsCostCenters',
-      hint: 'Loaded from your TCS account — save the credentials first. Its pickup address fills the shipper details below.',
+      label: 'Cost center code',
+      type: 'text',
+      hint: 'From the COD portal → Setup → Cost Centre Details.',
     },
-    { key: 'serviceCode', label: 'Service code', type: 'text', default: 'O', hint: 'TCS service, e.g. O (overnight). Ask TCS if unsure.' },
+    { key: 'serviceCode', label: 'Default service code', type: 'text', default: 'O', hint: 'TCS service, e.g. O (overnight).' },
     { key: 'defaultWeightKg', label: 'Default weight (kg)', type: 'text', optional: true, default: '0.5', hint: 'Sent with every parcel (TCS minimum 0.5).' },
     {
       key: 'labelPrintType',
@@ -313,11 +313,20 @@ export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
         { value: '7', label: 'Shipment label 6×4' },
       ],
     },
-    { key: 'shipperName', label: 'Shipper name', type: 'text', optional: true, hint: 'Printed as the sender. Defaults to the cost center name.' },
+    { key: 'shipperName', label: 'Shipper name', type: 'text', optional: true, hint: 'Printed as the sender. Filled from the cost center when blank.' },
     { key: 'pickupAddress', label: 'Pickup address', type: 'text', optional: true, hint: 'Filled from the cost center when blank.' },
     { key: 'pickupCity', label: 'Pickup city', type: 'text', optional: true },
     { key: 'pickupCityCode', label: 'Pickup city code', type: 'text', optional: true, hint: 'TCS code, e.g. KHI / LHE.' },
-    { key: 'pickupPhone', label: 'Pickup phone', type: 'text', optional: true, hint: '03XXXXXXXXX' },
+    { key: 'pickupPhone', label: 'Pickup mobile', type: 'text', optional: true, hint: '03XXXXXXXXX' },
+    {
+      key: 'clientId',
+      label: 'Client ID',
+      type: 'text',
+      optional: true,
+      group: 'legacy',
+      hint: 'Only if TCS gave you a Client ID/Secret instead of a bearer token — leave the bearer token blank and CodesApp generates it once.',
+    },
+    { key: 'clientSecret', label: 'Client secret', type: 'secret', optional: true, group: 'legacy' },
   ],
 };
 
@@ -411,6 +420,8 @@ export interface CourierStatusRow {
   savedValues?: Record<string, string>;
   /** Which secret fields currently have a stored value. */
   secretSet?: Record<string, boolean>;
+  /** Saved before the credential format changed — must be reconnected (TCS). */
+  needsReconnect?: boolean;
 }
 
 export interface LoadsheetBatch {

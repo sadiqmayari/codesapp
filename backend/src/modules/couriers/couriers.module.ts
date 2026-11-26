@@ -10,6 +10,7 @@ import { RocketAdapter } from './adapters/rocket.adapter';
 import { MnpAdapter } from './adapters/mnp.adapter';
 import { RapidxpkAdapter } from './adapters/rapidxpk.adapter';
 import { TcsAdapter } from './adapters/tcs.adapter';
+import { TcsTokenStore } from './tcs-token.store';
 import { RapidxpkSetupService } from './rapidxpk-setup.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { CityMappingService } from './city-mapping.service';
@@ -46,6 +47,7 @@ import { CourierCronController } from './courier-cron.controller';
     MnpAdapter,
     RapidxpkAdapter,
     TcsAdapter,
+    TcsTokenStore,
     RapidxpkSetupService,
     CourierRegistryService,
     CityMappingService,

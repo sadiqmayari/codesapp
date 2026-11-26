@@ -16,19 +16,20 @@ import { isReturnedToShipper } from './return-status.util';
 import { ParsedInvoice, ParsedInvoiceLine } from '../invoices/courier-invoice.types';
 
 /**
- * TCS "E-COM" API credentials (all issued by TCS — no self-service). TCS uses
- * TWO token pairs:
- *  - clientId / clientSecret  → a Bearer JWT (`/auth/api/auth`), sent as the
- *    Authorization header on every ecom + tracking call;
- *  - username / password      → an ecom `accesstoken`
- *    (`/ecom/api/authentication/token`), sent INSIDE each request (body/query).
- * `accountNo` is the TCS customer/account number (booking `tcsaccount`, inquiry
- * `customerno`); `costCenterCode` picks the pickup/return address TCS holds.
+ * TCS "E-COM" API credentials (production only — https://ociconnect.tcscourier.com).
+ * TCS uses TWO tokens:
+ *  - `bearerToken` — a long-lived JWT TCS issues to the merchant. Sent as the
+ *    `Authorization: Bearer` header on EVERY call. (Older accounts got a Client
+ *    ID/Secret instead; Settings can still turn those into a bearer token once.)
+ *  - the e-com `accesstoken` — minted from `username` + `password`
+ *    (`GET /ecom/api/authentication/token`), sent INSIDE each request (query for
+ *    GET, JSON body for POST). Long expiry → stored encrypted with its expiry
+ *    (`ecomToken`/`ecomTokenExpiry`) and only re-minted when expired or rejected.
+ * `accountNo` is the TCS account (booking `tcsaccount`, inquiry `customerno`);
+ * `costCenterCode` picks the pickup/return address TCS holds.
  */
 export interface TcsCredentials {
-  environment?: 'production' | 'sandbox' | string;
-  clientId: string;
-  clientSecret: string;
+  bearerToken?: string;
   username: string;
   password: string;
   accountNo: string;
@@ -45,19 +46,50 @@ export interface TcsCredentials {
   pickupPhone?: string;
   /** print/label `printtype` (1=3 per page, 2=single, 3=6x4 …). Default 2. */
   labelPrintType?: string;
+  /** Stored e-com access token (exactly as TCS returned it) + its expiry. */
+  ecomToken?: string;
+  ecomTokenExpiry?: string;
+  /** Legacy: only used once at save time to generate `bearerToken`. */
+  clientId?: string;
+  clientSecret?: string;
 }
 
-const HOSTS = {
-  production: 'https://ociconnect.tcscourier.com',
-  sandbox: 'https://devconnect.tcscourier.com',
-} as const;
+/** Persists a freshly minted e-com token (implemented by TcsTokenStore). */
+export interface TcsTokenSink {
+  save(credentialId: number, token: string, expiryIso: string | null): Promise<void>;
+  clear(credentialId: number): Promise<void>;
+}
+
+/** Fixed production host — TCS offers no usable sandbox for merchants. */
+export const TCS_BASE = 'https://ociconnect.tcscourier.com';
 
 /** TCS caps COD/declared value at 199,999 (Swagger `maximum`). */
 export const TCS_MAX_COD = 199_999;
 const BOOK_TIMEOUT_MS = 60_000;
 
-export function tcsHost(creds: Pick<TcsCredentials, 'environment'>): string {
-  return creds.environment === 'sandbox' ? HOSTS.sandbox : HOSTS.production;
+/** The DB row id the registry attaches (non-enumerable) to decrypted creds. */
+export function tcsCredentialId(c: unknown): number | undefined {
+  const id = (c as { credentialId?: unknown } | null)?.credentialId;
+  return typeof id === 'number' ? id : undefined;
+}
+
+/** Replace every secret in `text` with *** (never log or surface tokens). */
+export function maskSecrets(text: string, c?: Partial<TcsCredentials> | null): string {
+  let out = String(text ?? '');
+  const secrets = [c?.bearerToken, c?.ecomToken, c?.password, c?.clientSecret]
+    .map((v) => (v == null ? '' : String(v)))
+    .filter((v) => v.length >= 4);
+  for (const v of secrets) {
+    out = out.split(v).join('***');
+    try {
+      const enc = encodeURIComponent(v);
+      if (enc !== v) out = out.split(enc).join('***');
+    } catch {
+      /* ignore */
+    }
+  }
+  // Belt and braces: any JWT-looking blob.
+  return out.replace(/eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}/g, '***');
 }
 
 /** TCS wants a local Pakistani mobile: 03XXXXXXXXX (11 digits). */
@@ -69,8 +101,9 @@ export function toTcsMobile(raw: string | null | undefined): string {
   return d;
 }
 
-/** Split a full name into TCS's first/last (first name needs ≥3 chars). */
-export function splitTcsName(full: string): { firstname: string; lastname?: string } {
+/** Split a full name into TCS's first/middle/last. TCS requires a first name
+ *  of ≥3 chars and a middlename (sent as "-" when there is none). */
+export function splitTcsName(full: string): { firstname: string; middlename: string; lastname?: string } {
   const name = String(full ?? '').replace(/\s+/g, ' ').trim();
   const parts = name.split(' ').filter(Boolean);
   let first = parts[0] ?? '';
@@ -80,7 +113,7 @@ export function splitTcsName(full: string): { firstname: string; lastname?: stri
     last = '';
   }
   if (first.length < 3) first = `${first} Customer`.trim();
-  return { firstname: first.slice(0, 50), ...(last ? { lastname: last.slice(0, 50) } : {}) };
+  return { firstname: first.slice(0, 50), middlename: '-', ...(last ? { lastname: last.slice(0, 50) } : {}) };
 }
 
 /** Spread an address over TCS's three 120-char lines. */
@@ -192,8 +225,8 @@ class TcsHttpError extends Error {
 }
 
 type TokenEntry = { token: string; exp: number };
-// Per-process token cache (each container mints its own — minting is
-// idempotent, the tokens are long-lived). Keyed by env + identity.
+// Per-process e-com token cache, seeded from the stored token. Keyed by the
+// account identity (username + a fingerprint of the bearer token).
 const TOKENS = new Map<string, TokenEntry>();
 const INFLIGHT = new Map<string, Promise<string>>();
 const ADVICE_IDS = new Map<string, { at: number; ids: Record<ShipperAdviceAction, { actionId: number; detailId: number } | null> }>();
@@ -238,79 +271,105 @@ export function tcsErrorText(j: any): string {
 export class TcsAdapter implements CourierAdapter {
   readonly type: CourierType = 'tcs';
   private readonly logger = new Logger(TcsAdapter.name);
+  private sink: TcsTokenSink | null = null;
+
+  /** Wired by TcsTokenStore on boot so refreshed e-com tokens are persisted. */
+  setTokenSink(sink: TcsTokenSink): void {
+    this.sink = sink;
+  }
 
   // ── Tokens ──────────────────────────────────────────────────────────────
 
-  private async cached(key: string, mint: () => Promise<TokenEntry>): Promise<string> {
+  private expOf(expiry: unknown): number {
+    const t = expiry ? new Date(String(expiry)).getTime() : NaN;
+    // 5-minute safety margin; unknown expiry → 6 h.
+    return Number.isNaN(t) ? Date.now() + 6 * 3600_000 : t - 5 * 60_000;
+  }
+
+  private ecomKey(c: TcsCredentials) {
+    const b = String(c.bearerToken ?? '');
+    return `e:${c.username}:${b.length}:${b.slice(-12)}`;
+  }
+
+  /** The merchant-issued bearer token. No auth call at runtime. */
+  bearer(c: TcsCredentials): string {
+    const t = String(c.bearerToken ?? '').trim();
+    if (!t) throw new Error('TCS bearer token not configured — reconnect TCS in Settings › Couriers.');
+    return t;
+  }
+
+  /** Legacy: turn an old Client ID/Secret into a bearer token (Settings save only). */
+  async generateLegacyBearer(clientId: string, clientSecret: string): Promise<string> {
+    const q = new URLSearchParams({ ClientID: clientId, ClientSecret: clientSecret });
+    const res = await httpFetch(`${TCS_BASE}/auth/api/auth?${q}`, { headers: { Accept: 'application/json' } });
+    const j: any = await res.json().catch(() => ({}));
+    const token = j?.result?.accessToken ?? j?.result?.accesstoken ?? j?.accessToken;
+    if (!res.ok || !token) {
+      throw new Error('Could not generate a bearer token from Client ID/Secret — TCS rejected them.');
+    }
+    return String(token);
+  }
+
+  /** Mint a fresh e-com token. Query-string params (TCS ignores GET bodies). */
+  private async mintEcom(c: TcsCredentials): Promise<{ token: string; expiry: string | null }> {
+    if (!c.username || !c.password) throw new Error('TCS username / password not configured.');
+    const q = new URLSearchParams({ username: c.username, password: c.password });
+    const res = await httpFetch(`${TCS_BASE}/ecom/api/authentication/token?${q}`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${this.bearer(c)}` },
+    });
+    const j: any = await res.json().catch(() => ({}));
+    if (res.status === 401 && /bearer|mismatch configuration/i.test(tcsErrorText(j))) {
+      throw new TcsHttpError(401, 'TCS bearer token is invalid — reconnect TCS in Settings › Couriers.');
+    }
+    const token = j?.accesstoken ?? j?.accessToken ?? j?.result?.accesstoken;
+    if (!token) {
+      throw new TcsHttpError(res.status || 401, 'Username or password rejected by TCS.');
+    }
+    const expiry = j?.expiry ?? j?.result?.expiry ?? null;
+    return { token: String(token), expiry: expiry ? String(expiry) : null };
+  }
+
+  /**
+   * The e-com access token, used EXACTLY as TCS returned it (it contains %2F /
+   * %2B — never decode or re-encode it). Memory cache → stored token → mint.
+   */
+  async accessToken(c: TcsCredentials): Promise<string> {
+    const key = this.ecomKey(c);
     const hit = TOKENS.get(key);
     if (hit && hit.exp > Date.now()) return hit.token;
+    if (c.ecomToken && this.expOf(c.ecomTokenExpiry) > Date.now()) {
+      TOKENS.set(key, { token: c.ecomToken, exp: this.expOf(c.ecomTokenExpiry) });
+      return c.ecomToken;
+    }
     const running = INFLIGHT.get(key);
     if (running) return running;
-    const p = mint()
-      .then((e) => {
-        TOKENS.set(key, e);
-        return e.token;
+    const p = this.mintEcom(c)
+      .then(async ({ token, expiry }) => {
+        TOKENS.set(key, { token, exp: this.expOf(expiry) });
+        const id = tcsCredentialId(c);
+        if (id && this.sink) await this.sink.save(id, token, expiry).catch(() => undefined);
+        return token;
       })
       .finally(() => INFLIGHT.delete(key));
     INFLIGHT.set(key, p);
     return p;
   }
 
-  private expOf(expiry: unknown): number {
-    const t = expiry ? new Date(String(expiry)).getTime() : NaN;
-    // 5-minute safety margin; unknown expiry → 6 h.
-    return Number.isNaN(t) ? Date.now() + 6 * 3600_000 : Math.max(Date.now() + 60_000, t - 5 * 60_000);
-  }
-
-  private bearerKey(c: TcsCredentials) {
-    return `b:${tcsHost(c)}:${c.clientId}`;
-  }
-  private ecomKey(c: TcsCredentials) {
-    return `e:${tcsHost(c)}:${c.username}`;
-  }
-
-  async bearer(c: TcsCredentials): Promise<string> {
-    if (!c.clientId || !c.clientSecret) throw new Error('TCS client ID / secret not configured.');
-    return this.cached(this.bearerKey(c), async () => {
-      const q = new URLSearchParams({ ClientID: c.clientId, ClientSecret: c.clientSecret });
-      const res = await httpFetch(`${tcsHost(c)}/auth/api/auth?${q}`, {
-        headers: { Accept: 'application/json' },
-      });
-      const j: any = await res.json().catch(() => ({}));
-      const token = j?.result?.accessToken ?? j?.result?.accesstoken ?? j?.accessToken;
-      if (!res.ok || !token) {
-        throw new TcsHttpError(res.status || 401, `TCS authentication failed (client ID / secret): ${tcsErrorText(j)}`);
-      }
-      return { token: String(token), exp: this.expOf(j?.result?.expiry ?? j?.expiry) };
-    });
-  }
-
-  async accessToken(c: TcsCredentials): Promise<string> {
-    if (!c.username || !c.password) throw new Error('TCS username / password not configured.');
-    return this.cached(this.ecomKey(c), async () => {
-      const bearer = await this.bearer(c);
-      const q = new URLSearchParams({ username: c.username, password: c.password });
-      const res = await httpFetch(`${tcsHost(c)}/ecom/api/authentication/token?${q}`, {
-        headers: { Accept: 'application/json', Authorization: `Bearer ${bearer}` },
-      });
-      const j: any = await res.json().catch(() => ({}));
-      const token = j?.accesstoken ?? j?.accessToken ?? j?.result?.accesstoken;
-      if (!res.ok || !token) {
-        throw new TcsHttpError(res.status || 401, `TCS authentication failed (username / password): ${tcsErrorText(j)}`);
-      }
-      return { token: String(token), exp: this.expOf(j?.expiry ?? j?.result?.expiry) };
-    });
-  }
-
-  private bust(c: TcsCredentials) {
-    TOKENS.delete(this.bearerKey(c));
+  /** Forget a rejected e-com token (memory + the copy on these creds + stored). */
+  private dropEcom(c: TcsCredentials) {
     TOKENS.delete(this.ecomKey(c));
+    c.ecomToken = undefined;
+    c.ecomTokenExpiry = undefined;
+    const id = tcsCredentialId(c);
+    if (id && this.sink) void this.sink.clear(id).catch(() => undefined);
   }
 
   /**
-   * One authenticated ecom/tracking call. `withAccess` adds the ecom
-   * `accesstoken` (query for GET, body for POST). A 401 busts both tokens and
-   * retries ONCE with fresh ones.
+   * One authenticated call to the fixed production host. Bearer header always;
+   * GET params in the query string, POST params as JSON. `withAccess` adds the
+   * e-com `accesstoken` (appended RAW to a GET query, as-is in a POST body).
+   * A 401 "Invalid access token" re-mints the e-com token and retries ONCE; a
+   * 401 about the bearer token is final (reconnect needed).
    */
   private async call(
     c: TcsCredentials,
@@ -325,12 +384,13 @@ export class TcsAdapter implements CourierAdapter {
     } = {},
     retried = false,
   ): Promise<{ res: Response; json: any; buf?: Buffer }> {
-    const bearer = await this.bearer(c);
+    const bearer = this.bearer(c);
     const access = opts.withAccess ? await this.accessToken(c) : undefined;
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(opts.query ?? {})) if (v != null && v !== '') q.set(k, String(v));
-    if (access && opts.method !== 'POST') q.set('accesstoken', access);
-    const url = `${tcsHost(c)}${path}${q.toString() ? `?${q}` : ''}`;
+    let qs = q.toString();
+    if (access && opts.method !== 'POST') qs = `${qs ? `${qs}&` : ''}accesstoken=${access}`;
+    const url = `${TCS_BASE}${path}${qs ? `?${qs}` : ''}`;
     const init: RequestInit = {
       method: opts.method ?? 'GET',
       headers: {
@@ -343,13 +403,10 @@ export class TcsAdapter implements CourierAdapter {
         : {}),
     };
     const res = await httpFetch(url, init, opts.timeoutMs);
-    if (res.status === 401 && !retried) {
-      this.bust(c);
-      return this.call(c, path, opts, true);
-    }
+    let buf: Buffer | undefined;
+    let json: any = null;
     if (opts.raw) {
-      const buf = Buffer.from(await res.arrayBuffer());
-      let json: any = null;
+      buf = Buffer.from(await res.arrayBuffer());
       if (!isPdf(buf)) {
         try {
           json = JSON.parse(buf.toString('utf8'));
@@ -357,24 +414,49 @@ export class TcsAdapter implements CourierAdapter {
           json = null;
         }
       }
-      return { res, json, buf };
+    } else {
+      const text = await res.text();
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        json = { message: text.slice(0, 300) };
+      }
     }
-    const text = await res.text();
-    let json: any = null;
-    try {
-      json = text ? JSON.parse(text) : null;
-    } catch {
-      json = { message: text.slice(0, 300) };
+    if (res.status === 401) {
+      const why = tcsErrorText(json);
+      if (/bearer|mismatch configuration/i.test(why)) {
+        throw new TcsHttpError(401, 'TCS bearer token is invalid — reconnect TCS in Settings › Couriers.');
+      }
+      if (access && !retried) {
+        this.dropEcom(c);
+        return this.call(c, path, opts, true);
+      }
+      throw new TcsHttpError(401, `TCS rejected the request: ${maskSecrets(why, c)}`);
     }
-    if (res.status === 401) throw new TcsHttpError(401, `TCS rejected the credentials: ${tcsErrorText(json)}`);
-    return { res, json };
+    return { res, json, buf };
   }
 
-  /** Validate saved credentials by minting both tokens (Settings save). */
-  async validate(c: TcsCredentials): Promise<void> {
-    this.bust(c);
-    await this.bearer(c);
-    await this.accessToken(c);
+  /**
+   * Connect-time check (never books): (1) the bearer token via a dummy tracking
+   * lookup, (2) username/password via a fresh e-com token. Returns the token +
+   * expiry to store.
+   */
+  async validateConnection(c: TcsCredentials): Promise<{ ecomToken: string; expiry: string | null }> {
+    const bearer = this.bearer(c);
+    const res = await httpFetch(`${TCS_BASE}/tracking/api/Tracking/GetDynamicTrackDetail?consignee=000000000000`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${bearer}` },
+    });
+    if (res.status === 401 || res.status === 403) throw new Error('Bearer token is invalid.');
+    if (!res.ok) throw new Error(`TCS did not answer the bearer-token check (HTTP ${res.status}).`);
+    TOKENS.delete(this.ecomKey(c));
+    try {
+      const { token, expiry } = await this.mintEcom(c);
+      TOKENS.set(this.ecomKey(c), { token, exp: this.expOf(expiry) });
+      return { ecomToken: token, expiry };
+    } catch (err) {
+      const m = (err as Error)?.message || '';
+      throw new Error(/bearer/i.test(m) ? 'Bearer token is invalid.' : 'Username or password rejected by TCS.');
+    }
   }
 
   // ── Booking ─────────────────────────────────────────────────────────────
@@ -401,6 +483,32 @@ export class TcsAdapter implements CourierAdapter {
     const email = input.email && /\S+@\S+\.\S+/.test(input.email) ? input.email.slice(0, 50) : undefined;
     const cityName = String(input.destination.city || input.destination.cityCode || '').trim();
     const cityCode = String(input.destination.cityCode || '').trim();
+    const costCenter = String(c.costCenterCode ?? '').trim();
+    if (!costCenter) {
+      throw new Error('TCS cost center not configured — set it in Settings › Couriers › TCS.');
+    }
+    // skus[]: one line per order item (unit price = an even share of COD so the
+    // declared value matches what TCS collects); fallback = one line for the order.
+    const items = (input.items ?? []).filter((it) => it && it.qty > 0);
+    const unitsTotal = items.reduce((n, it) => n + it.qty, 0);
+    const perUnit = unitsTotal > 0 ? Math.max(1, Math.round(cod / unitsTotal)) : Math.max(1, cod);
+    const skus = items.length
+      ? items.slice(0, 50).map((it) => ({
+          description: String(it.name || it.sku || 'Item').padEnd(3, '.').slice(0, 200),
+          quantity: Math.max(1, Math.round(it.qty)),
+          weight: 0.5,
+          uom: 'KG',
+          unitprice: Math.min(250_000, perUnit),
+        }))
+      : [
+          {
+            description: String(input.itemsDescription || 'Order').padEnd(3, '.').slice(0, 200),
+            quantity: 1,
+            weight,
+            uom: 'KG',
+            unitprice: Math.min(250_000, Math.max(1, cod)),
+          },
+        ];
     return {
       consignmentno: null,
       shipperinfo: {
@@ -428,7 +536,7 @@ export class TcsAdapter implements CourierAdapter {
         mobile,
       },
       shipmentinfo: {
-        ...(c.costCenterCode ? { costcentercode: c.costCenterCode.slice(0, 20) } : {}),
+        costcentercode: costCenter.slice(0, 20),
         referenceno: String(input.shopifyOrderName).slice(0, 50),
         contentdesc: String(input.itemsDescription || 'Order').slice(0, 999),
         servicecode: String(c.serviceCode || 'O').slice(0, 6),
@@ -438,12 +546,17 @@ export class TcsAdapter implements CourierAdapter {
         pieces: Math.max(1, Math.round(input.pieces || 1)),
         fragile: false,
         ...(input.notes ? { remarks: String(input.notes).slice(0, 500) } : {}),
+        skus,
       },
     };
   }
 
   async bookShipment(creds: TcsCredentials, input: BookShipmentInput): Promise<BookShipmentResult> {
     const body = this.buildBookingBody(creds, input);
+    // Resolve both tokens BEFORE sending, so an auth problem (bad bearer token,
+    // rejected password) is reported as such — not as an "unconfirmed booking".
+    this.bearer(creds);
+    await this.accessToken(creds);
     let res: Response;
     let json: any;
     try {
@@ -471,7 +584,7 @@ export class TcsAdapter implements CourierAdapter {
     if (res.status === 502 || res.status === 504) {
       throw new TcsUnconfirmedBookingError(input.shopifyOrderName, `gateway ${res.status}`);
     }
-    throw new Error(`TCS booking failed: ${tcsErrorText(json)}`);
+    throw new Error(`TCS booking failed: ${maskSecrets(tcsErrorText(json), creds)}`);
   }
 
   async cancelShipment(creds: TcsCredentials, trackingNumber: string): Promise<{ ok: boolean; raw: unknown }> {
@@ -509,10 +622,10 @@ export class TcsAdapter implements CourierAdapter {
         } else if (json?.url && /^https?:\/\//i.test(String(json.url))) {
           parts.push({ trackingNumber: tn, url: String(json.url) });
         } else {
-          raw.push({ tn, error: tcsErrorText(json) });
+          raw.push({ tn, error: maskSecrets(tcsErrorText(json), creds) });
         }
       } catch (err) {
-        raw.push({ tn, error: (err as Error)?.message });
+        raw.push({ tn, error: maskSecrets((err as Error)?.message ?? '', creds) });
       }
     }
     if (!parts.length && raw.length) this.logger.warn(`TCS labels failed: ${JSON.stringify(raw).slice(0, 400)}`);
@@ -623,7 +736,7 @@ export class TcsAdapter implements CourierAdapter {
   // ── Shipper advice ──────────────────────────────────────────────────────
 
   private async adviceIds(c: TcsCredentials) {
-    const key = `${tcsHost(c)}:${c.accountNo}`;
+    const key = `${c.accountNo}:${String(c.bearerToken ?? '').slice(-12)}`;
     const hit = ADVICE_IDS.get(key);
     if (hit && Date.now() - hit.at < 24 * 3600_000) return hit.ids;
     const { json } = await this.call(c, '/ecom/api/shipperadvice/getactions', { withAccess: true });
@@ -775,7 +888,7 @@ export class TcsAdapter implements CourierAdapter {
     });
     const rows = firstArray(json);
     if (!res.ok || !rows.length) {
-      throw new Error(`TCS returned no lines for invoice ${invoiceNo}: ${tcsErrorText(json)}`);
+      throw new Error(`TCS returned no lines for invoice ${invoiceNo}: ${maskSecrets(tcsErrorText(json), c)}`);
     }
     return tcsInvoiceToParsed(invoiceNo, rows);
   }

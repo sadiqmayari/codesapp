@@ -102,7 +102,7 @@ export class CourierRegistryService {
       where: { company_id_courier_type: { company_id: companyId, courier_type: courierType } },
     });
     if (!row || !row.is_active) return null;
-    return JSON.parse(this.encryption.decrypt(row.credentials_encrypted));
+    return this.decode(row);
   }
 
   async requireCredentials(
@@ -119,7 +119,20 @@ export class CourierRegistryService {
     }
     return {
       credentialId: row.id,
-      creds: JSON.parse(this.encryption.decrypt(row.credentials_encrypted)),
+      creds: this.decode(row),
     };
+  }
+
+  /**
+   * Decrypt a credential row. The row id rides along as a NON-enumerable
+   * `credentialId` so an adapter can persist a refreshed token (TCS e-com
+   * token) without it ever being re-saved into the JSON or echoed back.
+   */
+  private decode(row: { id: number; credentials_encrypted: string }): unknown {
+    const creds = JSON.parse(this.encryption.decrypt(row.credentials_encrypted));
+    if (creds && typeof creds === 'object') {
+      Object.defineProperty(creds, 'credentialId', { value: row.id, enumerable: false });
+    }
+    return creds;
   }
 }
