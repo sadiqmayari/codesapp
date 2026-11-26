@@ -416,7 +416,7 @@ function CourierSheet({
 
   // TCS has no push webhooks (statuses are pulled on the sync schedule).
   const webhookUrl =
-    courierType !== 'tcs' && row?.webhookUrl && typeof window !== 'undefined'
+    row?.webhookUrl && typeof window !== 'undefined'
       ? `${window.location.origin}${row.webhookUrl}`
       : null;
 
@@ -556,7 +556,9 @@ function CourierSheet({
           label="Tracking webhook URL"
           value={webhookUrl}
           hint={
-            courierType === 'rapidxpk'
+            courierType === 'tcs'
+              ? 'Paste this in the TCS Envio portal → (your name) → Webhook Setup → Create Setup, so status updates arrive instantly. Statuses are also checked on your sync schedule either way.'
+              : courierType === 'rapidxpk'
               ? 'Registered with RapidXpk automatically when you save the API key. You can also set it in the RapidXpk portal and paste its signing secret above.'
               : `Give this URL to ${label} so delivery updates arrive on their own.`
           }

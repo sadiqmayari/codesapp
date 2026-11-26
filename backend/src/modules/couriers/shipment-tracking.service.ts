@@ -111,6 +111,25 @@ export function normalizeEvent(courierType: CourierType, body: any): NormalizedE
       reason: body.reason ? String(body.reason) : undefined,
     };
   }
+  if (courierType === 'tcs') {
+    // TCS (Envio → Webhook Setup) push. TCS publishes no payload spec, so accept
+    // the field names its tracking API uses (consignmentno / status / code) plus
+    // common variants; an unmatched shape falls through to the "unrecognized
+    // payload" log so it can be calibrated. The pull sync stays the safety net.
+    const b = body?.data && typeof body.data === 'object' ? body.data : body;
+    const tn =
+      b?.consignmentno ?? b?.consignmentNo ?? b?.ConsignmentNo ?? b?.consignmentNumber ??
+      b?.cn ?? b?.CN ?? b?.cnno ?? b?.trackingNumber ?? b?.tracking_number;
+    const st = b?.status ?? b?.Status ?? b?.deliverystatus ?? b?.statusdescription ?? b?.description;
+    const code = b?.code ?? b?.statuscode ?? b?.StatusCode;
+    if (!tn || (!st && !code)) return null;
+    const text = String(st ?? code);
+    return {
+      trackingNumber: String(tn),
+      rawStatus: code && st ? `${text} (${String(code).toUpperCase()})` : text,
+      reason: b?.remarks ? String(b.remarks) : b?.station ? String(b.station) : undefined,
+    };
+  }
   if (courierType === 'rocket') {
     // Rocket's status-webhook payload isn't in the published API doc, so accept
     // the common key spellings for the tracking ref and status. `shipped_ref`

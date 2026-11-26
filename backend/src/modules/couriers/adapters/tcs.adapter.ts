@@ -157,9 +157,80 @@ export function parseTcsDate(raw: unknown): Date | undefined {
  * full list is visible in Settings → Couriers → TCS → "Status codes".
  */
 const CODE_MAP: Record<string, ShipmentStatus> = {
+  // ── From TCS's live setup/deliverystatuslist (2026-11-26) ──
+  BT: 'booked',
+  LC: 'booked',
+  PO: 'in_transit', // processed at origin
+  IB: 'in_transit', // inbound scan
+  RV: 'in_transit',
+  SR: 'in_transit', // short received
+  PR: 'in_transit',
+  RP: 'in_transit', // re-packed
+  SI: 'in_transit', // security inspection
+  SM: 'in_transit', // SMS sent
+  MR: 'in_transit',
+  RA: 'in_transit', // remote area, delivery arranged
+  PFC: 'in_transit',
+  CP: 'in_transit',
+  CR: 'in_transit',
+  CD: 'in_transit',
+  DHR: 'in_transit',
+  BW: 'in_transit', // bad weather
+  TD: 'in_transit',
+  ND: 'in_transit', // scheduled for next delivery cycle
+  DR: 'attempted', // delivery rescheduled
+  VHV: 'in_transit',
+  VDI: 'in_transit',
+  VLI: 'in_transit',
+  DVR: 'in_transit',
+  DVS: 'in_transit',
+  RH: 'in_transit',
+  RE: 'in_transit',
+  VEC: 'in_transit',
+  DOI: 'in_transit',
+  TP: 'in_transit', // third-party delivery leg
+  TP1: 'in_transit',
+  OD: 'out_for_delivery',
+  PD: 'delivered', // partial delivery
+  POK: 'delivered',
+  BR: 'delivered',
+  // Undelivered — needs the shipper / customer (attempted)
+  BA: 'attempted',
+  BD: 'attempted',
+  WA: 'attempted',
+  UL: 'attempted',
+  IA: 'attempted',
+  NP: 'attempted', // receiver shifted
+  CS: 'attempted',
+  HN: 'attempted', // consignee not home
+  MO: 'attempted', // mobile switched off
+  NM: 'attempted',
+  NT: 'attempted',
+  WM: 'attempted',
+  WP: 'attempted',
+  AN: 'attempted',
+  VM: 'attempted',
+  NC: 'attempted', // need further consignee information
+  NS: 'attempted', // out of delivery area
+  OS: 'attempted',
+  HP: 'attempted', // held for payment
+  ST: 'attempted', // stop delivery
+  SS: 'attempted',
+  CSC: 'attempted',
+  CSR: 'attempted',
+  PC: 'attempted', // please contact TCS
+  DM: 'attempted', // damaged
+  PI: 'attempted', // prohibited item
+  OH: 'attempted',
+  HF: 'attempted',
+  CL: 'attempted',
+  HC: 'attempted',
+  // Lost / abandoned — the delivery failed
+  LS: 'failed',
+  AB: 'failed',
   OK: 'delivered',
   DL: 'delivered',
-  RO: 'failed', // return to origin — moving back to the shipper
+  RO: 'failed', // "Returned To Origin" — back at origin city, not yet handed to the shipper (RS)
   RS: 'returned', // returned to shipper
   RT: 'failed',
   SC: 'attempted', // awaiting receiver collection
@@ -195,8 +266,8 @@ const TEXT_RULES: Array<[RegExp, ShipmentStatus]> = [
 export function mapTcsStatus(raw: string, code?: string | null): ShipmentStatus {
   const c = String(code ?? '').trim().toUpperCase();
   const text = String(raw ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-  if (isReturnedToShipper(text)) return 'returned';
   if (c && CODE_MAP[c]) return CODE_MAP[c];
+  if (isReturnedToShipper(text)) return 'returned';
   if (!text) throw new UnmappedCourierStatusError('tcs', raw);
   const bareCode = text.toUpperCase();
   if (CODE_MAP[bareCode]) return CODE_MAP[bareCode];
@@ -239,6 +310,11 @@ function firstArray(j: any): any[] {
       const inner = firstArray(j[k]);
       if (inner.length) return inner;
     }
+  }
+  // TCS names its list differently per endpoint (actions, actiondetails,
+  // shipperadvicedetails, …) — fall back to the first array value.
+  if (j && typeof j === 'object') {
+    for (const v of Object.values(j)) if (Array.isArray(v)) return v;
   }
   return [];
 }
@@ -443,7 +519,7 @@ export class TcsAdapter implements CourierAdapter {
    */
   async validateConnection(c: TcsCredentials): Promise<{ ecomToken: string; expiry: string | null }> {
     const bearer = this.bearer(c);
-    const res = await httpFetch(`${TCS_BASE}/tracking/api/Tracking/GetDynamicTrackDetail?consignee=000000000000`, {
+    const res = await httpFetch(`${TCS_BASE}/tracking/api/Tracking/GetDynamicTrackDetail?consignee=CODESAPPCHECK0`, {
       headers: { Accept: 'application/json', Authorization: `Bearer ${bearer}` },
     });
     if (res.status === 401 || res.status === 403) throw new Error('Bearer token is invalid.');
@@ -643,9 +719,12 @@ export class TcsAdapter implements CourierAdapter {
   }
 
   /** Every event (deliveryinfo + checkpoints), oldest → newest. */
-  static events(j: any): Array<{ status: string; code?: string; at?: Date; detail?: string }> {
+  static events(j: any, cn?: string): Array<{ status: string; code?: string; at?: Date; detail?: string }> {
     const out: Array<{ status: string; code?: string; at?: Date; detail?: string }> = [];
-    for (const d of Array.isArray(j?.deliveryinfo) ? j.deliveryinfo : []) {
+    // GetDynamicTrackDetail also matches REFERENCE numbers, so it can return
+    // other parcels — keep only rows for this consignment.
+    const mine = (r: any) => !cn || !str(r?.consignmentno) || str(r?.consignmentno) === cn;
+    for (const d of Array.isArray(j?.deliveryinfo) ? j.deliveryinfo.filter(mine) : []) {
       const status = str(d?.status);
       if (!status) continue;
       out.push({
@@ -657,7 +736,7 @@ export class TcsAdapter implements CourierAdapter {
           .join(' · ') || undefined,
       });
     }
-    for (const cp of Array.isArray(j?.checkpoints) ? j.checkpoints : []) {
+    for (const cp of Array.isArray(j?.checkpoints) ? j.checkpoints.filter(mine) : []) {
       const status = str(cp?.status);
       if (!status) continue;
       const at = parseTcsDate(cp?.datetime);
@@ -673,7 +752,7 @@ export class TcsAdapter implements CourierAdapter {
     try {
       const j = await this.track(creds, trackingNumber);
       if (!j) return { kind: 'none' };
-      const ev = TcsAdapter.events(j);
+      const ev = TcsAdapter.events(j, trackingNumber);
       if (!ev.length) return { kind: 'none' };
       // Latest event; on a time tie prefer one carrying a status code.
       const lastT = ev[ev.length - 1].at?.getTime();
@@ -705,7 +784,7 @@ export class TcsAdapter implements CourierAdapter {
     try {
       const j = await this.track(creds, trackingNumber);
       if (!j) return [];
-      return TcsAdapter.events(j).map((e) => ({
+      return TcsAdapter.events(j, trackingNumber).map((e) => ({
         status: e.status,
         detail: e.detail,
         at: e.at?.toISOString(),
@@ -728,7 +807,7 @@ export class TcsAdapter implements CourierAdapter {
   }
 
   isAwaitingShipperAdvice(rawStatus: string, reason?: string): boolean {
-    return /shipper advi[cs]e|awaiting (shipper|instruction)|pending (shipper|advice)|hold for (advice|instruction)/i.test(
+    return /shipper advi[cs]e|awaiting (shipper|instruction)|pending (shipper|advice)|hold for (advice|instruction)|need further consignee information|awaiting correct number|\((NC|AN)\)/i.test(
       `${rawStatus} ${reason ?? ''}`,
     );
   }
@@ -749,9 +828,12 @@ export class TcsAdapter implements CourierAdapter {
       reattempt: null,
     };
     const want: Array<[ShipperAdviceAction, RegExp]> = [
-      ['reattempt', /re-?\s*attempt|re-?deliver|deliver again|again/i],
+      ['reattempt', /re-?\s*attempt|re-?forward|re-?deliver|deliver again|again/i],
       ['return', /return/i],
     ];
+    // Which detail to pick under the action: re-attempt at the SAME address;
+    // return = the only detail (RTS).
+    const detailWant: Record<ShipperAdviceAction, RegExp> = { reattempt: /same address/i, return: /rts|return/i };
     for (const [kind, re] of want) {
       const a = actions.find((x) => Number.isFinite(x.id) && re.test(x.name));
       if (!a) continue;
@@ -763,7 +845,9 @@ export class TcsAdapter implements CourierAdapter {
         id: Number(pick(d, /detail_?id$/i) ?? pick(d, /^id$/i) ?? pick(d, /id/i)),
         name: str(pick(d, /name|desc/i)),
       }));
-      const d = details.find((x) => Number.isFinite(x.id) && re.test(x.name)) ?? details.find((x) => Number.isFinite(x.id));
+      const d =
+        details.find((x) => Number.isFinite(x.id) && detailWant[kind].test(x.name)) ??
+        details.find((x) => Number.isFinite(x.id));
       if (d) ids[kind] = { actionId: a.id, detailId: d.id };
     }
     ADVICE_IDS.set(key, { at: Date.now(), ids });

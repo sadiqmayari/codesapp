@@ -27,6 +27,27 @@ describe('TcsAdapter', () => {
     expect(mapTcsStatus('RO')).toBe('failed');
     expect(a.mapStatus('Delivered (OK)')).toBe('delivered');
     expect(a.mapStatus('Awaiting Receiver Collection (SC)')).toBe('attempted');
+    // Live TCS vocabulary (2026-11-26)
+    expect(mapTcsStatus('Returned To Origin', 'RO')).toBe('failed'); // return leg, not yet handed back
+    expect(mapTcsStatus('Returned To Sender', 'RS')).toBe('returned');
+    expect(mapTcsStatus('Consignee not home', 'HN')).toBe('attempted');
+    expect(mapTcsStatus('Processed at Origin', 'PO')).toBe('in_transit');
+    expect(mapTcsStatus('Lost shipment', 'LS')).toBe('failed');
+    expect(a.isAwaitingShipperAdvice('Need Further Consignee Information (NC)')).toBe(true);
+  });
+
+  it('keeps only the asked consignment when TCS also matches reference numbers', () => {
+    const ev = TcsAdapter.events(
+      {
+        deliveryinfo: [
+          { consignmentno: '111', status: 'Delivered', code: 'OK', datetime: 'Friday Nov 14, 2026 13:48' },
+          { consignmentno: '222', status: 'Out For Delivery', code: 'OD', datetime: 'Friday Nov 14, 2026 09:00' },
+        ],
+        checkpoints: [{ consignmentno: '111', status: 'Arrived at TCS Facility', datetime: 'Thursday Nov 13, 2026 10:00' }],
+      },
+      '222',
+    );
+    expect(ev.map((e) => e.status)).toEqual(['Out For Delivery']);
   });
 
   it('throws on an unknown status', () => {
