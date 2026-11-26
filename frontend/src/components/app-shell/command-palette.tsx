@@ -257,7 +257,7 @@ function Palette({ onClose }: { onClose: () => void }) {
   let lastGroup = '';
   return (
     <div
-      className="fixed inset-0 z-[95] bg-black/40 flex items-start justify-center p-3 pt-[10vh]"
+      className="fixed inset-0 z-[95] bg-black/40 flex items-start justify-center p-3 pt-[10dvh]"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -299,7 +299,7 @@ function Palette({ onClose }: { onClose: () => void }) {
           id="cmdk-list"
           ref={listRef}
           role="listbox"
-          className="max-h-[60vh] overflow-y-auto p-2"
+          className="max-h-[60dvh] overflow-y-auto p-2"
         >
           {cmds.length === 0 ? (
             <li className="px-4 py-10 text-center text-sm text-gray-500">

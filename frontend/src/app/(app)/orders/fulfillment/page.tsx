@@ -3754,7 +3754,7 @@ function FulfillmentQueue({
         <div
           role="region"
           aria-label="Bulk actions"
-          className="fixed bottom-20 left-1/2 z-[55] flex w-[min(1040px,calc(100vw-1.5rem))] -translate-x-1/2 flex-wrap items-center gap-2 rounded-2xl bg-slate-900 px-3 py-2 text-white shadow-2xl ring-1 ring-white/10 md:bottom-5 md:pl-4"
+          className="fixed bottom-20 left-1/2 z-30 flex w-[min(1040px,calc(100vw-1.5rem))] -translate-x-1/2 flex-wrap items-center gap-2 rounded-2xl bg-slate-900 px-3 py-2 text-white shadow-2xl ring-1 ring-white/10 md:bottom-5 md:pl-4"
         >
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
             <span className="text-sm font-extrabold">

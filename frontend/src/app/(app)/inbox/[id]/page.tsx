@@ -1920,13 +1920,13 @@ export default function ThreadPage() {
 
   return (
     <div
-      className="relative h-full flex bg-sunken"
+      className="relative h-full flex overflow-hidden bg-sunken"
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <div className="relative flex-1 flex flex-col min-w-0 h-full">
+      <div className="relative flex-1 flex flex-col min-w-0 h-full overflow-hidden">
       {dragOver && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-green-600/10 backdrop-blur-sm border-4 border-dashed border-green-500 m-2 rounded-2xl pointer-events-none">
           <div className="bg-white rounded-xl px-6 py-4 shadow-lg text-center">
@@ -4037,7 +4037,7 @@ function OpenTicketChip({
           onClick={() => setDetailOpen(true)}
           title={`Open ticket ${ticket.ticket_number}`}
           className={cn(
-            'hidden xl:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0 hover:brightness-95',
+            'inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0 hover:brightness-95',
             ticketStatusColor(ticket.status),
           )}
         >
@@ -4049,7 +4049,7 @@ function OpenTicketChip({
           type="button"
           onClick={() => setOpen(true)}
           title="Create a support ticket for this chat"
-          className="hidden xl:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0 bg-gray-100 text-gray-600 hover:bg-gray-200"
+          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0 bg-gray-100 text-gray-600 hover:bg-gray-200"
         >
           <LifeBuoy size={13} /> Ticket
         </button>

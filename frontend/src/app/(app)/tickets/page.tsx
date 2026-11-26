@@ -119,7 +119,7 @@ export default function TicketsPage() {
 
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
         <div className="flex items-center gap-2">
           <LifeBuoy className="text-green-600" size={22} />
           <h1 className="text-xl font-semibold text-gray-900">Support tickets</h1>

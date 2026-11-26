@@ -12,12 +12,27 @@ import { cn } from '@/lib/utils';
 import { useMyToday } from '@/components/team/attendance/use-my-today';
 import { AnchoredPopover } from '@/components/ui/popover';
 
+type Nudge = 'checkin' | 'checkout' | 'lock' | null;
+
+const seenKey = (date: string, n: Nudge) => `ca_att_seen:${date}:${n}`;
+const wasSeen = (date: string, n: Nudge) => {
+  try {
+    return localStorage.getItem(seenKey(date, n)) === '1';
+  } catch {
+    return false;
+  }
+};
+
 /**
- * Navbar attendance chip — the always-there, never-in-the-way control.
+ * Navbar attendance chip — the ONE attendance control (the old reminder bar
+ * above the navbar duplicated it and was removed, Nov-2026).
  *  - checked in: "● In · 3h 12m" (flexible staff: "/ 8h"); turns green when the
  *    day's hours are done. Click → popover with Check out.
- *  - not checked in: a small "Check in" chip (only while check-in is open).
- * Flexible staff get ONLY this chip (no reminder bar).
+ *  - not checked in: a "Check in" chip (only while check-in is open).
+ *  - NUDGES (same rules the bar had): check-in window open and not checked in,
+ *    fixed shift over while still checked in, or the app locks within 15 min →
+ *    amber chip with a pulsing dot + a short label. Opening the popover once
+ *    stops the pulse for that nudge for the rest of the tenant day.
  */
 export function AttendanceChip() {
   const a = useMyToday();
@@ -26,11 +41,32 @@ export function AttendanceChip() {
   const [busy, setBusy] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
 
+  const [, force] = useState(0);
+
   if (!a.tracked || !a.loaded || !a.today) return null;
   const t = a.today;
   const closedToday = a.checkedIn && !a.open;
-  if (!a.checkedIn && !a.inWindow) return null;
-  if (closedToday && t.dayKind !== 'work' && !t.flexible) return null;
+  let nudge: Nudge = null;
+  if (!t.flexible && t.dayKind === 'work') {
+    if (!a.checkedIn && a.inWindow) nudge = 'checkin';
+    else if (a.open && a.shiftOver) nudge = 'checkout';
+  }
+  if (a.locksInMin != null && a.locksInMin <= 15) nudge = 'lock';
+  if (!nudge && !a.checkedIn && !a.inWindow) return null;
+  if (!nudge && closedToday && t.dayKind !== 'work' && !t.flexible) return null;
+  const pulse = !!nudge && !wasSeen(t.date, nudge);
+
+  const toggle = () => {
+    if (!openPop && nudge) {
+      try {
+        localStorage.setItem(seenKey(t.date, nudge), '1');
+      } catch {
+        /* private mode */
+      }
+      force((n) => n + 1);
+    }
+    setOpenPop((v) => !v);
+  };
 
   const punch = async (kind: 'in' | 'out') => {
     setBusy(true);
@@ -47,7 +83,11 @@ export function AttendanceChip() {
 
   const target = a.requiredMin;
   const pct = target ? Math.min(100, Math.round((a.workedMin / target) * 100)) : null;
-  const label = !a.checkedIn
+  const label = nudge === 'lock'
+    ? `Locks in ${a.locksInMin}m`
+    : nudge === 'checkout'
+      ? 'Shift over · Check out'
+      : !a.checkedIn
     ? 'Check in'
     : a.open
       ? `In · ${fmtHours(a.workedMin).replace(' 0', ' ')}`
@@ -58,18 +98,31 @@ export function AttendanceChip() {
       <button
         ref={btnRef}
         type="button"
-        onClick={() => setOpenPop((v) => !v)}
+        onClick={toggle}
         aria-expanded={openPop}
-        aria-label={a.checkedIn ? `Attendance: ${label}` : 'Check in'}
+        aria-label={`Attendance: ${label}`}
         className={cn(
-          'inline-flex items-center gap-2 h-9 rounded-full border px-3 text-xs font-semibold tabular-nums transition-colors',
-          !a.checkedIn && 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100',
-          a.open && !a.doneForToday && 'border-line bg-surface text-ink hover:bg-sunken',
-          a.open && a.doneForToday && 'border-brand-500 bg-brand-50 text-brand-700 hover:bg-brand-100',
-          closedToday && 'border-line bg-sunken text-muted',
+          'relative inline-flex items-center gap-2 h-9 rounded-full border px-3 text-xs font-semibold tabular-nums transition-colors',
+          nudge || !a.checkedIn
+            ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
+            : a.open && !a.doneForToday
+              ? 'border-line bg-surface text-ink hover:bg-sunken'
+              : a.open && a.doneForToday
+                ? 'border-brand-500 bg-brand-50 text-brand-700 hover:bg-brand-100'
+                : 'border-line bg-sunken text-muted',
         )}
       >
-        {a.open ? (
+        {pulse && (
+          <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5" aria-hidden>
+            <span className="absolute inline-flex h-full w-full rounded-full bg-amber-500 opacity-75 motion-safe:animate-ping" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
+          </span>
+        )}
+        {nudge === 'lock' ? (
+          <Clock size={14} aria-hidden />
+        ) : nudge === 'checkout' ? (
+          <LogOut size={14} aria-hidden />
+        ) : a.open ? (
           <span className="relative flex h-2 w-2" aria-hidden>
             <span className="absolute inline-flex h-full w-full rounded-full bg-brand-500 opacity-60 motion-safe:animate-ping" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-500" />
@@ -80,7 +133,7 @@ export function AttendanceChip() {
           <Clock size={14} aria-hidden />
         )}
         <span className="hidden sm:inline">{label}</span>
-        {a.open && target && <span className="hidden sm:inline font-medium text-muted">/ {Math.round(target / 60)}h</span>}
+        {a.open && target && !nudge && <span className="hidden sm:inline font-medium text-muted">/ {Math.round(target / 60)}h</span>}
       </button>
 
       <AnchoredPopover
@@ -132,8 +185,8 @@ export function AttendanceChip() {
                   {t.flexible
                     ? `Check out any time. We remind you after ${fmtHours(target)}. If you forget, the day closes itself after ${t.autoCheckout.maxHours}h, credited ${fmtHours(target)} or until your last activity, whichever is later.`
                     : t.autoCheckout.mode === 'off'
-                      ? `Shift ends at ${t.effectiveEnd}.`
-                      : `Shift ends at ${t.effectiveEnd}. If you forget, the day closes itself and counts until your last activity in the app.`}
+                      ? `Shift ${a.shiftOver ? 'ended' : 'ends'} at ${t.effectiveEnd}.${a.shiftOver ? ' Remember to check out.' : ''}`
+                      : `Shift ${a.shiftOver ? 'ended' : 'ends'} at ${t.effectiveEnd}. If you forget, the day closes itself and counts until your last activity in the app.`}
                 </p>
               )}
               {(a.rec?.checkoutSource === 'auto' || a.rec?.checkoutSource === 'auto_activity') && (

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { searchCities } from '@/lib/couriers';
+import { AnchoredPopover } from '@/components/ui/popover';
 
 /**
  * Type-to-filter city input used by the create-order and correct-address
@@ -32,7 +33,7 @@ export function CityAutocomplete({
   const [open, setOpen] = useState(false);
   const [matches, setMatches] = useState<string[]>([]);
   const [active, setActive] = useState(0);
-  const boxRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   // Skip the next fetch after we programmatically set the value from a pick.
   const skipRef = useRef(false);
 
@@ -66,17 +67,6 @@ export function CityAutocomplete({
     };
   }, [value]);
 
-  // Close on outside click.
-  useEffect(() => {
-    const h = (e: MouseEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, []);
-
   const pick = (c: string) => {
     skipRef.current = true;
     onChange(c);
@@ -87,8 +77,9 @@ export function CityAutocomplete({
   const showList = open && matches.length > 0;
 
   return (
-    <div ref={boxRef} className="relative">
+    <div className="relative">
       <input
+        ref={inputRef}
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
@@ -118,8 +109,17 @@ export function CityAutocomplete({
           inputClassName ?? 'text-sm',
         )}
       />
-      {showList && (
-        <ul className="absolute z-50 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg">
+      {/* Portalled + clamped: inside a modal the body's overflow used to clip
+          the list near the bottom. Outside click / Esc close it. */}
+      <AnchoredPopover
+        open={showList}
+        onClose={() => setOpen(false)}
+        anchorRef={inputRef}
+        align="start"
+        gap={4}
+        className="rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg"
+      >
+        <ul className="max-h-56 overflow-auto" style={{ width: inputRef.current?.offsetWidth }}>
           {matches.map((c, i) => (
             <li key={c}>
               <button
@@ -139,7 +139,7 @@ export function CityAutocomplete({
             </li>
           ))}
         </ul>
-      )}
+      </AnchoredPopover>
     </div>
   );
 }

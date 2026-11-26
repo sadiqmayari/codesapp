@@ -162,7 +162,7 @@ export function AnchoredPopover({
         visibility: pos ? 'visible' : 'hidden',
       }}
       className={cn(
-        'z-[70] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain whitespace-normal text-left normal-case',
+        'z-[98] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain whitespace-normal text-left normal-case',
         className,
       )}
     >

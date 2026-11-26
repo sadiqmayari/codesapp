@@ -605,7 +605,7 @@ export function CityCourierGrid() {
         role="status"
         aria-hidden={sel.size === 0}
         className={cn(
-          'fixed bottom-20 left-1/2 z-[71] flex max-w-[calc(100%-24px)] -translate-x-1/2 flex-wrap items-center gap-2 rounded-2xl bg-gray-900 py-2 pl-4 pr-2 text-sm text-gray-100 shadow-2xl transition-all md:bottom-6',
+          'fixed bottom-20 left-1/2 z-30 flex max-w-[calc(100%-24px)] -translate-x-1/2 flex-wrap items-center gap-2 rounded-2xl bg-gray-900 py-2 pl-4 pr-2 text-sm text-gray-100 shadow-2xl transition-all md:bottom-6',
           sel.size ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-6 opacity-0',
         )}
       >

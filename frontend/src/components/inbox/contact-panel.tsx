@@ -101,7 +101,7 @@ export function ContactOrderChip({
       onClick={onClick}
       title="View this contact's orders"
       className={cn(
-        'hidden xl:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0 hover:brightness-95',
+        'inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0 hover:brightness-95',
         orderStatusTone(latest),
       )}
     >

@@ -31,6 +31,8 @@ import { avatarColor, initialsOf } from '@/lib/avatar';
 import { apiFetch } from '@/lib/api';
 import { Dropdown, type DropdownItem } from '@/components/ui/dropdown';
 import { Modal } from '@/components/ui/modal';
+import { AnchoredPopover } from '@/components/ui/popover';
+import { useElementWidth } from '@/lib/use-element-width';
 import type { ConversationDetail } from '@/lib/inbox-types';
 import type { TeamMember } from '@/lib/crm-types';
 
@@ -82,11 +84,14 @@ export function WindowPill({
   expiresAt,
   now,
   compact,
+  bar,
   onSendTemplate,
 }: {
   expiresAt: string | null | undefined;
   now: number;
   compact?: boolean;
+  /** Show the progress bar. Undefined = from the lg screen width (legacy). */
+  bar?: boolean;
   onSendTemplate?: () => void;
 }) {
   const ms = expiresAt ? new Date(expiresAt).getTime() - now : -1;
@@ -122,10 +127,11 @@ export function WindowPill({
     >
       <Clock size={13} aria-hidden />
       {compact ? `${h}h ${m}m` : `${h}h ${m}m left`}
-      {!compact && (
+      {!compact && bar !== false && (
         <span
           className={cn(
-            'hidden h-1.5 w-10 overflow-hidden rounded-full lg:inline-block',
+            'h-1.5 w-10 overflow-hidden rounded-full',
+            bar ? 'inline-block' : 'hidden lg:inline-block',
             urgent ? 'bg-amber-200' : 'bg-brand-100',
           )}
           aria-hidden
@@ -350,31 +356,30 @@ export default function ThreadHeader(p: ThreadHeaderProps) {
   const [assignModal, setAssignModal] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const assignRef = useRef<HTMLDivElement>(null);
+  const assignBtnRef = useRef<HTMLButtonElement>(null);
+
+  // Layout follows the space the HEADER has, not the screen: with the sidebar,
+  // list and contact drawer open, a 1280px screen leaves the thread ~300px and
+  // the desktop action row used to spill over the drawer. Until measured, fall
+  // back to the md screen breakpoint (null).
+  const rowRef = useRef<HTMLDivElement>(null);
+  const width = useElementWidth(rowRef);
+  const compact: boolean | null = width == null ? null : width < 640;
+  const wide = width != null && width >= 900;
+  const showCompact = compact === null ? 'md:hidden' : compact ? '' : 'hidden';
+  const showFull = compact === null ? 'hidden md:flex' : compact ? 'hidden' : 'flex';
 
   // Keyboard "A" (from the page) opens the assignee picker.
   const firstSignal = useRef(p.assignSignal);
   useEffect(() => {
     if (p.assignSignal === firstSignal.current) return;
     if (p.canManageAssign) {
-      if (window.matchMedia?.('(min-width: 768px)').matches) setAssignOpen(true);
+      const full = compact === null ? !!window.matchMedia?.('(min-width: 768px)').matches : !compact;
+      if (full) setAssignOpen(true);
       else setAssignModal(true);
     } else if (!isMine && p.meId) p.onAssign(p.meId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.assignSignal]);
-
-  useEffect(() => {
-    if (!assignOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      if (assignRef.current && !assignRef.current.contains(e.target as Node)) setAssignOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setAssignOpen(false);
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [assignOpen]);
 
   const pick = (id: number | null) => {
     setAssignOpen(false);
@@ -418,7 +423,7 @@ export default function ThreadHeader(p: ThreadHeaderProps) {
 
   return (
     <>
-      <div className="flex items-center gap-2 border-b border-line bg-surface px-2 py-2 md:px-4">
+      <div ref={rowRef} className="flex min-w-0 items-center gap-2 overflow-hidden border-b border-line bg-surface px-2 py-2 md:px-4">
         <button
           type="button"
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-sunken md:hidden"
@@ -442,8 +447,8 @@ export default function ThreadHeader(p: ThreadHeaderProps) {
           >
             {initialsOf(name)}
           </span>
-          <span className="min-w-0">
-            <span className="flex items-center gap-1.5">
+          <span className="min-w-0 overflow-hidden">
+            <span className="flex min-w-0 items-center gap-1.5 overflow-hidden">
               <span className="truncate font-semibold text-ink">{name}</span>
               {status !== 'open' && (
                 <span
@@ -458,34 +463,53 @@ export default function ThreadHeader(p: ThreadHeaderProps) {
               {blocked && (
                 <span className="shrink-0 rounded bg-red-50 px-1.5 text-xs font-semibold text-red-700">Blocked</span>
               )}
-              {c?.id ? <AiStateBadge conversationId={c.id} /> : null}
+              {c?.id ? <AiStateBadge conversationId={c.id} iconOnly={compact === true} /> : null}
             </span>
-            <span className="flex items-center gap-1.5 truncate text-xs text-muted">
+            <span className="flex min-w-0 items-center gap-1.5 overflow-hidden text-xs text-muted">
               <span className="truncate">{c?.contact?.phone}</span>
               {labels.slice(0, 2).map((l) => (
-                <span key={l} className="hidden shrink-0 rounded bg-sky-50 px-1.5 font-medium text-sky-800 lg:inline">
+                <span
+                  key={l}
+                  className={cn(
+                    'shrink-0 rounded bg-sky-50 px-1.5 font-medium text-sky-800',
+                    width == null ? 'hidden lg:inline' : wide ? 'inline' : 'hidden',
+                  )}
+                >
                   {l}
                 </span>
               ))}
-              {labels.length > 2 && <span className="hidden lg:inline">+{labels.length - 2}</span>}
+              {labels.length > 2 && (
+                <span className={width == null ? 'hidden lg:inline' : wide ? 'inline' : 'hidden'}>+{labels.length - 2}</span>
+              )}
             </span>
           </span>
         </button>
 
-        <div className="flex items-center gap-2">{p.chips}</div>
+        {/* Ticket / order chips: visible only when the header really has room.
+            Always MOUNTED (the ticket chip owns the ticket modals opened from
+            the ⋮ menu) — when narrow, only the chip buttons are hidden. */}
+        {p.chips && (
+          <div className={wide ? 'flex shrink-0 items-center gap-2' : 'contents [&>button]:hidden'}>{p.chips}</div>
+        )}
 
-        <span className="md:hidden">
+        <span className={cn('shrink-0', showCompact)}>
           <WindowPill expiresAt={p.windowExpiresAt} now={p.now} compact />
         </span>
-        <span className="hidden md:inline-flex">
-          <WindowPill expiresAt={p.windowExpiresAt} now={p.now} onSendTemplate={p.onSendTemplate} />
+        <span className={cn('shrink-0', showFull === 'flex' ? 'inline-flex' : showFull === 'hidden' ? 'hidden' : 'hidden md:inline-flex')}>
+          <WindowPill
+            expiresAt={p.windowExpiresAt}
+            now={p.now}
+            bar={width == null ? undefined : wide}
+            onSendTemplate={p.onSendTemplate}
+          />
         </span>
 
-        {/* Desktop actions */}
-        <div className="hidden items-center gap-1 md:flex">
+        {/* Full actions (when the header is wide enough) */}
+        <div className={cn('shrink-0 items-center gap-1', showFull)}>
           {p.canManageAssign ? (
             <div ref={assignRef} className="relative">
               <button
+                ref={assignBtnRef}
                 type="button"
                 onClick={() => setAssignOpen((o) => !o)}
                 aria-haspopup="listbox"
@@ -502,11 +526,15 @@ export default function ThreadHeader(p: ThreadHeaderProps) {
                 <span className="max-w-[7rem] truncate">{assigned ? (isMine ? 'Me' : assigned.name.split(' ')[0]) : 'Assign'}</span>
                 <ChevronDown size={14} className="text-muted" />
               </button>
-              {assignOpen && (
-                <div className="absolute right-0 z-40 mt-1 w-64 rounded-xl border border-line bg-surface pt-2 shadow-lg">
-                  <AssigneeList members={p.members} currentId={assigned?.id ?? null} meId={p.meId} onPick={pick} />
-                </div>
-              )}
+              <AnchoredPopover
+                open={assignOpen}
+                onClose={() => setAssignOpen(false)}
+                anchorRef={assignBtnRef}
+                align="end"
+                className="w-64 rounded-xl border border-line bg-surface pt-2 shadow-lg"
+              >
+                <AssigneeList members={p.members} currentId={assigned?.id ?? null} meId={p.meId} onPick={pick} />
+              </AnchoredPopover>
             </div>
           ) : !isMine ? (
             <button
@@ -572,8 +600,9 @@ export default function ThreadHeader(p: ThreadHeaderProps) {
           />
         </div>
 
-        {/* Mobile actions */}
-        <div className="flex items-center md:hidden">
+        {/* Compact actions (phones, or a narrow thread on desktop) — the ⋮
+            menu carries every full action, so nothing is lost. */}
+        <div className={cn('shrink-0 items-center', compact === null ? 'flex md:hidden' : compact ? 'flex' : 'hidden')}>
           <IconBtn label="Contact info" onClick={p.onTogglePanel} active={p.panelOpen}>
             <Info size={19} />
           </IconBtn>

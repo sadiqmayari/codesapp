@@ -36,7 +36,7 @@ export function SaveBar({
       role="status"
       aria-hidden={!dirty}
       className={cn(
-        'fixed bottom-20 left-1/2 z-[70] flex -translate-x-1/2 items-center gap-3 rounded-2xl bg-gray-900 py-2 pl-5 pr-2 text-sm text-gray-100 shadow-2xl transition-all duration-200 md:bottom-6',
+        'fixed bottom-20 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-2xl bg-gray-900 py-2 pl-5 pr-2 text-sm text-gray-100 shadow-2xl transition-all duration-200 md:bottom-6',
         dirty
           ? 'translate-y-0 opacity-100'
           : 'pointer-events-none translate-y-6 opacity-0',

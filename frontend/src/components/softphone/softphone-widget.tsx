@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Phone, PhoneOff, Mic, MicOff } from 'lucide-react';
+import { usePathname } from 'next/navigation';
 import { useSip } from '@/context/sip-context';
 
 function useCallTimer(active: boolean, startedAt: number | null) {
@@ -23,6 +24,10 @@ function useCallTimer(active: boolean, startedAt: number | null) {
 
 export function SoftphoneWidget() {
   const sip = useSip();
+  const pathname = usePathname() ?? '';
+  // In a chat thread the composer owns the bottom edge on phones → dock the
+  // call bar at the top there so it never covers the input or the newest messages.
+  const dockTop = /^\/(inbox\/[^/]+|team-chat)/.test(pathname);
   const timer = useCallTimer(sip?.state === 'in-call', sip?.call?.startedAt ?? null);
   if (!sip || !sip.available) return null;
   const { state, call } = sip;
@@ -31,7 +36,7 @@ export function SoftphoneWidget() {
   // Incoming ringing — full card with Answer/Decline.
   if (state === 'ringing-in') {
     return (
-      <div className="fixed top-4 right-4 z-[60] w-80 rounded-2xl bg-white shadow-2xl border border-gray-200 overflow-hidden">
+      <div className="fixed top-20 right-4 z-[96] w-[min(20rem,calc(100vw-2rem))] rounded-2xl bg-white shadow-2xl border border-gray-200 overflow-hidden">
         <div className="bg-green-600 text-white px-4 py-3 flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center animate-pulse">
             <Phone size={18} />
@@ -62,7 +67,7 @@ export function SoftphoneWidget() {
   // Ringing-out or in-call — compact dark bar.
   const connecting = state === 'ringing-out';
   return (
-    <div className="fixed bottom-20 md:bottom-4 left-1/2 -translate-x-1/2 z-[60] w-[min(420px,92vw)] rounded-2xl bg-slate-900 text-white shadow-2xl px-4 py-3 flex items-center gap-3">
+    <div className={`fixed ${dockTop ? 'top-2 md:top-auto' : 'bottom-20'} md:bottom-4 left-1/2 -translate-x-1/2 z-[96] w-[min(420px,92vw)] rounded-2xl bg-slate-900 text-white shadow-2xl px-4 py-3 flex items-center gap-3`}>
       <div className="w-11 h-11 rounded-full bg-slate-800 border-2 border-green-500 flex items-center justify-center font-semibold">
         {call.peer?.replace(/[^\d]/g, '').slice(-2) || '✆'}
       </div>

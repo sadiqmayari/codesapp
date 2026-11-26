@@ -148,15 +148,15 @@ export function UsageWarningBanner({ onTopSeverityChange }: Props) {
       className={cn(
         'w-full border-b text-sm flex items-center gap-3 px-4 py-2',
         critical
-          ? 'bg-gradient-to-r from-red-500 to-red-600 text-white border-red-700 animate-pulse'
+          ? 'bg-gradient-to-r from-red-500 to-red-600 text-white border-red-700'
           : 'bg-gradient-to-r from-amber-100 to-amber-50 text-amber-900 border-amber-200',
       )}
     >
       <AlertTriangle
         size={16}
-        className={critical ? 'text-white shrink-0' : 'text-amber-700 shrink-0'}
+        className={critical ? 'text-white shrink-0 motion-safe:animate-pulse' : 'text-amber-700 shrink-0'}
       />
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 line-clamp-2 text-xs sm:text-sm sm:line-clamp-none">
         {top.threshold === '100' ? (
           <span>
             <strong>You have reached your {DIM_LABEL[top.dim]} quota</strong>{' '}

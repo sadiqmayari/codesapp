@@ -6,7 +6,8 @@ import { cn } from '@/lib/utils';
 
 /**
  * Generic modal. Full-screen on narrow viewports, centered card on >=sm.
- * Tailwind only, no portal lib — fixed overlay is sufficient here.
+ * Tailwind only, rendered in place (NOT portalled: callers wrap it in <form>s and
+ * outside-click containers that rely on DOM ancestry).
  */
 export function Modal({
   open,
@@ -47,7 +48,7 @@ export function Modal({
         aria-label={title}
         className={cn(
           'relative bg-white w-full flex flex-col shadow-xl',
-          'h-full sm:h-auto sm:max-h-[90vh] sm:rounded-2xl',
+          'h-full sm:h-auto sm:max-h-[90dvh] sm:rounded-2xl',
           size === 'md' && 'sm:max-w-lg',
           size === 'lg' && 'sm:max-w-2xl',
           size === 'xl' && 'sm:max-w-4xl',

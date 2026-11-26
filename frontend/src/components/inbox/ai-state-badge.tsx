@@ -28,7 +28,7 @@ const META: Record<
  * after hours, or paused for the workspace. Handed-off / muted chats can be
  * given back to the AI from here. Live on `conversation.updated`.
  */
-export function AiStateBadge({ conversationId }: { conversationId: number }) {
+export function AiStateBadge({ conversationId, iconOnly }: { conversationId: number; /** Hide the label (narrow header). */ iconOnly?: boolean }) {
   const { on } = useSocket();
   const toast = useToast();
   const [st, setSt] = useState<ChatAiStateResult | null>(null);
@@ -82,7 +82,7 @@ export function AiStateBadge({ conversationId }: { conversationId: number }) {
           m.resumable && 'cursor-pointer hover:opacity-80',
         )}
       >
-        <Icon size={12} /> <span className="hidden sm:inline">{m.label}</span>
+        <Icon size={12} /> {!iconOnly && <span className="hidden sm:inline">{m.label}</span>}
       </span>
       <ConfirmDialog
         open={confirm}

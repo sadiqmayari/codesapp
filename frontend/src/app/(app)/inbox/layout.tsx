@@ -59,6 +59,7 @@ import { PinnedByTeam } from '@/components/inbox/pinned-by-team';
 import { SkeletonRows } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Dropdown, type DropdownItem } from '@/components/ui/dropdown';
+import { AnchoredPopover } from '@/components/ui/popover';
 
 const STATUSES = ['all', 'unread', 'open', 'pending', 'resolved'] as const;
 type ListStatus = (typeof STATUSES)[number];
@@ -1138,19 +1139,12 @@ function LabelFilter({
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
-  const rootRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
+  const btnRef = useRef<HTMLButtonElement>(null);
   const filtered = options.filter((o) => o.label.toLowerCase().includes(q.toLowerCase())).slice(0, 40);
   return (
-    <div ref={rootRef} className="relative">
+    <div className="relative">
       <button
+        ref={btnRef}
         onClick={() => {
           if (!open) onOpen();
           setOpen((o) => !o);
@@ -1185,8 +1179,13 @@ function LabelFilter({
           </span>
         )}
       </button>
-      {open && (
-        <div className="absolute left-0 z-40 mt-1 w-56 rounded-xl border border-line bg-surface p-1 shadow-lg">
+      <AnchoredPopover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchorRef={btnRef}
+        align="start"
+        className="w-56 rounded-xl border border-line bg-surface p-1 shadow-lg"
+      >
           <input
             autoFocus
             value={q}
@@ -1226,8 +1225,7 @@ function LabelFilter({
               </li>
             ))}
           </ul>
-        </div>
-      )}
+      </AnchoredPopover>
     </div>
   );
 }

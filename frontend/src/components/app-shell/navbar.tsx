@@ -34,6 +34,7 @@ import {
 } from '@/lib/theme';
 import { useCommandPalette } from './command-palette';
 import { AttendanceChip } from './attendance-chip';
+import { AnchoredPopover } from '@/components/ui/popover';
 import { flatNav } from './nav-config';
 
 interface UsageWarning {
@@ -81,7 +82,8 @@ export function Navbar({
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [bellLoading, setBellLoading] = useState(false);
   const [theme, setTheme] = useState<ThemePref>('light');
-  const bellRef = useRef<HTMLDivElement>(null);
+  const bellRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLButtonElement>(null);
   const navHrefs = new Set(flatNav(user).map((n) => n.href));
   const hasInbox = navHrefs.has('/inbox');
   const hasOrders = navHrefs.has('/orders');
@@ -232,24 +234,6 @@ export function Navbar({
     if (bellOpen) loadBell();
   }, [bellOpen, loadBell]);
 
-  useEffect(() => {
-    if (!bellOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      if (bellRef.current && !bellRef.current.contains(e.target as Node)) {
-        setBellOpen(false);
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setBellOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [bellOpen]);
-
   const onLogout = async () => {
     await logout();
     router.replace('/login');
@@ -285,14 +269,14 @@ export function Navbar({
             <img
               src={mediaUrl(user.company.logo_url) ?? ''}
               alt={user.company.name}
-              className="w-7 h-7 rounded object-contain bg-gray-50 border border-gray-200"
+              className="w-7 h-7 shrink-0 rounded object-contain bg-gray-50 border border-gray-200"
             />
           ) : (
-            <span className="w-7 h-7 rounded bg-gray-100 text-gray-600 flex items-center justify-center text-xs font-semibold">
+            <span className="w-7 h-7 shrink-0 rounded bg-gray-100 text-gray-600 flex items-center justify-center text-xs font-semibold">
               {user.company.name?.[0]?.toUpperCase() ?? '?'}
             </span>
           )}
-          <span className="text-sm font-semibold text-gray-800 truncate max-w-[14ch]">
+          <span className="hidden min-[400px]:inline text-sm font-semibold text-gray-800 truncate max-w-[14ch]">
             {user.company.name}
           </span>
         </div>
@@ -317,7 +301,7 @@ export function Navbar({
       <AttendanceChip />
 
       <div
-        className="flex items-center gap-1.5 text-xs text-gray-500 shrink-0"
+        className={cn('items-center gap-1.5 text-xs text-gray-500 shrink-0', status === 'connected' ? 'hidden sm:flex' : 'flex')}
         title={
           status === 'connected'
             ? 'Real-time connection is live'
@@ -378,8 +362,9 @@ export function Navbar({
         </button>
 
         {/* Notification centre */}
-        <div className="relative" ref={bellRef}>
+        <div className="relative">
           <button
+            ref={bellRef}
             type="button"
             title="Notifications"
             aria-label={unread > 0 ? `Notifications, ${unread} unread chats` : 'Notifications'}
@@ -397,8 +382,17 @@ export function Navbar({
               </span>
             )}
           </button>
-          {bellOpen && (
-            <div className="fixed sm:absolute inset-x-2 sm:inset-x-auto top-16 sm:top-auto sm:right-0 sm:mt-2 sm:w-96 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
+          {/* Anchored to the bell (portalled + clamped on screen): the old
+              `fixed top-16` assumed the navbar sat at y=0 and covered it
+              whenever a banner was showing. */}
+          <AnchoredPopover
+            open={bellOpen}
+            onClose={() => setBellOpen(false)}
+            anchorRef={bellRef}
+            align="end"
+            ariaLabel="Notifications"
+            className="w-96 bg-white border border-gray-200 rounded-xl shadow-xl"
+          >
               <div className="px-4 pt-3 pb-2 flex items-center justify-between">
                 <span className="text-sm font-semibold text-gray-900">Notifications</span>
                 {hasInbox && (
@@ -436,7 +430,7 @@ export function Navbar({
                   Alerts{alerts.length > 0 ? ` · ${alerts.length}` : ''}
                 </button>
               </div>
-              <div className="max-h-96 overflow-y-auto">
+              <div className="max-h-[min(24rem,calc(100dvh-10rem))] overflow-y-auto">
                 {bellLoading ? (
                   <div className="p-6 flex justify-center">
                     <div className="w-5 h-5 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
@@ -510,13 +504,13 @@ export function Navbar({
                   })
                 )}
               </div>
-            </div>
-          )}
+          </AnchoredPopover>
         </div>
 
         {/* Account menu */}
         <div className="relative">
           <button
+            ref={menuRef}
             onClick={() => setMenuOpen((o) => !o)}
             aria-label="Account menu"
             aria-expanded={menuOpen}
@@ -534,14 +528,14 @@ export function Navbar({
             <ChevronDown size={16} className="text-gray-400 hidden sm:block" />
           </button>
 
-          {menuOpen && (
-            <>
-              <div
-                className="fixed inset-0 z-10"
-                onClick={() => setMenuOpen(false)}
-                aria-hidden
-              />
-              <div className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-20 py-1">
+          <AnchoredPopover
+            open={menuOpen}
+            onClose={() => setMenuOpen(false)}
+            anchorRef={menuRef}
+            align="end"
+            ariaLabel="Account"
+            className="w-64 bg-white border border-gray-200 rounded-xl shadow-xl py-1"
+          >
                 <div className="px-4 py-2.5 border-b border-gray-100">
                   <p className="text-sm font-semibold text-gray-900 truncate">{user?.name}</p>
                   <p className="text-xs text-gray-500 truncate">{user?.email}</p>
@@ -596,9 +590,7 @@ export function Navbar({
                   <LogOut size={16} />
                   Log out
                 </button>
-              </div>
-            </>
-          )}
+          </AnchoredPopover>
         </div>
       </div>
     </header>

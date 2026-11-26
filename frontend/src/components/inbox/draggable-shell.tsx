@@ -69,7 +69,7 @@ export function DraggableShell({
           // Mobile: full screen. Desktop: centered floating card.
           'absolute inset-0 h-full',
           'sm:inset-auto sm:h-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2',
-          'sm:w-[640px] sm:max-w-[calc(100vw-2rem)] sm:max-h-[90vh] sm:rounded-2xl',
+          'sm:w-[640px] sm:max-w-[calc(100vw-2rem)] sm:max-h-[90dvh] sm:rounded-2xl',
         )}
       >
         <div

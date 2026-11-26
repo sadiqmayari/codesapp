@@ -83,7 +83,7 @@ export default function ContentCalendarPage() {
         <ArrowLeft size={16} /> Back to content
       </Link>
 
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <h1 className="text-xl font-semibold">Content calendar</h1>
         <div className="flex items-center gap-2">
           <button

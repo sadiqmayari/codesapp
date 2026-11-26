@@ -14,6 +14,7 @@ import {
   Copy,
 } from 'lucide-react';
 import { Modal } from '@/components/ui/modal';
+import { AnchoredPopover } from '@/components/ui/popover';
 import { useToast } from '@/components/toast';
 import { apiFetch, ApiError } from '@/lib/api';
 import {
@@ -417,6 +418,7 @@ function ItemsLeg({
   const [searching, setSearching] = useState(false);
   const [open, setOpen] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchBoxRef = useRef<HTMLDivElement>(null);
 
   const run = useCallback(async (q: string) => {
     if (!q.trim()) {
@@ -501,7 +503,7 @@ function ItemsLeg({
 
       {/* Product search */}
       <div className="relative mt-1">
-        <div className="flex items-center gap-2 border border-dashed border-gray-300 rounded-lg px-2.5 py-1.5">
+        <div ref={searchBoxRef} className="flex items-center gap-2 border border-dashed border-gray-300 rounded-lg px-2.5 py-1.5">
           <Search size={13} className="text-gray-400" />
           <input
             value={query}
@@ -515,8 +517,16 @@ function ItemsLeg({
           />
           {searching && <Loader2 size={12} className="animate-spin text-gray-400" />}
         </div>
-        {open && results.length > 0 && (
-          <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+        {/* Portalled + clamped so the modal body's scroll can't clip it. */}
+        <AnchoredPopover
+          open={open && results.length > 0}
+          onClose={() => setOpen(false)}
+          anchorRef={searchBoxRef}
+          align="start"
+          gap={4}
+          className="bg-white border border-gray-200 rounded-lg shadow-lg"
+        >
+          <div className="max-h-48 overflow-y-auto" style={{ width: searchBoxRef.current?.offsetWidth }}>
             {results.map((v) => (
               <button
                 key={v.variantId}
@@ -533,7 +543,7 @@ function ItemsLeg({
               </button>
             ))}
           </div>
-        )}
+        </AnchoredPopover>
       </div>
 
       {children}

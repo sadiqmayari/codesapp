@@ -285,7 +285,8 @@ export function KnowledgeSection() {
           }
           flush
         >
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[520px] text-sm">
             <thead>
               <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
                 <th className="px-5 py-2">Store</th>
@@ -316,6 +317,7 @@ export function KnowledgeSection() {
               })}
             </tbody>
           </table>
+          </div>
         </SettingsCard>
       )}
 

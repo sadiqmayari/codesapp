@@ -112,7 +112,7 @@ export function Sidebar({
     <>
       {open && (
         <div
-          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+          className="fixed inset-0 z-[49] bg-black/40 md:hidden"
           onClick={onClose}
           aria-hidden
         />
@@ -120,7 +120,7 @@ export function Sidebar({
       <aside
         aria-label="Main navigation"
         className={cn(
-          'fixed z-40 inset-y-0 left-0 w-64 bg-white border-r border-gray-200 flex flex-col transition-[transform,width] duration-200',
+          'fixed z-50 inset-y-0 left-0 w-64 bg-white border-r border-gray-200 flex flex-col transition-[transform,width] duration-200',
           collapsed && 'md:w-[68px]',
           open ? 'translate-x-0 md:static md:z-auto' : '-translate-x-full',
         )}

@@ -212,7 +212,7 @@ export default function NewProductPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-[1280px] flex-col gap-4 px-4 pb-28 pt-5 sm:px-6">
+    <div className="mx-auto flex max-w-[1280px] flex-col gap-4 px-4 pb-44 pt-5 sm:px-6 md:pb-28">
       <header>
         <Link href="/inventory" className="text-sm font-bold text-brand-700">← Catalogue</Link>
         <h1 className="mt-1 text-2xl font-extrabold text-ink">New product</h1>
@@ -443,7 +443,7 @@ export default function NewProductPage() {
           </section>
         </aside>
       </div>
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface/95 px-4 py-3 backdrop-blur md:left-auto md:right-6 md:bottom-5 md:rounded-2xl md:border">
+      <div className="fixed inset-x-0 bottom-14 z-30 border-t border-line bg-surface/95 px-4 py-3 backdrop-blur md:left-auto md:right-6 md:bottom-5 md:rounded-2xl md:border">
         <div className="mx-auto flex max-w-[1280px] flex-wrap items-center justify-between gap-3 text-sm">
           <span className="text-muted">
             {rows.length} variant{rows.length === 1 ? '' : 's'} · {chosen.length} store{chosen.length === 1 ? '' : 's'} · {totalStock} units opening stock

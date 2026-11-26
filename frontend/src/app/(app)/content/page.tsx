@@ -197,7 +197,7 @@ export default function ContentPage() {
           <Clapperboard className="text-violet-600" />
           <h1 className="text-xl font-semibold">Content</h1>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Link
             href="/content/calendar"
             className="px-3 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50"

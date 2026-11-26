@@ -6,7 +6,14 @@
 
 ## Current Status
 
-**Attendance follow-ups + mobile dropdown audit (2026-11-26, latest):** migration `20261127000000_attendance_followups` (auto-applies). Preview: https://claude.ai/artifact/NXGqiw8CaXWXsNfdBcYb4w
+**UI audit — contact drawer overlap, double attendance, overlays (2026-11-26, latest):** frontend only, no migration.
+- Inbox thread header now sizes to its own width (ResizeObserver): with the contact drawer open it collapses to Info + ⋮ instead of spilling over the drawer; chips/progress bar only when roomy; thread column clips.
+- Attendance shown once: reminder bar removed, navbar chip carries the check-in / shift-over / app-lock nudges (amber + pulse); admin toasts kept (headless `attendance-admin-toasts.tsx`).
+- One overlay z-scale (popovers 98 above order drawer/sheets/modals; softphone 96; bulk/save bars 30; mobile sidebar 50); call bar docks top in chat threads on phones; incoming call card clamped + below toasts.
+- Navbar bell + account menu → anchored popovers (fixed covering navbar under banners / account menu under page content); mobile navbar trimmed; usage banner pulses icon only.
+- City autocomplete, inbox label filter, replacement product search → anchored popovers (no clipping in modals); `dvh` modal heights; inventory new-product save bar above tab bar; header flex-wrap (content, tickets, calendar); knowledge table scrolls.
+
+**Attendance follow-ups + mobile dropdown audit (2026-11-26):** migration `20261127000000_attendance_followups` (auto-applies). Preview: https://claude.ai/artifact/NXGqiw8CaXWXsNfdBcYb4w
 - New timing mode **Relaxed** (fixed shift + grace, never marked late, no late deduction; overtime/early leave still apply) beside Fixed and Flexible hours.
 - Auto-checkout now credits the later of shift end and the last app activity (heartbeat every ≤5 min while checked in) → extra hours count as overtime (`auto_activity`).
 - Optional **lock app after shift end** (+ buffer): login/refresh/every request refused until the next check-in window; owner/admin/HR and flexible staff exempt; days off never locked; open tabs signed out; 15-min warning.

@@ -13,7 +13,7 @@ import { MobileTabBar } from '@/components/app-shell/mobile-tab-bar';
 import { CommandPaletteProvider } from '@/components/app-shell/command-palette';
 import { BillingBlocked } from '@/components/billing-blocked';
 import { UsageWarningBanner } from '@/components/usage-warning-banner';
-import AttendanceReminderBanner from '@/components/attendance-reminder-banner';
+import AttendanceAdminToasts from '@/components/attendance-admin-toasts';
 import { InstallAppBanner } from '@/components/install-app-banner';
 import { NotificationGate } from '@/components/notification-gate';
 import { ModuleNotEnabled } from '@/components/module-not-enabled';
@@ -306,7 +306,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         <NotificationGate />
         <InstallAppBanner />
         <UsageWarningBanner onTopSeverityChange={setUsageSeverity} />
-        <AttendanceReminderBanner />
+        <AttendanceAdminToasts />
         <Navbar
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
           unread={unread}
