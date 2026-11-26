@@ -13,6 +13,7 @@ import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { SHIPMENT_STATUS_TO_SHOPIFY_EVENT } from './couriers.constants';
 import { isReturnedToShipper } from './adapters/return-status.util';
 import { resolveShipperAdviceRequired } from './shipper-advice.util';
+import { planExternalBookings } from './external-bookings.util';
 import {
   CourierAdapter,
   UnmappedCourierStatusError,
@@ -244,7 +245,139 @@ export class CourierStatusSyncService implements OnModuleInit, OnModuleDestroy {
     return { enqueued };
   }
 
+  /**
+   * Pick up parcels booked OUTSIDE CodesApp (e.g. in the TCS portal while the
+   * order was fulfilled in Shopify with no tracking): pull the courier's
+   * account-wide bookings report (adapter.listBookings), match each booking's
+   * reference to ONE of the tenant's fulfilled orders (planExternalBookings —
+   * shared-account safe), and create/fill the shipment row with the CN. The
+   * status pull that follows in runSync then tracks it like any other parcel.
+   * First run looks back 45 days, later runs 10. Never throws.
+   */
+  async importExternalBookings(companyId: number): Promise<void> {
+    const active = await this.registry.getActiveCouriers(companyId).catch(() => [] as CourierType[]);
+    for (const ct of active) {
+      const adapter = this.registry.getAdapter(ct);
+      if (!adapter.listBookings) continue;
+      try {
+        const row = await this.prisma.courierCredential.findUnique({
+          where: { company_id_courier_type: { company_id: companyId, courier_type: ct } },
+          select: { id: true, sync_cursor: true },
+        });
+        const creds = await this.registry.getCredentials(companyId, ct);
+        if (!row || !creds) continue;
+        const cursor = (row.sync_cursor ?? {}) as Record<string, unknown>;
+        const firstRun = !cursor.bookingsScannedAt;
+        const to = new Date();
+        const from = new Date(to.getTime() - (firstRun ? 45 : 10) * 86_400_000);
+        const bookings = await adapter.listBookings(creds, from, to);
+
+        const orders = await this.prisma.shopifyOrder.findMany({
+          where: {
+            company_id: companyId,
+            OR: [
+              { shopify_created_at: { gte: new Date(from.getTime() - 30 * 86_400_000) } },
+              { shopify_created_at: null, created_at: { gte: new Date(from.getTime() - 30 * 86_400_000) } },
+            ],
+          },
+          select: {
+            shopify_order_gid: true,
+            order_name: true,
+            shopify_store_id: true,
+            total_price: true,
+            total_outstanding: true,
+            fulfillment_status: true,
+            city: true,
+            address1: true,
+            address2: true,
+          },
+        });
+        const gids = orders.map((o) => o.shopify_order_gid);
+        const shipments = gids.length
+          ? await this.prisma.shipment.findMany({
+              where: { company_id: companyId, shopify_order_gid: { in: gids } },
+              select: { id: true, shopify_order_gid: true, courier_type: true, courier_tracking_number: true, status: true },
+            })
+          : [];
+        const plan = planExternalBookings(
+          bookings,
+          orders.map((o) => ({
+            gid: o.shopify_order_gid,
+            name: o.order_name,
+            storeId: o.shopify_store_id,
+            totalPrice: o.total_price != null ? Number(o.total_price) : null,
+            outstanding: o.total_outstanding != null ? Number(o.total_outstanding) : null,
+            fulfillmentStatus: o.fulfillment_status,
+          })),
+          shipments.map((s) => ({
+            id: s.id,
+            gid: s.shopify_order_gid,
+            courierType: s.courier_type,
+            trackingNumber: s.courier_tracking_number,
+            status: s.status,
+          })),
+        );
+        const byGid = new Map(orders.map((o) => [o.shopify_order_gid, o]));
+        let created = 0;
+        let filled = 0;
+        for (const a of plan.actions) {
+          const o = byGid.get(a.order.gid);
+          const leg = {
+            courier_type: ct,
+            courier_tracking_number: a.booking.trackingNumber,
+            courier_credential_id: row.id,
+            booked_at: a.booking.bookedAt ?? new Date(),
+            last_courier_status_raw: a.booking.rawStatus ?? null,
+          };
+          try {
+            if (a.kind === 'create') {
+              await this.prisma.shipment.create({
+                data: {
+                  company_id: companyId,
+                  shopify_order_gid: a.order.gid,
+                  shopify_order_name: a.order.name,
+                  shopify_store_id: a.order.storeId,
+                  destination_city: o?.city ?? null,
+                  destination_address: [o?.address1, o?.address2].filter(Boolean).join(', ') || null,
+                  status: 'booked',
+                  ...leg,
+                },
+              });
+              created++;
+            } else {
+              const r = await this.prisma.shipment.updateMany({
+                where: { id: a.shipmentId, company_id: companyId, courier_tracking_number: null },
+                data: leg,
+              });
+              filled += r.count;
+            }
+          } catch (e) {
+            // P2002 = a booking created the row meanwhile — leave it.
+            this.logger.warn(
+              `${ct} external booking ${a.order.name} not linked (company ${companyId}): ${(e as Error)?.message?.slice(0, 160) ?? e}`,
+            );
+          }
+        }
+        await this.prisma.courierCredential.update({
+          where: { id: row.id },
+          data: { sync_cursor: { ...cursor, bookingsScannedAt: to.toISOString() } as object },
+        });
+        this.logger.log(
+          `${ct} outside bookings (company ${companyId}): ${bookings.length} on account, ${plan.matched} matched, ${created} created, ${filled} filled, ${plan.alreadyLinked} already linked, ${plan.skipped} skipped.`,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `${ct} outside-bookings import failed (company ${companyId}): ${(err as Error)?.message ?? err}`,
+        );
+      }
+    }
+  }
+
   async runSync(companyId: number): Promise<void> {
+    // Phase -1 — CNs booked outside CodesApp (courier portal) → shipment rows,
+    // so the status pull below tracks them too.
+    await this.importExternalBookings(companyId);
+
     // Phase 0 — couriers with a "changes since" feed (RapidXpk): replay every
     // change through the webhook handler from the saved cursor. Their parcels
     // are then SKIPPED in the per-parcel poll below; if the feed fails, they

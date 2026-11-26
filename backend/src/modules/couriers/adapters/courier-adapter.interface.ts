@@ -141,6 +141,18 @@ export interface CourierChangePage {
   hasMore: boolean;
 }
 
+/** A parcel booked at the courier (by anyone — CodesApp or the courier's own
+ *  portal), as listed by the courier's account-wide bookings report. Used to
+ *  attach CNs to orders that were booked OUTSIDE CodesApp (TCS portal). */
+export interface ExternalBooking {
+  trackingNumber: string;
+  /** The merchant's own reference on the booking (usually the order name). */
+  reference: string | null;
+  codAmount: number;
+  bookedAt?: Date;
+  rawStatus?: string | null;
+}
+
 /** One checkpoint in a parcel's tracking history (oldest → newest), normalized
  *  across couriers for the in-app tracking view. */
 export interface TrackingCheckpoint {
@@ -262,6 +274,15 @@ export interface CourierAdapter {
    * sync then falls back to per-parcel `queryTrackingResult`).
    */
   listChanges?(creds: unknown, cursor: CourierChangeCursor): Promise<CourierChangePage>;
+
+  /**
+   * Every parcel booked on the courier account between two days (inclusive),
+   * including ones booked in the courier's own portal. Optional — lets
+   * CodesApp pick up CNs for orders booked outside it (TCS cnbulkinquiry).
+   * On a SHARED account this lists other businesses' parcels too: the caller
+   * matches by reference to the tenant's own orders.
+   */
+  listBookings?(creds: unknown, from: Date, to: Date): Promise<ExternalBooking[]>;
 
   /**
    * Full checkpoint HISTORY (oldest → newest) for the in-app tracking view.

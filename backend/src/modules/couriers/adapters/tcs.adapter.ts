@@ -5,6 +5,7 @@ import {
   BookShipmentResult,
   CourierAdapter,
   CourierLabelResult,
+  ExternalBooking,
   GenerateLoadsheetResult,
   ShipperAdviceAction,
   TrackingCheckpoint,
@@ -963,6 +964,31 @@ export class TcsAdapter implements CourierAdapter {
     });
   }
 
+  /**
+   * Every CN booked on the account between two days (TCS `cnbulkinquiry`),
+   * incl. portal bookings. Queried in 3-day windows (a long range times out —
+   * a shared account lists ~250 parcels a day). Each row carries
+   * `customerrefno` = the order reference typed at booking.
+   */
+  async listBookings(c: TcsCredentials, from: Date, to: Date): Promise<ExternalBooking[]> {
+    const out: ExternalBooking[] = [];
+    const DAY = 86_400_000;
+    const ymd = (d: Date) => new Date(d.getTime() + 5 * 3600_000).toISOString().slice(0, 10);
+    for (let t = from.getTime(); t <= to.getTime(); t += 3 * DAY) {
+      const end = Math.min(t + 2 * DAY, to.getTime());
+      const { res, json } = await this.call(c, '/ecom/api/inquiry/cnbulkinquiry', {
+        query: { customerno: c.accountNo, fromdate: ymd(new Date(t)), todate: ymd(new Date(end)) },
+        withAccess: true,
+        timeoutMs: 60_000,
+      });
+      if (!res.ok) {
+        throw new Error(`TCS bookings report failed: ${maskSecrets(tcsErrorText(json), c)}`);
+      }
+      out.push(...tcsBulkRowsToBookings(firstArray(json)));
+    }
+    return out;
+  }
+
   /** TCS payment invoice → the normalized statement shape. */
   async getPaymentInvoice(c: TcsCredentials, invoiceNo: string): Promise<ParsedInvoice> {
     return tcsInvoiceToParsed(invoiceNo, await this.getPaymentInvoiceRows(c, invoiceNo));
@@ -1076,4 +1102,25 @@ export function tcsInvoiceToParsed(invoiceNo: string, rows: any[]): ParsedInvoic
       netPayable: round(codCollected - shipping - tax),
     },
   };
+}
+
+/** `cnbulkinquiry` rows → normalized bookings. Booking date is dd/mm/yyyy
+ *  (PKT) → noon PKT so it stays on that calendar day. Pure + unit-tested. */
+export function tcsBulkRowsToBookings(rows: any[]): ExternalBooking[] {
+  const out: ExternalBooking[] = [];
+  for (const r of rows ?? []) {
+    const cn = String(r?.cnno ?? r?.consignmentno ?? '').trim();
+    if (!cn) continue;
+    const ref = String(r?.customerrefno ?? r?.referenceno ?? '').trim() || null;
+    const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(String(r?.bookingdate ?? ''));
+    const bookedAt = m ? new Date(Date.UTC(+m[3], +m[2] - 1, +m[1], 7, 0, 0)) : undefined;
+    out.push({
+      trackingNumber: cn,
+      reference: ref,
+      codAmount: Number(r?.codamount) || 0,
+      bookedAt,
+      rawStatus: r?.cnstatus != null ? String(r.cnstatus) : null,
+    });
+  }
+  return out;
 }

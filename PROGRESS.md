@@ -26,6 +26,7 @@
 - Book (single + bulk queue), cancel/unbook, TCS label PDF per parcel (`print/label`, layout picked in Settings), in-app dispatch manifest (TCS has no loadsheet API), tracking timeline + status sync (no webhooks — pulled on the courier sync schedule), shipper advice (`shipperadvice/*`, ids resolved by name), city list seeded from TCS (`citylistbycountry`), cost centers prefill the pickup block.
 - COD: statements are FETCHED from TCS by invoice number (`booking/paymentinvoice`) into the normal preview → apply flow (Courier payments → statement → pick TCS).
 - Lost-reply guard: a booking timeout is NOT auto-retried (TCS has no lookup by order ref) — the error tells the agent to check the TCS portal first.
+- Outside bookings (2026-11-26): parcels booked in the TCS portal (order fulfilled in Shopify without tracking) are matched to orders by reference from `inquiry/cnbulkinquiry` on every courier sync and get a TCS shipment row + tracking (shared-account safe).
 - Pending: live verification with the tenant's production creds (status-code list, cost centers, one real booking + cancel).
 
 **Inventory v2 (2026-11-22, latest):** full audit + rebuild of the inventory module. Migration `20261125000000_inventory_v2` (auto-applies). Preview: https://claude.ai/artifact/QScstyXHzTHCMHvbtt43fS
