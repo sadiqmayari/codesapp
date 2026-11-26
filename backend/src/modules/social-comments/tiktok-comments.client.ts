@@ -28,7 +28,9 @@ const str = (v: unknown): string | null => (v === undefined || v === null || v =
 function parseTime(v: unknown): Date {
   if (typeof v === 'number' || /^\d{9,11}$/.test(String(v ?? ''))) return new Date(Number(v) * 1000);
   const s = String(v ?? '');
-  const d = new Date(/\d{4}-\d{2}-\d{2} \d/.test(s) ? `${s.replace(' ', 'T')}Z` : s);
+  // Live format: "2026-11-19 11:01:20 +0000 UTC" (UTC) — keep the first 19 chars.
+  const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/.exec(s);
+  const d = new Date(m ? `${m[1]}T${m[2]}Z` : s);
   return Number.isNaN(d.getTime()) ? new Date() : d;
 }
 
@@ -45,8 +47,9 @@ export function parseTikTokComment(r: Record<string, unknown>): ParsedComment | 
   return {
     externalId,
     parentExternalId: str(r.original_comment_id ?? r.parent_comment_id ?? r.reply_to_comment_id),
-    adId: str(r.ad_id),
-    adName: str(r.ad_name),
+    // Spark / boosted posts come back with ad_id "0" and no ad name → show the campaign.
+    adId: str(r.ad_id) === '0' ? null : str(r.ad_id),
+    adName: str(r.ad_name) ?? str(r.campaign_name),
     postId: str(r.tiktok_item_id ?? r.item_id ?? r.video_id),
     authorName: str(r.user_name ?? r.username ?? r.nickname ?? r.display_name),
     authorId: str(r.user_id ?? r.open_id),
@@ -66,31 +69,46 @@ async function call<T>(method: 'GET' | 'POST', path: string, token: string, body
   return res.body.data as T;
 }
 
-/** Ad comments of one advertiser created in [since, until] (YYYY-MM-DD, ≤30 days), newest first. */
-export async function listTikTokComments(token: string, advertiserId: string, since: string, until: string, maxPages = 20) {
+/**
+ * Ad comments of one advertiser created in [since, until] (YYYY-MM-DD, ≤30 days), newest first.
+ * TikTok only lists comments PER AD GROUP (`search_field` must be ADGROUP_ID +
+ * `search_value`), and `comment_type`/`comment_status` are JSON arrays —
+ * calibrated against the live API on 2026-11-26.
+ */
+export async function listTikTokComments(
+  token: string,
+  advertiserId: string,
+  adgroupIds: string[],
+  since: string,
+  until: string,
+  maxPages = 10,
+) {
   const out: ParsedComment[] = [];
-  for (let page = 1; page <= maxPages; page++) {
-    const q = [
-      `advertiser_id=${encodeURIComponent(advertiserId)}`,
-      `start_time=${since}`,
-      `end_time=${until}`,
-      'comment_type=ALL',
-      'comment_status=ALL',
-      'sort_field=CREATE_TIME',
-      'sort_type=DESC',
-      `page=${page}`,
-      'page_size=100',
-    ].join('&');
-    const data = await call<{ comments?: Record<string, unknown>[]; list?: Record<string, unknown>[]; page_info?: { total_page?: number } }>(
-      'GET',
-      `/comment/list/?${q}`,
-      token,
-    );
-    for (const r of data?.comments ?? data?.list ?? []) {
-      const c = parseTikTokComment(r);
-      if (c) out.push(c);
+  const arr = (v: string[]) => encodeURIComponent(JSON.stringify(v));
+  for (const ag of adgroupIds) {
+    for (let page = 1; page <= maxPages; page++) {
+      const q = [
+        `advertiser_id=${encodeURIComponent(advertiserId)}`,
+        'search_field=ADGROUP_ID',
+        `search_value=${encodeURIComponent(ag)}`,
+        `start_time=${since}`,
+        `end_time=${until}`,
+        `comment_type=${arr(['ALL'])}`,
+        `comment_status=${arr(['ALL'])}`,
+        `page=${page}`,
+        'page_size=100',
+      ].join('&');
+      const data = await call<{ comments?: Record<string, unknown>[]; list?: Record<string, unknown>[]; page_info?: { total_page?: number } }>(
+        'GET',
+        `/comment/list/?${q}`,
+        token,
+      );
+      for (const r of data?.comments ?? data?.list ?? []) {
+        const c = parseTikTokComment({ ...r, adgroup_id: r.adgroup_id ?? ag });
+        if (c) out.push(c);
+      }
+      if (!data?.page_info?.total_page || page >= data.page_info.total_page) break;
     }
-    if (!data?.page_info?.total_page || page >= data.page_info.total_page) break;
   }
   return out;
 }
@@ -100,7 +118,7 @@ export async function replyTikTokComment(token: string, advertiserId: string, ra
     advertiser_id: advertiserId,
     ad_id: str(raw.ad_id),
     comment_id: str(raw.comment_id),
-    comment_type: 'REPLY',
+    comment_type: str(raw.comment_type) ?? 'COMMENT',
     text,
     identity_type: str(raw.identity_type),
     identity_id: str(raw.identity_id),

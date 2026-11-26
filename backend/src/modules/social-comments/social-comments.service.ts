@@ -91,7 +91,17 @@ export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
     });
     const sinceMs = last ? last.commented_at.getTime() - OVERLAP_MS : Date.now() - FIRST_PULL_DAYS * 86_400_000;
     const since = ymd(new Date(Math.max(sinceMs, Date.now() - 29 * 86_400_000)));
-    const rows = await listTikTokComments(token, a.external_id, since, ymd(new Date()));
+    // TikTok lists comments per ad group: every ad group that had delivery in the window (cap 150).
+    const groups = await this.prisma.adInsightDaily.groupBy({
+      by: ['adset_id'],
+      where: { account_id: a.id, company_id: a.company_id, date: { gte: new Date(`${since}T00:00:00Z`) }, impressions: { gt: 0 }, adset_id: { not: null } },
+      _sum: { spend: true },
+      orderBy: { _sum: { spend: 'desc' } },
+      take: 150,
+    });
+    const adgroupIds = groups.map((g) => g.adset_id).filter((x): x is string => !!x);
+    if (!adgroupIds.length) return 0;
+    const rows = await listTikTokComments(token, a.external_id, adgroupIds, since, ymd(new Date()));
     let created = 0;
     for (const c of rows) {
       const key = { company_id: a.company_id, platform: 'tiktok', external_id: c.externalId };

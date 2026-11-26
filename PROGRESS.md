@@ -1330,4 +1330,5 @@ Full audit of the contacts module (backend 11 files + frontend pages/components)
 ## TikTok — Connect with TikTok + ad comments (2026-11-26)
 - Growth → Connections: "Connect with TikTok" (OAuth, advertiser picker, token kept server-side). Adapter: status mapping, status refresh, 30-day report windows.
 - New Comments page (`/comments`, module grant `social_comments`): TikTok ad comments pulled every 10 min, reply / hide / unhide from CodesApp.
-- PENDING: create the TikTok for Business app (redirect `https://apps.codentra.pk/growth/connections/tiktok`), set `TIKTOK_APP_ID` + `TIKTOK_APP_SECRET`, recreate app + worker, connect a real advertiser, calibrate comment fields on the first pull. Organic post comments = later.
+- DONE 2026-11-26: TikTok app created + approved (App ID 7712524218398670866), keys on the VPS, Sois connected SoisLife-Ad V1 (90 days synced: 9,856 rows, Rs 2.26M spend), `social_comments` granted to Sois, comment API calibrated (per ad group; 203 comments found in 13 ad groups).
+- PENDING: connect the other 2 Sois TikTok advertisers if wanted; verify reply + hide on a real comment; organic post comments need TikTok's Accounts API form.
