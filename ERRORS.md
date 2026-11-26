@@ -19,6 +19,15 @@
 
 ## Entries
 
+### [Shopify] Order confirmations sometimes never sent — Meta 131008 / 132018 (2026-11-26)
+**Error message:** `(#131008) Required parameter is missing … Parameter of type text is missing text value` and `(#132018) There's an issue with the parameters in your template … Param text cannot have new-line/tab characters or more than 4 consecutive spaces`.
+**Cause:** 14-day audit (Sois, 50 failed `shopify` `send` jobs out of ~4,560). (1) slot `customer_full_name` read ONLY `order.customer.first/last_name`; orders created from CodesApp and some checkouts have no customer profile name → empty slot → Meta rejects the whole template (9 orders). (2) an address padded with ~30 spaces → 132018 (1 order). The other 39 were blacklisted (RTO `black list` → `status=blocked`) contacts, refused since Inbox v2 (`Contact is blocked`) — a policy question, not changed here.
+**Fix:** `extractOrderValue` name slots fall back to the shipping-address `name`/`first_name`/`last_name`; every template slot (confirmation + delivery notifications) goes through `cleanTemplateParam` (collapse all whitespace, trim, cap 900, empty → `-`). Never send a raw order field as a template param.
+
+### [Orders] "Fulfil manually" form opened at the bottom of the drawer (2026-11-26)
+**Cause:** the form rendered inside the Shipping card, below Customer + Items — user had to scroll to find the inputs.
+**Fix:** rendered as its own card directly under the next-step callout (like the shipper-advice form), auto-focus on the tracking input, `scrollIntoView` on open.
+
 ### [Roles] Locked roles could use the inbox/broadcast/bot APIs; admins could remove other admins (2026-11-21)
 **Error message:** none — found in the roles audit.
 **Cause:** (1) `broadcasts`, `bots`, `templates`, `canned-replies`, `tickets`, `ai`, `workspace`, `inbox`, `contacts` and `calls` controllers had no `RolesGuard`, so a `member`, `finance` or `videographer` login could send a broadcast, edit bots or read chats with a direct API call — only the frontend redirect stopped them. (2) `TeamService.update/suspend/remove` only protected the owner, so an admin could demote, suspend or delete another admin. (3) Suspend / role change / password change left live sockets and other sessions running.

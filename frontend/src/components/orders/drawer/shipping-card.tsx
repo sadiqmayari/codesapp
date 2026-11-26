@@ -83,15 +83,12 @@ export function ShippingCard({
   d,
   scans,
   scansLoading,
-  manualPanel,
   trackOpen,
   onTrackOpen,
 }: {
   d: OrderDetail;
   scans: TrackingCheckpoint[];
   scansLoading: boolean;
-  /** The "Fulfil manually" form, when the user opened it from the ⋯ menu. */
-  manualPanel?: React.ReactNode;
   /** Full tracking modal — controlled so the next-step "Track" can open it. */
   trackOpen: boolean;
   onTrackOpen: (open: boolean) => void;
@@ -191,7 +188,6 @@ export function ShippingCard({
         </ul>
       )}
 
-      {manualPanel && <div className="mt-3 border-t border-line pt-3">{manualPanel}</div>}
 
       {trackOpen && sh && (
         <OrderTrackingModal order={toContactOrder(d)} onClose={() => onTrackOpen(false)} />

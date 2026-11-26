@@ -64,6 +64,9 @@ export interface ShopifyOrderPayload {
     city?: string;
     address1?: string;
     address2?: string;
+    name?: string;
+    first_name?: string;
+    last_name?: string;
   };
   billing_address?: { phone?: string };
   line_items?: Array<{ quantity?: number; title?: string }>;
@@ -1553,14 +1556,20 @@ export class ShopifyService implements OnModuleInit {
           return order.total_price;
         case 'currency':
           return order.currency;
+        // Name slots fall back to the shipping-address name: orders created
+        // from CodesApp (and some storefront checkouts) carry no customer
+        // profile name, and an empty slot makes Meta reject the whole
+        // template (131008) — the confirmation was never sent.
         case 'customer_first_name':
-          return cust.first_name;
+          return cust.first_name || ship.first_name || this.firstWord(ship.name);
         case 'customer_last_name':
-          return cust.last_name;
+          return cust.last_name || ship.last_name;
         case 'customer_full_name':
-          return [cust.first_name, cust.last_name]
-            .filter(Boolean)
-            .join(' ');
+          return (
+            [cust.first_name, cust.last_name].filter(Boolean).join(' ') ||
+            ship.name ||
+            [ship.first_name, ship.last_name].filter(Boolean).join(' ')
+          );
         case 'customer_phone':
           return cust.phone ?? order.phone ?? ship.phone;
         case 'financial_status':
@@ -1592,6 +1601,21 @@ export class ShopifyService implements OnModuleInit {
       }
     })();
     return (val ?? '').toString();
+  }
+
+  private firstWord(s?: string | null): string {
+    return (s ?? '').trim().split(/\s+/)[0] ?? '';
+  }
+
+  /**
+   * Meta rejects a template text parameter that is empty (131008) or contains
+   * a newline/tab or more than 4 consecutive spaces (132018) — and then the
+   * whole confirmation is lost. Collapse whitespace and never send an empty
+   * value. Body text params are also capped by Meta; keep a safe length.
+   */
+  private cleanTemplateParam(v: string): string {
+    const t = (v ?? '').replace(/\s+/g, ' ').trim().slice(0, 900);
+    return t || '-';
   }
 
   /**
@@ -1784,7 +1808,9 @@ export class ShopifyService implements OnModuleInit {
     const map = (cfg.variable_map as Record<string, string>) ?? {};
     const variables: Record<string, string> = {};
     for (const [slot, fieldKey] of Object.entries(map)) {
-      variables[slot] = this.extractOrderValue(order, fieldKey);
+      variables[slot] = this.cleanTemplateParam(
+        this.extractOrderValue(order, fieldKey),
+      );
     }
 
     // Public tracking page. Two ways a template can carry the link:
@@ -4013,7 +4039,9 @@ export class ShopifyService implements OnModuleInit {
 
     const variables: Record<string, string> = {};
     for (const [slot, fieldKey] of Object.entries(varMap)) {
-      variables[slot] = this.extractOrderValue(order, fieldKey);
+      variables[slot] = this.cleanTemplateParam(
+        this.extractOrderValue(order, fieldKey),
+      );
     }
 
     // Get-or-create contact + conversation (mirrors processOrderSend).

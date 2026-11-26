@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -339,6 +339,12 @@ export function OrderDetailContent({
   const [manualTracking, setManualTracking] = useState('');
   const [manualNotify, setManualNotify] = useState(false);
   const [manualMarkPaid, setManualMarkPaid] = useState(false);
+  // The form opens directly under the next-step callout; bring it into view
+  // (the drawer may be scrolled down when opened from the ⋯ menu).
+  const manualRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (manualOpen) manualRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [manualOpen]);
   // Standalone "Mark as paid" (COD collected / manual settlement).
   const [payBusy, setPayBusy] = useState(false);
 
@@ -708,7 +714,13 @@ export function OrderDetailContent({
   ];
 
   const manualPanel = manualOpen ? (
-    <div className="space-y-3">
+    <div
+      ref={manualRef}
+      className="scroll-mt-14 space-y-3 rounded-xl border border-brand-200 bg-surface p-3.5 shadow-sm"
+    >
+      <p className="flex items-center gap-1.5 text-[13px] font-bold text-ink">
+        <PackageCheck size={14} /> Fulfil manually
+      </p>
       <p className="text-[13px] text-muted">
         Marks this order fulfilled in Shopify with <b className="text-ink">no courier booking</b> (self or hand
         delivery).
@@ -719,6 +731,7 @@ export function OrderDetailContent({
         </label>
         <input
           id="manual-tracking"
+          autoFocus
           value={manualTracking}
           onChange={(e) => setManualTracking(e.target.value)}
           placeholder="Leave blank for none"
@@ -936,6 +949,7 @@ export function OrderDetailContent({
                 onSubmit={postAdvice}
               />
             )}
+            {manualPanel}
             <CustomerCard d={d} onOpenChat={openChat} onCall={call} />
             <ItemsCard
               items={items}
@@ -949,7 +963,6 @@ export function OrderDetailContent({
               d={d}
               scans={scans}
               scansLoading={scansLoading}
-              manualPanel={manualPanel}
               trackOpen={trackOpen}
               onTrackOpen={setTrackOpen}
             />
