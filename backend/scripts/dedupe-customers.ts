@@ -144,8 +144,8 @@ async function main() {
         email: pick('email'),
         address: pick('address'),
         city: pick('city'),
-        first_seen_at: firstSeen,
-        last_seen_at: lastSeen,
+        first_seen_at: firstSeen ?? undefined,
+        last_seen_at: lastSeen ?? undefined,
       };
 
       merged++;
