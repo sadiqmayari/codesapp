@@ -6,8 +6,8 @@
 
 ## Current Status
 
-**Attendance auto-checkout removed (2026-11-27, latest):** no migration.
-- The system no longer closes anyone's day. Forgotten check-outs are flagged "missed check-out" by the hourly sweep and fixed with a "Fix my day" request or by an admin in the grid. Auto-checkout settings, the payroll "missed check-out" penalty and the activity heartbeat are gone; old auto-closed days keep their label.
+**Attendance auto-checkout — per tenant + per member, off by default (2026-11-27, latest):** migration `20261130000000_attendance_auto_checkout_user` (auto-applies).
+- Briefly removed, then brought back under control: tenant switch (off unless saved), per-member Company default / On / Off, and a "Record the check-out at" choice — **last activity in the app** (new default; fixes wrong late check-out times) or shift end.
 
 **PayFast statements accurate + returned orders keep their items (2026-11-27):** no migration.
 - PayFast: refunds/deductions from the summary deducted (+ refund rows shown in their payout), UNIONPAY lot fixed, exact payout split, per-order WHT adds up, PKT transaction dates; preview shows refunds + "not matched" payouts. Sois 10–25 Nov file now matches PayFast's net to the rupee (was Rs 11,252.93 over).

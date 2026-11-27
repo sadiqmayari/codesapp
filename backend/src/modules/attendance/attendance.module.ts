@@ -5,11 +5,11 @@ import { CommissionsModule } from '../commissions/commissions.module';
 import { AttendanceController } from './attendance.controller';
 import { AttendanceCronController } from './attendance-cron.controller';
 import { AttendanceService } from './attendance.service';
-import { AttendanceTickService } from './attendance-tick.service';
+import { AutoCheckoutService } from './auto-checkout.service';
 
 @Module({
   imports: [AuthModule, InboxModule, CommissionsModule],
   controllers: [AttendanceController, AttendanceCronController],
-  providers: [AttendanceService, AttendanceTickService],
+  providers: [AttendanceService, AutoCheckoutService],
 })
 export class AttendanceModule {}

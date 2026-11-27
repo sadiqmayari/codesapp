@@ -5,16 +5,14 @@ import { AttendanceService } from './attendance.service';
 const TICK_MS = 10 * 60_000;
 
 /**
- * Attendance background tick: drops sockets of members whose app just locked
- * (after shift end) and runs the hourly auto-absent / missed-check-out sweep
- * (AttendanceService.dailySweep). Auto-checkout was REMOVED (Nov-2026) — the
- * system never closes a day; a forgotten check-out is flagged missed_checkout
- * and fixed via a correction request. Runs in the WORKER process only
- * (runsBackground) on a 10-minute tick, so it can't run twice.
+ * Closes attendance days nobody checked out of (see auto-checkout.ts) and runs
+ * the hourly auto-absent sweep (AttendanceService.dailySweep). Runs in
+ * the WORKER process only (runsBackground) on a 10-minute tick — the web
+ * container never starts it, so it can't run twice.
  */
 @Injectable()
-export class AttendanceTickService implements OnModuleInit, OnModuleDestroy {
-  private readonly log = new Logger(AttendanceTickService.name);
+export class AutoCheckoutService implements OnModuleInit, OnModuleDestroy {
+  private readonly log = new Logger(AutoCheckoutService.name);
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   private lastSweep = 0;
@@ -36,6 +34,8 @@ export class AttendanceTickService implements OnModuleInit, OnModuleDestroy {
     if (this.running) return;
     this.running = true;
     try {
+      const r = await this.attendance.runAutoCheckout();
+      if (r.closed) this.log.log(`auto-checkout closed ${r.closed} open day(s)`);
       // "Lock app after shift end": drop the sockets of members who just locked.
       const l = await this.attendance.disconnectLockedMembers(this.lockedUsers);
       if (l.dropped) this.log.log(`work-hours lock signed out ${l.dropped} member(s)`);
@@ -49,7 +49,7 @@ export class AttendanceTickService implements OnModuleInit, OnModuleDestroy {
         }
       }
     } catch (e) {
-      this.log.warn(`attendance tick failed: ${(e as Error).message}`);
+      this.log.warn(`auto-checkout tick failed: ${(e as Error).message}`);
     } finally {
       this.running = false;
     }

@@ -21,14 +21,20 @@ import { UpdateMemberDto } from './dto/update-member.dto';
 import { CorrectionRequestDto, LeaveRequestDto, ReviewLeaveDto } from './dto/leave.dto';
 import { AdjustmentDto, HolidayDto } from './dto/payroll.dto';
 import { Allowance, PayrollPolicy, resolveAllowances, resolvePolicy } from './payroll';
+import {
+  AutoCheckoutPolicy,
+  DEFAULT_REQUIRED_MINUTES,
+  DEFAULT_SHIFT_LENGTH_MIN,
+  autoCheckoutDecision,
+  memberAutoCheckout,
+  autoEarnsOvertime,
+  isAutoSource,
+  resolveAutoCheckout,
+} from './auto-checkout';
 import { DEFAULT_LOCK_BUFFER_MIN } from './work-lock';
 import { Payslip, PayslipRecord, computePayslip, isAdditiveAdjustment } from './payroll-math';
 import {
-  DEFAULT_REQUIRED_MINUTES,
-  DEFAULT_SHIFT_LENGTH_MIN,
   MONTH_RE,
-  autoEarnsOvertime,
-  isAutoSource,
   WorkCalendar,
   addDays,
   dateCol,
@@ -66,6 +72,7 @@ export interface AttendanceCell {
   isLate: boolean;
   missedCheckout: boolean;
   checkoutSource: string | null;
+  lastActiveAt: string | null; // ISO, last app heartbeat while the day was open
   workedMinutes: number | null;
   note: string | null;
   overridden: boolean;
@@ -128,6 +135,7 @@ type MemberRow = {
   attendance_exempt_late: boolean;
   attendance_never_late: boolean;
   attendance_lock_after_shift: boolean | null;
+  attendance_auto_checkout: boolean | null;
   attendance_required_minutes: number | null;
   attendance_weekly_off: unknown;
   joined_on: Date | null;
@@ -151,6 +159,7 @@ const MEMBER_SELECT = {
   attendance_exempt_late: true,
   attendance_never_late: true,
   attendance_lock_after_shift: true,
+  attendance_auto_checkout: true,
   attendance_required_minutes: true,
   attendance_weekly_off: true,
   joined_on: true,
@@ -178,6 +187,7 @@ type CompanyDefaults = {
   lockBufferMin: number;
   policy: PayrollPolicy;
   checkinWindow: number;
+  autoCheckout: AutoCheckoutPolicy;
   weeklyOff: number[];
   annualPaidLeave: number;
 };
@@ -206,6 +216,7 @@ export class AttendanceService {
         attendance_office_ips: true,
         attendance_payroll_policy: true,
         attendance_checkin_window_minutes: true,
+        attendance_auto_checkout: true,
         attendance_weekly_off: true,
         attendance_annual_paid_leave: true,
         attendance_lock_after_shift: true,
@@ -222,6 +233,7 @@ export class AttendanceService {
       lockBufferMin: c?.attendance_lock_buffer_min ?? DEFAULT_LOCK_BUFFER_MIN,
       policy: resolvePolicy(c?.attendance_payroll_policy),
       checkinWindow: c?.attendance_checkin_window_minutes ?? DEFAULT_CHECKIN_WINDOW_MIN,
+      autoCheckout: resolveAutoCheckout(c?.attendance_auto_checkout),
       weeklyOff: resolveWeeklyOff(c?.attendance_weekly_off, [0]),
       annualPaidLeave: c?.attendance_annual_paid_leave ?? 0,
     };
@@ -238,6 +250,8 @@ export class AttendanceService {
       // Relaxed = fixed shift, never late. Flexible already implies never late.
       neverLate: !m.attendance_exempt_late && m.attendance_never_late,
       lockAfterShift: m.attendance_lock_after_shift ?? co.lockAfterShift,
+      // Per-member auto-checkout override over the company policy.
+      autoCheckout: memberAutoCheckout(co.autoCheckout, m.attendance_auto_checkout),
       requiredMinutes: m.attendance_required_minutes ?? null,
       weeklyOff: m.attendance_weekly_off == null ? co.weeklyOff : resolveWeeklyOff(m.attendance_weekly_off, co.weeklyOff),
       joinedOn: day(m.joined_on) ?? day(m.created_at),
@@ -340,6 +354,7 @@ export class AttendanceService {
       isLate: row.is_late,
       missedCheckout: row.missed_checkout,
       checkoutSource: row.checkout_source ?? null,
+      lastActiveAt: row.last_active_at ? row.last_active_at.toISOString() : null,
       workedMinutes: this.workedMinutes(row),
       note: row.note,
       overridden: row.marked_by_user_id != null && !row.system_marked,
@@ -412,6 +427,7 @@ export class AttendanceService {
       lockAfterShift: u.lockAfterShift && !u.flexible,
       appLocksAt: await this.appLocksAt(companyId, userId, u.role),
       requiredMinutes: u.flexible ? u.requiredMinutes ?? DEFAULT_REQUIRED_MINUTES : null,
+      autoCheckout: u.autoCheckout,
       excluded: NOT_TRACKED_ROLES.includes(u.role),
       record: row ? this.toCell(row) : null,
     };
@@ -513,6 +529,21 @@ export class AttendanceService {
     return this.toCell(updated);
   }
 
+  /** App-activity heartbeat: stamps the open day so auto-checkout can credit real hours. */
+  async heartbeat(companyId: number, userId: number) {
+    const now = new Date();
+    const res = await this.prisma.attendanceRecord.updateMany({
+      where: {
+        company_id: companyId,
+        user_id: userId,
+        check_in_at: { not: null, gte: new Date(now.getTime() - OPEN_ROW_MAX_MS) },
+        check_out_at: null,
+      },
+      data: { last_active_at: now },
+    });
+    return { ok: true, open: res.count > 0 };
+  }
+
   /** When the app locks for this member today (ISO), null when no lock applies. */
   private async appLocksAt(companyId: number, userId: number, role: string): Promise<string | null> {
     const st = await this.workLock.state({ id: userId, company_id: companyId, role });
@@ -593,6 +624,8 @@ export class AttendanceService {
         neverLate: s.neverLate,
         lockAfterShift: m.attendance_lock_after_shift,
         effectiveLockAfterShift: s.lockAfterShift && !s.flexible,
+        autoCheckout: m.attendance_auto_checkout,
+        effectiveAutoCheckout: s.autoCheckout.mode !== 'off',
         requiredMinutes: m.attendance_required_minutes,
         weeklyOff: m.attendance_weekly_off == null ? null : resolveWeeklyOff(m.attendance_weekly_off, co.weeklyOff),
         effectiveWeeklyOff: s.weeklyOff,
@@ -633,6 +666,7 @@ export class AttendanceService {
     if (dto.exemptLate === true && dto.neverLate === undefined) data.attendance_never_late = false;
     if (dto.neverLate === true && dto.exemptLate === undefined) data.attendance_exempt_late = false;
     if (dto.lockAfterShift !== undefined) data.attendance_lock_after_shift = dto.lockAfterShift;
+    if (dto.autoCheckout !== undefined) data.attendance_auto_checkout = dto.autoCheckout;
     if (dto.requiredMinutes !== undefined) data.attendance_required_minutes = dto.requiredMinutes ?? null;
     if (dto.weeklyOff !== undefined)
       data.attendance_weekly_off = dto.weeklyOff == null ? Prisma.DbNull : resolveWeeklyOff(dto.weeklyOff, []);
@@ -1134,6 +1168,65 @@ export class AttendanceService {
     };
   }
 
+  // ── auto-checkout (worker tick) ───────────────────────────────────────────
+  async runAutoCheckout(now = new Date()) {
+    const open = (await this.prisma.attendanceRecord.findMany({
+      where: { check_in_at: { not: null, lte: new Date(now.getTime() - 60 * 60_000) }, check_out_at: null },
+      take: 2000,
+    })) as (DbRow & { company_id: number })[];
+    if (!open.length) return { closed: 0 };
+    const granted = await this.feature.companiesWith('attendance');
+    const byCompany = new Map<number, typeof open>();
+    for (const r of open) {
+      if (!granted.has(r.company_id)) continue;
+      if (!byCompany.has(r.company_id)) byCompany.set(r.company_id, []);
+      byCompany.get(r.company_id)!.push(r);
+    }
+    let closed = 0;
+    for (const [companyId, rows] of byCompany) {
+      try {
+        const co = await this.companyDefaults(companyId);
+        const members = (await this.prisma.user.findMany({
+          where: { company_id: companyId, id: { in: rows.map((r) => r.user_id) } },
+          select: MEMBER_SELECT,
+        })) as MemberRow[];
+        const byId = new Map(members.map((m) => [m.id, m]));
+        for (const r of rows) {
+          const m = byId.get(r.user_id);
+          if (!m || !r.check_in_at) continue;
+          const s = this.schedule(m, co);
+          if (s.autoCheckout.mode === 'off') continue;
+          const d = autoCheckoutDecision(
+            { workDay: r.work_date.toISOString().slice(0, 10), checkInAt: r.check_in_at, lastActiveAt: r.last_active_at ?? null },
+            { start: s.start, end: s.end, flexible: s.flexible, requiredMinutes: s.requiredMinutes },
+            s.autoCheckout,
+            co.tz,
+            now,
+          );
+          if (!d.close) continue;
+          const res = await this.prisma.attendanceRecord.updateMany({
+            where: { id: r.id, check_out_at: null },
+            data: {
+              check_out_at: d.at,
+              checkout_source: d.creditedBy === 'activity' ? 'auto_activity' : 'auto',
+              missed_checkout: true,
+            },
+          });
+          if (res.count) {
+            closed += 1;
+            this.safeEmit(() => {
+              this.gateway.emitToUsers([r.user_id], 'attendance.auto_checkout', { at: d.at.toISOString(), reason: d.reason });
+              this.gateway.emitToCompany(companyId, 'attendance.changed', { userId: r.user_id });
+            });
+          }
+        }
+      } catch (e) {
+        this.log.warn(`auto-checkout failed for company ${companyId}: ${(e as Error).message}`);
+      }
+    }
+    return { closed };
+  }
+
   /**
    * Worker tick: drop live sockets of members whose app just locked (after
    * shift end). REST is already refused by JwtStrategy; this ends realtime.
@@ -1260,6 +1353,7 @@ export class AttendanceService {
       lockBufferMinutes: co.lockBufferMin,
       checkinWindowMinutes: co.checkinWindow,
       payrollPolicy: co.policy,
+      autoCheckout: co.autoCheckout,
       weeklyOff: co.weeklyOff,
       annualPaidLeave: co.annualPaidLeave,
       yourIp: yourIp ?? '',
@@ -1286,6 +1380,9 @@ export class AttendanceService {
     if (dto.checkinWindowMinutes !== undefined) data.attendance_checkin_window_minutes = dto.checkinWindowMinutes ?? null;
     if (dto.payrollPolicy !== undefined) {
       data.attendance_payroll_policy = resolvePolicy({ ...co.policy, ...dto.payrollPolicy }) as unknown as object;
+    }
+    if (dto.autoCheckout !== undefined) {
+      data.attendance_auto_checkout = resolveAutoCheckout({ ...co.autoCheckout, ...dto.autoCheckout }) as unknown as object;
     }
     if (dto.weeklyOff !== undefined) data.attendance_weekly_off = resolveWeeklyOff(dto.weeklyOff, []);
     if (dto.annualPaidLeave !== undefined) data.attendance_annual_paid_leave = dto.annualPaidLeave ?? null;
@@ -1651,7 +1748,7 @@ export class AttendanceService {
     const header = [
       'Member', 'Role', 'Period', 'Work days', 'Present', 'Half days', 'Absent', 'Paid leave', 'Unpaid leave',
       'Late', 'Late min', 'OT min', 'Base', 'Allowances', 'Overtime', 'Commission', 'Additions',
-      'Absence', 'Unpaid leave ded', 'Half-day ded', 'Late ded', 'Statutory', 'Other deductions',
+      'Absence', 'Unpaid leave ded', 'Half-day ded', 'Late ded', 'Missed check-out ded', 'Statutory', 'Other deductions',
       'Gross', 'Deductions', 'Net',
     ];
     const lines = [header.map(csvCell).join(',')];
@@ -1661,7 +1758,7 @@ export class AttendanceService {
           r.name, r.role, `${r.periodFrom}..${r.periodTo}`, r.scheduledDays, r.present, r.halfDay, r.absent, r.paidLeave,
           r.unpaidLeave, r.lateCount, r.lateMinutes, r.overtimeMinutes, r.base, r.allowanceTotal, r.overtimePay,
           r.commission, r.adjustmentsPlus, r.absenceDeduction, r.unpaidLeaveDeduction, r.halfDayDeduction,
-          r.lateDeduction, r.statutoryDeduction, r.adjustmentsMinus, r.gross, r.deductions,
+          r.lateDeduction, r.autoCheckoutDeduction, r.statutoryDeduction, r.adjustmentsMinus, r.gross, r.deductions,
           r.netPayable,
         ]
           .map(csvCell)

@@ -13,7 +13,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ValidateNested } from 'class-validator';
-import { DAY_RATE_BASES, LATE_METHODS, OVERTIME_METHODS } from '../payroll';
+import { AUTO_CHECKOUT_PENALTIES, DAY_RATE_BASES, LATE_METHODS, OVERTIME_METHODS } from '../payroll';
 import { ADJUSTMENT_KINDS } from '../payroll-math';
 
 export class PayrollPolicyDto {
@@ -78,6 +78,10 @@ export class PayrollPolicyDto {
   @Min(0)
   @Max(44640)
   otMonthlyCapMin?: number;
+
+  @IsOptional()
+  @IsIn(AUTO_CHECKOUT_PENALTIES)
+  autoCheckoutPenalty?: string;
 
   @IsOptional()
   @IsArray()

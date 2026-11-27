@@ -1083,7 +1083,7 @@ The old `/ad-report` had these defects; each is fixed by the Growth module (see 
 
 ## [Attendance] Forgotten check-out = full pay, 0 hours, only an admin could fix (fixed 2026-11-21)
 - Fix: worker auto-checkout (`auto-checkout.ts`), `checkout_source='auto'`, configurable payroll penalty, member "Fix my day" requests.
-- Update 2026-11-27: auto-checkout removed again (closed days at the wrong time). A forgotten check-out is now flagged `missed_checkout` by the sweep and fixed via "Fix my day" / admin grid edit.
+- Update 2026-11-27: the check-out was recorded at shift end even when the person left earlier (credit was max(shift end, activity)). Now `creditAt:'activity'` (default) records the real last activity; auto-checkout is off by default with a per-member override.
 
 ## [Attendance] Night shifts could not check out after midnight (fixed 2026-11-21)
 - Cause: check-out looked up "today's" row and shift length was `max(0, end − start)` = 0 for 22:00–06:00.

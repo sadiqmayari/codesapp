@@ -183,16 +183,3 @@ export function minutesSinceShiftStart(at: Date, workDay: string, start: string,
 export function shiftEndInstant(workDay: string, start: string, end: string, tz: string | null): Date {
   return localTimeToInstant(isOvernight(start, end) ? addDays(workDay, 1) : workDay, end, tz);
 }
-
-/** Flexible staff default required hours per day. */
-export const DEFAULT_REQUIRED_MINUTES = 8 * 60;
-/** Fixed shift with no end set → start + 8h. */
-export const DEFAULT_SHIFT_LENGTH_MIN = 8 * 60;
-
-// Auto-checkout was removed (Nov-2026); historical rows can still carry
-// checkout_source 'auto' | 'auto_activity'. These keep them labelled and
-// keep plain 'auto' days from earning overtime.
-/** Closed by the (retired) auto-checkout. */
-export const isAutoSource = (src: string | null | undefined) => src === 'auto' || src === 'auto_activity';
-/** Historical auto-closed at schedule credit ('auto') earns no overtime. */
-export const autoEarnsOvertime = (src: string | null | undefined) => src !== 'auto';

@@ -14,6 +14,7 @@ import { DataTable } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SkeletonRows } from '@/components/ui/skeleton';
 import {
+  AUTO_PENALTY_LABELS,
   DAY_RATE_LABELS,
   LATE_METHOD_LABELS,
   OVERTIME_METHOD_LABELS,
@@ -33,7 +34,7 @@ import {
   type Allowance,
   type AttendanceMember,
   type AttendanceSettings,
-  
+  type AutoCheckoutPenalty,
   type DayRateBasis,
   type Holiday,
   type LateMethod,
@@ -271,6 +272,7 @@ function MemberSheet({
       exemptLate: f.exemptLate,
       neverLate: !f.exemptLate && !!f.neverLate,
       lockAfterShift: f.lockAfterShift ?? null,
+      autoCheckout: f.autoCheckout ?? null,
       requiredMinutes: f.requiredMinutes,
       weeklyOff: f.weeklyOff,
       joinedOn: f.joinedOn ?? '',
@@ -337,7 +339,7 @@ function MemberSheet({
             </p>
           </div>
           {f.exemptLate ? (
-            <Field label="Required hours a day" htmlFor="ms-req" hint="The check-out reminder and overtime use this.">
+            <Field label="Required hours a day" htmlFor="ms-req" hint="Check-out reminder and auto-checkout credit use this.">
               <input
                 id="ms-req"
                 type="number"
@@ -406,6 +408,22 @@ function MemberSheet({
               </select>
             </Field>
           )}
+          <Field
+            label="Auto-checkout"
+            htmlFor="ms-auto"
+            hint={`Company default: ${settings.autoCheckout.mode === 'off' ? 'off' : 'on'}. Closes a day this person forgot to check out of.`}
+          >
+            <select
+              id="ms-auto"
+              className={`${inputCls} sm:w-72`}
+              value={f.autoCheckout == null ? 'default' : f.autoCheckout ? 'on' : 'off'}
+              onChange={(e) => set({ autoCheckout: e.target.value === 'default' ? null : e.target.value === 'on' })}
+            >
+              <option value="default">Company default ({settings.autoCheckout.mode === 'off' ? 'off' : 'on'})</option>
+              <option value="on">On for this person</option>
+              <option value="off">Off for this person</option>
+            </select>
+          </Field>
         </section>
 
         <section className="space-y-3">
@@ -528,6 +546,7 @@ export default function SettingsTab() {
   if (!draft || !saved) return <SkeletonRows rows={8} />;
   const p = draft.payrollPolicy;
   const setP = (x: Partial<typeof p>) => setDraft({ ...draft, payrollPolicy: { ...p, ...x } });
+  const setA = (x: Partial<typeof draft.autoCheckout>) => setDraft({ ...draft, autoCheckout: { ...draft.autoCheckout, ...x } });
   const setStat = (i: number, x: Partial<StatutoryDeduction>) => setP({ statutory: p.statutory.map((s, j) => (j === i ? { ...s, ...x } : s)) });
 
   const save = async () => {
@@ -542,6 +561,7 @@ export default function SettingsTab() {
         lockBufferMinutes: draft.lockBufferMinutes,
         checkinWindowMinutes: draft.checkinWindowMinutes,
         payrollPolicy: { ...p, statutory: p.statutory.filter((x) => x.label.trim()) },
+        autoCheckout: draft.autoCheckout,
         weeklyOff: draft.weeklyOff,
         annualPaidLeave: draft.annualPaidLeave,
       });
@@ -625,6 +645,46 @@ export default function SettingsTab() {
             </Row>
           )}
           <p className="pt-2 text-xs text-muted">Each member can override this in their settings.</p>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader title="Auto-checkout" description="Closes days nobody checked out of. Off by default; each member can be set On or Off in their settings." />
+        <CardBody>
+          <Row title="Close open days automatically">
+            <Switch checked={draft.autoCheckout.mode !== 'off'} onChange={(v) => setA({ mode: v ? 'shift_end' : 'off' })} label="Auto-checkout" />
+          </Row>
+          {draft.autoCheckout.mode !== 'off' && (
+            <>
+              <Row title="Record the check-out at" hint="Last activity = when the person last used the app (shift end if none). Shift end = never earlier than the shift end.">
+                <select aria-label="Auto-checkout time" className={`${inputCls} w-56`} value={draft.autoCheckout.creditAt} onChange={(e) => setA({ creditAt: e.target.value as 'activity' | 'shift_end' })}>
+                  <option value="activity">Last activity in the app</option>
+                  <option value="shift_end">Shift end (or later activity)</option>
+                </select>
+              </Row>
+              <Row title="Fixed-shift staff" hint="Credited at shift end, or the last activity in the app if later (extra hours count).">
+                <select aria-label="Fixed-shift auto-checkout" className={`${inputCls} w-56`} value={draft.autoCheckout.mode} onChange={(e) => setA({ mode: e.target.value as 'shift_end' | 'max_hours' })}>
+                  <option value="shift_end">At shift end + {draft.autoCheckout.afterEndMin} min</option>
+                  <option value="max_hours">After {draft.autoCheckout.maxHours} hours open</option>
+                </select>
+              </Row>
+              {draft.autoCheckout.mode === 'shift_end' && (
+                <Row title="Wait after shift end (min)">
+                  <input aria-label="Wait after shift end" type="number" min="0" max="600" className={`${inputCls} w-24`} value={draft.autoCheckout.afterEndMin} onChange={(e) => setA({ afterEndMin: num(e.target.value) })} />
+                </Row>
+              )}
+              <Row title="Max hours open" hint="Hard limit. Flexible staff are closed after this, credited their required hours or last activity, whichever is later.">
+                <input aria-label="Max hours" type="number" min="2" max="20" className={`${inputCls} w-24`} value={draft.autoCheckout.maxHours} onChange={(e) => setA({ maxHours: num(e.target.value) })} />
+              </Row>
+            </>
+          )}
+          <Row title="Payroll treatment of auto-closed days">
+            <select aria-label="Auto-closed day penalty" className={`${inputCls} w-48`} value={p.autoCheckoutPenalty} onChange={(e) => setP({ autoCheckoutPenalty: e.target.value as AutoCheckoutPenalty })}>
+              {Object.entries(AUTO_PENALTY_LABELS).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+          </Row>
         </CardBody>
       </Card>
 

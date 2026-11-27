@@ -53,6 +53,11 @@ export class UpdateMemberDto {
   @IsBoolean()
   lockAfterShift?: boolean | null;
 
+  // Auto-checkout: true/false override, null = company default.
+  @IsOptional()
+  @IsBoolean()
+  autoCheckout?: boolean | null;
+
   // Monthly gross base salary. null clears it.
   @IsOptional()
   @IsNumber()

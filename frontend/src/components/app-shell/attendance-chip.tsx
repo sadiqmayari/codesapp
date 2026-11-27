@@ -182,9 +182,14 @@ export function AttendanceChip() {
               )}
               {a.open && (
                 <p className="text-xs text-muted">
-                  {t.flexible
-                    ? `Check out any time. We remind you after ${fmtHours(target)}. Remember to check out, a forgotten day needs a fix request.`
-                    : `Shift ${a.shiftOver ? 'ended' : 'ends'} at ${t.effectiveEnd}. Remember to check out, a forgotten day needs a fix request.`}
+                  {(t.flexible ? `Check out any time. We remind you after ${fmtHours(target)}. ` : `Shift ${a.shiftOver ? 'ended' : 'ends'} at ${t.effectiveEnd}. `) +
+                    (t.autoCheckout.mode === 'off'
+                      ? 'Remember to check out, a forgotten day needs a fix request.'
+                      : t.autoCheckout.creditAt === 'activity'
+                        ? 'If you forget, the day closes itself at your last activity in the app.'
+                        : t.flexible
+                          ? `If you forget, the day closes itself after ${t.autoCheckout.maxHours}h, credited ${fmtHours(target)} or your last activity, whichever is later.`
+                          : 'If you forget, the day closes itself at shift end, or your last activity if later.')}
                 </p>
               )}
               {(a.rec?.checkoutSource === 'auto' || a.rec?.checkoutSource === 'auto_activity') && (

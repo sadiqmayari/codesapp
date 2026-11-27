@@ -79,7 +79,11 @@ function EditDayModal({
       <div className="space-y-3">
         {(target?.cell?.checkoutSource === 'auto' || target?.cell?.checkoutSource === 'auto_activity') && (
           <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            This day was closed automatically. Set the real check-out time if you know it.
+            This day was closed automatically
+            {target.cell.checkoutSource === 'auto_activity' && target.cell.lastActiveAt
+              ? ` at the last app activity (${fmtClock(target.cell.lastActiveAt)})`
+              : ''}
+            . Set the real check-out time if you know it.
           </p>
         )}
         <Field label="Status" htmlFor="ed-status">

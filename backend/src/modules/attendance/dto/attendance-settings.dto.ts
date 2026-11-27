@@ -30,6 +30,28 @@ export class OfficeNetworkDto {
   ip!: string;
 }
 
+export class AutoCheckoutDto {
+  @IsOptional()
+  @IsIn(['off', 'shift_end', 'max_hours'])
+  mode?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(600)
+  afterEndMin?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(2)
+  @Max(20)
+  maxHours?: number;
+
+  @IsOptional()
+  @IsIn(['activity', 'shift_end'])
+  creditAt?: string;
+}
+
 export class AttendanceSettingsDto {
   // "HH:MM" 24h, tenant-local. Omit/empty keeps the default (09:30).
   @IsOptional()
@@ -70,6 +92,13 @@ export class AttendanceSettingsDto {
   @ValidateNested()
   @Type(() => PayrollPolicyDto)
   payrollPolicy?: PayrollPolicyDto;
+
+  // Auto-checkout policy (merged over current, clamped by resolveAutoCheckout).
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => AutoCheckoutDto)
+  autoCheckout?: AutoCheckoutDto;
 
   // Company weekly off days, 0 = Sunday … 6 = Saturday.
   @IsOptional()

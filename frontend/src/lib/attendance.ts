@@ -6,6 +6,8 @@ export type AttendanceStatus = 'present' | 'absent' | 'leave' | 'half_day' | 'ho
 export type LateMethod = 'none' | 'n_lates_absent' | 'fixed_per_late' | 'per_minute' | 'half_day';
 export type OvertimeMethod = 'off' | 'hourly_multiplier' | 'flat_per_hour' | 'per_minute';
 export type DayRateBasis = 'calendar' | 'fixed' | 'thirty';
+export type AutoCheckoutPenalty = 'none' | 'half_day' | 'absent';
+export type AutoCheckoutMode = 'off' | 'shift_end' | 'max_hours';
 
 export const LATE_METHOD_LABELS: Record<LateMethod, string> = {
   none: 'No deduction',
@@ -24,6 +26,11 @@ export const DAY_RATE_LABELS: Record<DayRateBasis, string> = {
   calendar: "Salary ÷ the month's work days",
   fixed: 'Salary ÷ a fixed number of days',
   thirty: 'Salary ÷ 30',
+};
+export const AUTO_PENALTY_LABELS: Record<AutoCheckoutPenalty, string> = {
+  none: 'No penalty',
+  half_day: 'Count as half day',
+  absent: 'Count as absent',
 };
 export const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -46,8 +53,17 @@ export interface PayrollPolicy {
   dayRateBasis: DayRateBasis;
   otOnlyAfterShiftEnd: boolean;
   otMonthlyCapMin: number;
+  autoCheckoutPenalty: AutoCheckoutPenalty;
   statutory: StatutoryDeduction[];
   currency: string;
+}
+
+export interface AutoCheckoutPolicy {
+  mode: AutoCheckoutMode;
+  afterEndMin: number;
+  maxHours: number;
+  /** 'activity' = last app activity (fallback shift end); 'shift_end' = later of shift end and activity. */
+  creditAt: 'activity' | 'shift_end';
 }
 
 export interface Allowance {
@@ -97,6 +113,7 @@ export interface Payslip {
   unpaidLeaveDeduction: number;
   halfDayDeduction: number;
   lateDeduction: number;
+  autoCheckoutDeduction: number;
   statutoryDeduction: number;
   adjustmentsPlus: number;
   adjustmentsMinus: number;
@@ -156,6 +173,8 @@ export interface AttendanceCell {
   isLate: boolean;
   missedCheckout: boolean;
   checkoutSource: 'self' | 'auto' | 'auto_activity' | 'admin' | null;
+  /** Last app activity while the day was open (auto-checkout credit). */
+  lastActiveAt?: string | null;
   workedMinutes: number | null;
   note: string | null;
   overridden: boolean;
@@ -185,6 +204,7 @@ export interface MyToday {
   /** ISO instant the app locks today (null = no lock ahead). */
   appLocksAt?: string | null;
   requiredMinutes: number | null;
+  autoCheckout: AutoCheckoutPolicy;
   excluded: boolean;
   record: AttendanceCell | null;
 }
@@ -206,6 +226,9 @@ export interface AttendanceMember {
   /** Per-member lock override (null = company default). */
   lockAfterShift?: boolean | null;
   effectiveLockAfterShift?: boolean;
+  /** Per-member auto-checkout override (null = company default). */
+  autoCheckout?: boolean | null;
+  effectiveAutoCheckout?: boolean;
   requiredMinutes: number | null;
   weeklyOff: number[] | null;
   effectiveWeeklyOff: number[];
@@ -236,6 +259,7 @@ export interface AttendanceSettings {
   lockBufferMinutes: number;
   checkinWindowMinutes: number;
   payrollPolicy: PayrollPolicy;
+  autoCheckout: AutoCheckoutPolicy;
   weeklyOff: number[];
   annualPaidLeave: number;
   yourIp: string;
@@ -439,6 +463,7 @@ export const setAttendanceSettings = (body: {
   lockBufferMinutes?: number | null;
   checkinWindowMinutes?: number;
   payrollPolicy?: Partial<PayrollPolicy>;
+  autoCheckout?: Partial<AutoCheckoutPolicy>;
   weeklyOff?: number[];
   annualPaidLeave?: number | null;
 }) => apiFetch<AttendanceSettings>('/attendance/settings', { method: 'PATCH', body });
@@ -456,6 +481,7 @@ export interface MemberPatch {
   exemptLate?: boolean;
   neverLate?: boolean;
   lockAfterShift?: boolean | null;
+  autoCheckout?: boolean | null;
   requiredMinutes?: number | null;
   weeklyOff?: number[] | null;
   joinedOn?: string;
@@ -465,6 +491,9 @@ export interface MemberPatch {
   overtimeRate?: number | null;
   allowances?: Allowance[];
 }
+/** App-activity heartbeat while checked in (auto-checkout credits real hours). */
+export const sendAttendanceHeartbeat = () =>
+  apiFetch<{ ok: true; open: boolean }>('/attendance/me/heartbeat', { method: 'POST' });
 
 export type TimingMode = 'fixed' | 'relaxed' | 'flexible';
 export const timingModeOf = (m: { exemptLate: boolean; neverLate?: boolean }): TimingMode =>

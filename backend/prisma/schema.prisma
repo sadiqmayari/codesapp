@@ -537,6 +537,8 @@ model User {
   attendance_never_late        Boolean    @default(false)
   // Per-user override of companies.attendance_lock_after_shift (NULL = company).
   attendance_lock_after_shift  Boolean?
+  // Per-user override of companies.attendance_auto_checkout (NULL = company, true = on, false = off).
+  attendance_auto_checkout     Boolean?
   // Monthly gross base salary (tenant currency). NULL = no salary set (payroll
   // row shows blanks). salary_allowances = JSON array of {label, amount} lines
   // (fuel, food, etc.) added to gross. salary_overtime_rate = optional per-user

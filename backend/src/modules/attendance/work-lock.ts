@@ -14,8 +14,8 @@ import {
   shiftEndInstant,
   toMinutes,
   workDayFor,
-  DEFAULT_SHIFT_LENGTH_MIN,
 } from './schedule';
+import { DEFAULT_SHIFT_LENGTH_MIN } from './auto-checkout';
 
 export const LOCK_EARLY_OPEN_MIN = 30; // same as the check-in window opening
 export const DEFAULT_LOCK_BUFFER_MIN = 30;

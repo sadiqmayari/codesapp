@@ -4,17 +4,15 @@
 
 import { Allowance, PayrollPolicy } from './payroll';
 import {
-  DEFAULT_REQUIRED_MINUTES,
   WorkCalendar,
-  autoEarnsOvertime,
   dateRange,
   dayKind,
-  isAutoSource,
   minutesSinceShiftStart,
   monthBounds,
   shiftEndInstant,
   shiftMinutes,
 } from './schedule';
+import { DEFAULT_REQUIRED_MINUTES, autoEarnsOvertime, isAutoSource } from './auto-checkout';
 
 export interface PayslipMember {
   userId: number;
@@ -97,6 +95,7 @@ export interface Payslip {
   unpaidLeaveDeduction: number;
   halfDayDeduction: number;
   lateDeduction: number;
+  autoCheckoutDeduction: number;
   statutoryDeduction: number;
   adjustmentsPlus: number;
   adjustmentsMinus: number;
@@ -243,6 +242,12 @@ export function computePayslip(input: PayslipInput): Payslip | null {
     else if (policy.lateMethod === 'fixed_per_late') lateDeduction = lateCount * policy.lateFixedAmount;
     else if (policy.lateMethod === 'per_minute') lateDeduction = lateMinutes * minuteRate;
   }
+  const autoCheckoutDeduction =
+    policy.autoCheckoutPenalty === 'absent'
+      ? autoClosed * dayRate
+      : policy.autoCheckoutPenalty === 'half_day'
+        ? autoClosed * 0.5 * dayRate
+        : 0;
 
   // ── overtime ──
   let overtimePay = 0;
@@ -287,13 +292,14 @@ export function computePayslip(input: PayslipInput): Payslip | null {
   const unpR = ded('Unpaid leave', unpaidLeaveDeduction, unpaidLeave ? `${unpaidLeave} day${unpaidLeave > 1 ? 's' : ''}` : undefined);
   const halfR = ded('Half days', halfDayDeduction, halfDay ? `${halfDay} × ½ day` : undefined);
   const lateR = ded('Late arrivals', lateDeduction, lateCount ? `${lateCount} late · ${lateMinutes} min` : undefined);
+  const autoR = ded('Missed check-out', autoCheckoutDeduction, autoClosed ? `${autoClosed} auto-closed` : undefined);
   let statR = 0;
   for (const s of statutoryItems) statR += ded(s.label, s.amount, s.detail);
   let minusR = 0;
   for (const a of minusAdj) minusR += ded(a.label, Math.abs(a.amount), a.kind);
 
   const gross = r2(baseR + allowR + otR + commR + plusR);
-  const deductions = r2(absR + unpR + halfR + lateR + statR + minusR);
+  const deductions = r2(absR + unpR + halfR + lateR + autoR + statR + minusR);
 
   return {
     userId: m.userId,
@@ -330,6 +336,7 @@ export function computePayslip(input: PayslipInput): Payslip | null {
     unpaidLeaveDeduction: unpR,
     halfDayDeduction: halfR,
     lateDeduction: lateR,
+    autoCheckoutDeduction: autoR,
     statutoryDeduction: r2(statR),
     adjustmentsPlus: r2(plusR),
     adjustmentsMinus: r2(minusR),
