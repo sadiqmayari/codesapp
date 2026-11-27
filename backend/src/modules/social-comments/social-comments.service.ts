@@ -6,6 +6,8 @@ import { FeatureService } from '../../common/services/feature.service';
 import { runsBackground } from '../../common/utils/process-role';
 import { InboxGateway } from '../inbox/inbox.gateway';
 import { listTikTokComments, replyTikTokComment, setTikTokCommentHidden } from './tiktok-comments.client';
+import { ConfigService } from '@nestjs/config';
+import { YoutubeCreds, channelComments, replyToComment, setCommentHidden } from '../growth/platforms/google/youtube.client';
 
 const TICK_MS = 10 * 60_000;
 const FIRST_PULL_DAYS = 14;
@@ -20,6 +22,7 @@ export interface CommentListQuery {
 }
 
 type PullAccount = { id: number; company_id: number; external_id: string; token_encrypted: string | null };
+type PullChannel = { id: number; company_id: number; channel_id: string; token_encrypted: string | null };
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
@@ -40,7 +43,73 @@ export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
     private readonly encryption: EncryptionService,
     private readonly feature: FeatureService,
     private readonly gateway: InboxGateway,
+    private readonly config: ConfigService,
   ) {}
+
+  private ytCreds(tokenEncrypted: string | null): YoutubeCreds {
+    if (!tokenEncrypted) throw new BadRequestException('The YouTube channel behind this comment is disconnected. Reconnect it in Growth → Connections.');
+    return {
+      clientId: this.config.get<string>('GOOGLE_ADS_CLIENT_ID') ?? '',
+      clientSecret: this.config.get<string>('GOOGLE_ADS_CLIENT_SECRET') ?? '',
+      refresh: this.encryption.decrypt(tokenEncrypted),
+    };
+  }
+
+  private youtubeChannels(companyIds: number[]) {
+    return this.prisma.youtubeChannel.findMany({
+      where: { company_id: { in: companyIds }, status: 'active', token_encrypted: { not: null } },
+      select: { id: true, company_id: true, channel_id: true, token_encrypted: true },
+    });
+  }
+
+  /** YouTube comments on the channel's videos since the newest stored one (- 1 h); first run 14 days. */
+  async pullYoutube(ch: PullChannel) {
+    const last = await this.prisma.socialComment.findFirst({
+      where: { company_id: ch.company_id, platform: 'youtube', account_id: ch.id },
+      orderBy: { commented_at: 'desc' },
+      select: { commented_at: true },
+    });
+    const since = new Date(last ? last.commented_at.getTime() - OVERLAP_MS : Date.now() - FIRST_PULL_DAYS * 86_400_000);
+    const rows = await channelComments(this.ytCreds(ch.token_encrypted), ch.channel_id, since);
+    if (!rows.length) return 0;
+    const vids = await this.prisma.youtubeVideo.findMany({
+      where: { company_id: ch.company_id, video_id: { in: [...new Set(rows.map((r) => r.videoId).filter((v): v is string => !!v))] } },
+      select: { video_id: true, title: true, used_in_ads: true },
+    });
+    const byVid = new Map(vids.map((v) => [v.video_id, v]));
+    let created = 0;
+    for (const c of rows) {
+      if (c.commentedAt < since && !last) continue;
+      const key = { company_id: ch.company_id, platform: 'youtube', external_id: c.externalId.slice(0, 64) };
+      const v = c.videoId ? byVid.get(c.videoId) : undefined;
+      const data = {
+        parent_external_id: c.parentExternalId?.slice(0, 64) ?? null,
+        ad_id: null,
+        ad_name: v?.title?.slice(0, 255) ?? null,
+        post_id: c.videoId?.slice(0, 64) ?? null,
+        author_name: c.authorName?.slice(0, 255) ?? null,
+        author_id: c.authorId?.slice(0, 128) ?? null,
+        text: c.text || '(no text)',
+        status: c.hidden ? 'hidden' : 'visible',
+        raw: c.raw as Prisma.InputJsonValue,
+      };
+      const existing = await this.prisma.socialComment.findUnique({ where: { company_id_platform_external_id: key }, select: { id: true } });
+      if (existing) {
+        await this.prisma.socialComment.update({ where: { id: existing.id }, data });
+        continue;
+      }
+      try {
+        await this.prisma.socialComment.create({
+          data: { ...key, source: v?.used_in_ads ? 'ad' : 'organic', account_id: ch.id, commented_at: c.commentedAt, ...data },
+        });
+        created++;
+      } catch (e) {
+        if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
+      }
+    }
+    if (created) this.safeEmit(ch.company_id, 'comments.new', { platform: 'youtube', count: created });
+    return created;
+  }
 
   onModuleInit() {
     if (!runsBackground()) return;
@@ -65,6 +134,14 @@ export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
     try {
       const granted = await this.feature.companiesWith('social_comments');
       if (!granted.size) return;
+      for (const ch of await this.youtubeChannels(Array.from(granted))) {
+        try {
+          const n = await this.pullYoutube(ch);
+          if (n) this.log.log(`youtube comments: ${n} new for company ${ch.company_id} channel ${ch.channel_id}`);
+        } catch (e) {
+          this.log.warn(`youtube comments pull failed (company ${ch.company_id}, ${ch.channel_id}): ${(e as Error).message}`);
+        }
+      }
       for (const a of await this.tiktokAccounts(Array.from(granted))) {
         try {
           const n = await this.pullAccount(a);
@@ -150,22 +227,37 @@ export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
     }
     const term = q.q?.trim().slice(0, 100);
     if (term) where.OR = [{ text: { contains: term } }, { author_name: { contains: term } }, { ad_name: { contains: term } }];
-    const [rows, total, unreplied, accounts] = await Promise.all([
+    const [rows, total, unreplied, accounts, channels, byPlatform] = await Promise.all([
       this.prisma.socialComment.findMany({
         where,
         orderBy: [{ commented_at: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * limit,
         take: limit,
         select: {
-          id: true, platform: true, source: true, ad_id: true, ad_name: true, author_name: true, text: true, status: true,
+          id: true, platform: true, source: true, ad_id: true, ad_name: true, post_id: true, author_name: true, text: true, status: true,
           parent_external_id: true, commented_at: true, reply_text: true, replied_at: true,
         },
       }),
       this.prisma.socialComment.count({ where }),
       this.prisma.socialComment.count({ where: { company_id: companyId, replied_at: null, parent_external_id: null, status: 'visible' } }),
       this.prisma.adAccount.count({ where: { company_id: companyId, platform: 'tiktok', status: 'active' } }),
+      this.prisma.youtubeChannel.count({ where: { company_id: companyId, status: 'active' } }),
+      this.prisma.socialComment.groupBy({
+        by: ['platform'],
+        where: { company_id: companyId, replied_at: null, parent_external_id: null, status: 'visible' },
+        _count: { _all: true },
+      }),
     ]);
-    return { rows, total, page, limit, unreplied, hasAccounts: accounts > 0 };
+    const unrepliedByPlatform: Record<string, number> = {};
+    for (const g of byPlatform) unrepliedByPlatform[g.platform] = g._count._all;
+    return { rows, total, page, limit, unreplied, unrepliedByPlatform, hasAccounts: accounts + channels > 0, hasTikTok: accounts > 0, hasYoutube: channels > 0 };
+  }
+
+  private async loadYoutube(companyId: number, id: number) {
+    const c = await this.prisma.socialComment.findFirst({ where: { id, company_id: companyId, platform: 'youtube' } });
+    if (!c?.account_id) return null;
+    const ch = await this.prisma.youtubeChannel.findFirst({ where: { id: c.account_id, company_id: companyId } });
+    return { c, creds: this.ytCreds(ch?.token_encrypted ?? null) };
   }
 
   private async load(companyId: number, id: number) {
@@ -182,6 +274,19 @@ export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
   async reply(companyId: number, userId: number, id: number, text: string) {
     const body = text.trim();
     if (!body) throw new BadRequestException('Write a reply first.');
+    const yt = await this.loadYoutube(companyId, id);
+    if (yt) {
+      try {
+        // YouTube replies attach to the top-level comment of the thread.
+        await replyToComment(yt.creds, yt.c.parent_external_id ?? yt.c.external_id, body);
+      } catch (e) {
+        throw new BadRequestException(`YouTube refused the reply: ${(e as Error).message}`);
+      }
+      const row = await this.prisma.socialComment.update({ where: { id: yt.c.id }, data: { reply_text: body, replied_at: new Date(), replied_by_user_id: userId } });
+      await this.audit(companyId, userId, 'comment.replied', yt.c.id, { platform: 'youtube' });
+      this.safeEmit(companyId, 'comments.updated', { id: yt.c.id });
+      return row;
+    }
     const { c, acc, token } = await this.load(companyId, id);
     try {
       await replyTikTokComment(token, acc.external_id, (c.raw ?? {}) as Record<string, unknown>, body);
@@ -198,6 +303,18 @@ export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
   }
 
   async setHidden(companyId: number, userId: number, id: number, hidden: boolean) {
+    const yt = await this.loadYoutube(companyId, id);
+    if (yt) {
+      try {
+        await setCommentHidden(yt.creds, yt.c.external_id, hidden);
+      } catch (e) {
+        throw new BadRequestException(`YouTube refused: ${(e as Error).message}`);
+      }
+      const row = await this.prisma.socialComment.update({ where: { id: yt.c.id }, data: { status: hidden ? 'hidden' : 'visible' } });
+      await this.audit(companyId, userId, hidden ? 'comment.hidden' : 'comment.unhidden', yt.c.id, { platform: 'youtube' });
+      this.safeEmit(companyId, 'comments.updated', { id: yt.c.id });
+      return row;
+    }
     const { c, acc, token } = await this.load(companyId, id);
     try {
       await setTikTokCommentHidden(token, acc.external_id, c.external_id, hidden);
@@ -215,6 +332,14 @@ export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
     const accounts = await this.tiktokAccounts([companyId]);
     let created = 0;
     const errors: string[] = [];
+    const channels = await this.youtubeChannels([companyId]);
+    for (const ch of channels) {
+      try {
+        created += await this.pullYoutube(ch);
+      } catch (e) {
+        errors.push(`YouTube ${ch.channel_id}: ${(e as Error).message}`);
+      }
+    }
     for (const a of accounts) {
       try {
         created += await this.pullAccount(a);
@@ -222,7 +347,7 @@ export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
         errors.push(`${a.external_id}: ${(e as Error).message}`);
       }
     }
-    return { accounts: accounts.length, created, errors };
+    return { accounts: accounts.length + channels.length, created, errors };
   }
 
   private async audit(companyId: number, userId: number, action: string, entityId: number, metadata: Record<string, unknown>) {

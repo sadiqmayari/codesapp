@@ -1336,3 +1336,12 @@ Full audit of the contacts module (backend 11 files + frontend pages/components)
 - New Comments page (`/comments`, module grant `social_comments`): TikTok ad comments pulled every 10 min, reply / hide / unhide from CodesApp.
 - DONE 2026-11-26: TikTok app created + approved (App ID 7712524218398670866), keys on the VPS, Sois connected SoisLife-Ad V1 (90 days synced: 9,856 rows, Rs 2.26M spend), `social_comments` granted to Sois, comment API calibrated (per ad group; 203 comments found in 13 ad groups).
 - PENDING: connect the other 2 Sois TikTok advertisers if wanted; verify reply + hide on a real comment; organic post comments need TikTok's Accounts API form.
+
+
+## Google Ads + YouTube + TikTok write (2026-11-27)
+- Preview of the screens: https://claude.ai/artifact/SSXqaQrbFfPHsQZE8utv3q
+- **Connect with Google** (OAuth, account picker grouped under manager accounts, per-account MCC). Google adapter rewritten: API v26 (env `GOOGLE_ADS_API_VERSION`), PMax / ad-less spend via campaign-grain residuals, video views, YouTube thumbnails, editable settings, status refresh, clear "Basic access pending" error.
+- **Manage + create on Google and TikTok** like Meta: on/off, budget, bid strategy, end date, Undo, duplicate (Google Search/Display; TikTok ad groups/campaigns), and new builders (Google Search / Performance Max / YouTube video; TikTok video ads) — everything created paused.
+- **YouTube:** connect channels, channel stats + videos + daily analytics (new Growth → YouTube tab), link to Ads (which videos your Google ads play), unlisted uploads for Google video ads, YouTube comments on the Comments page with reply / hide.
+- Migration `20261129000000_google_youtube` (auto-applies). Tests: `npx jest -c jest.unit.config.js google-ads tiktok youtube`.
+- PENDING: Google Cloud project + OAuth client + developer token (Basic access review), then live tests on a Google Ads test account; first live TikTok write on a paused ad group.

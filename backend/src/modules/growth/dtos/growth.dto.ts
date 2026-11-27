@@ -124,6 +124,71 @@ export class AskGrowthDto extends GrowthRangeDto {
   history?: AskTurnDto[];
 }
 
+export class GoogleAuthUrlDto {
+  @IsIn(['ads', 'youtube'])
+  purpose!: 'ads' | 'youtube';
+}
+
+export class GoogleExchangeDto {
+  @IsString()
+  @MinLength(4)
+  @MaxLength(1024)
+  code!: string;
+
+  @IsString()
+  @MinLength(10)
+  @MaxLength(512)
+  state!: string;
+}
+
+export class GoogleConnectDto {
+  @IsString()
+  @MinLength(8)
+  @MaxLength(64)
+  pickId!: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  customerIds!: string[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  storeId?: number | null;
+}
+
+export class YoutubeConnectDto {
+  @IsString()
+  @MinLength(8)
+  @MaxLength(64)
+  pickId!: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  channelIds!: string[];
+}
+
+export class YoutubeOverviewDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  from?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  to?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  channelId?: number;
+}
+
 export class TikTokExchangeDto {
   @IsString()
   @MinLength(4)

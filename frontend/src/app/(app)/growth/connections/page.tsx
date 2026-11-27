@@ -7,7 +7,9 @@ import { ApiError, apiFetch } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { ConfirmDialog } from '@/components/ui/modal';
 import { Skeleton } from '@/components/ui/skeleton';
-import { growthApi, SYNC_INTERVALS, type Accounts, type AdAccount, type GrowthStatus } from '@/lib/growth';
+import { growthApi, SYNC_INTERVALS, type Accounts, type AdAccount, type GrowthStatus, type YoutubeChannelRow, type YoutubeChannels } from '@/lib/growth';
+import { BrandMark } from '@/components/icons/brand-logo';
+import { GoogleG } from '@/components/growth/google-g';
 import { Panel } from '@/components/growth/ui';
 import { WriteAccessPanel } from '@/components/growth/manage/write-access';
 
@@ -27,6 +29,72 @@ const TOKEN_HELP: Record<string, string> = {
 
 const err = (e: unknown, fb: string) => (e instanceof ApiError ? e.userMessage : fb);
 
+const compact = (v: number) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(v);
+
+function YoutubePanel({ yt, busy, onConnect, onDisconnect, onSync }: {
+  yt: YoutubeChannels | null;
+  busy: string | null;
+  onConnect: () => void;
+  onDisconnect: (c: YoutubeChannelRow) => void;
+  onSync: () => void;
+}) {
+  return (
+    <Panel title="YouTube channels" hint="Channel stats, comments, and which of your videos your Google Ads play.">
+      {!yt ? <Skeleton className="h-16 w-full" /> : (
+        <div className="space-y-3">
+          {yt.channels.length === 0 ? (
+            <p className="text-sm text-muted">No channel connected. Connect the channel your video ads use: sign in with the Google account that owns it (pick the brand account on Google&apos;s screen).</p>
+          ) : (
+            <ul className="divide-y divide-line rounded-lg border border-line">
+              {yt.channels.map((c) => (
+                <li key={c.id} className="space-y-2 p-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    {c.thumb
+                      // eslint-disable-next-line @next/next/no-img-element -- remote channel avatar
+                      ? <img src={c.thumb} alt="" className="h-10 w-10 rounded-full object-cover" />
+                      : <BrandMark brand="youtube" size="md" />}
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-ink">{c.title ?? c.channelId} {c.handle && <span className="text-sm font-semibold text-muted">{c.handle}</span>}</div>
+                      <div className="text-xs text-muted">
+                        {compact(c.subscribers)} subscribers · {c.videos.toLocaleString()} videos · {c.lastSuccessAt ? `synced ${fmtDateTime(c.lastSuccessAt)}` : 'first sync running'}
+                      </div>
+                      {c.lastError && <p className="mt-1 text-xs text-red-600">{c.lastError}</p>}
+                    </div>
+                    <button type="button" onClick={() => onDisconnect(c)} className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-xs font-semibold text-red-600"><Trash2 size={13} /> Disconnect</button>
+                  </div>
+                  <div className="rounded-lg bg-sunken px-3 py-2 text-xs text-ink">
+                    {c.adAccounts.length ? (
+                      <>Linked to Google Ads: {c.adAccounts.map((a) => `${a.name ?? 'account'} (${a.ads} video ad${a.ads === 1 ? '' : 's'}, ${a.videos} video${a.videos === 1 ? '' : 's'})`).join(' · ')}. Comments on those videos show as <b>Ad</b> on the Comments page.</>
+                    ) : <>No Google ads use this channel&apos;s videos yet.</>}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {yt.unconnectedAdVideos > 0 && (
+            <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+              <AlertTriangle size={14} className="mt-px shrink-0" />
+              {yt.unconnectedAdVideos} video{yt.unconnectedAdVideos === 1 ? '' : 's'} in your Google ads belong to a channel that isn&apos;t connected. Connect it to see their organic stats and comments.
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <button type="button" disabled={!yt.available || busy === 'yt'} onClick={onConnect}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#CC0000] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+              {busy === 'yt' ? <Loader2 size={15} className="animate-spin" /> : <Plug size={15} />} Connect YouTube channel
+            </button>
+            {yt.channels.length > 0 && (
+              <button type="button" disabled={busy === 'ytsync'} onClick={onSync} className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink disabled:opacity-50">
+                <RefreshCw size={14} className={busy === 'ytsync' ? 'animate-spin' : ''} /> Sync now
+              </button>
+            )}
+            {!yt.available && <span className="self-center text-xs text-muted">Coming soon: Google sign-in isn&apos;t set up on this server yet.</span>}
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 function Health({ a }: { a: AdAccount }) {
   if (a.health === 'paused') return <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 dark:text-amber-300" title="Meta limits how many API calls an ad account can make per hour. Already-pulled data stays; the sync continues on its own."><Clock size={13} /> Paused by Meta&apos;s API limit — resumes automatically{a.lastSuccessAt ? ` · last data ${fmtDateTime(a.lastSuccessAt)}` : ''}</span>;
   if (a.health === 'error') return <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-600"><AlertTriangle size={13} /> Sync failing</span>;
@@ -43,6 +111,8 @@ export default function GrowthConnectionsPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<AdAccount | null>(null);
   const [datasets, setDatasets] = useState<Record<number, string>>({});
+  const [yt, setYt] = useState<YoutubeChannels | null>(null);
+  const [ytConfirm, setYtConfirm] = useState<YoutubeChannelRow | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -50,6 +120,7 @@ export default function GrowthConnectionsPage() {
       setAcc(a);
       setStatus(s);
       setDatasets(Object.fromEntries(a.accounts.map((x) => [x.id, x.capiDatasetId ?? ''])));
+      growthApi.youtubeChannels().then(setYt).catch(() => setYt({ available: false, channels: [], unconnectedAdVideos: 0 }));
     } catch (e) {
       toast.error(err(e, 'Could not load connections'));
     }
@@ -74,6 +145,13 @@ export default function GrowthConnectionsPage() {
   };
 
   const available = acc?.platforms.filter((p) => p.available) ?? [];
+
+  const startGoogle = (purpose: 'ads' | 'youtube') => {
+    setBusy(purpose === 'ads' ? 'google' : 'yt');
+    growthApi.googleAuthUrl(purpose)
+      .then((r) => { window.location.href = r.url; })
+      .catch((e) => { toast.error(err(e, 'Could not start Google sign-in')); setBusy(null); });
+  };
 
   return (
     <div className="space-y-4">
@@ -147,6 +225,9 @@ export default function GrowthConnectionsPage() {
         )}
       </Panel>
 
+      <YoutubePanel yt={yt} busy={busy} onConnect={() => startGoogle('youtube')} onDisconnect={setYtConfirm}
+        onSync={() => run('ytsync', () => growthApi.youtubeSync(), 'YouTube sync started')} />
+
       <WriteAccessPanel />
 
       <Panel title="Connect an ad account">
@@ -159,7 +240,15 @@ export default function GrowthConnectionsPage() {
           <select id="cn-platform" value={form.platform} onChange={(e) => setForm({ ...form, platform: e.target.value })} className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink">
             {(acc?.platforms ?? []).map((p) => <option key={p.platform} value={p.platform} disabled={!p.available}>{p.label}{p.available ? '' : ' — coming soon'}</option>)}
           </select>
-          {form.platform === 'tiktok' ? (
+          {form.platform === 'google' ? (
+            <div className="sm:col-start-2">
+              <p className="mb-2 text-sm text-muted">Sign in with the Google account that has access to your Google Ads (a manager account works: you pick its client accounts next). Spend, conversions and YouTube video views sync into Growth, and you can edit and create campaigns from CodesApp.</p>
+              <button type="button" disabled={busy === 'google' || !available.some((p) => p.platform === 'google')} onClick={() => startGoogle('ads')}
+                className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink shadow-sm disabled:opacity-50">
+                {busy === 'google' ? <Loader2 size={15} className="animate-spin" /> : <GoogleG />} Connect with Google
+              </button>
+            </div>
+          ) : form.platform === 'tiktok' ? (
             <div className="sm:col-start-2">
               <p className="mb-2 text-sm text-muted">Sign in to TikTok for Business and approve CodesApp. You then pick which advertiser accounts to bring in.</p>
               <button type="button" disabled={busy === 'tiktok' || !available.some((p) => p.platform === 'tiktok')}
@@ -223,6 +312,20 @@ export default function GrowthConnectionsPage() {
           )}
         </Panel>
       </div>
+
+      <ConfirmDialog
+        open={!!ytConfirm}
+        title="Disconnect this YouTube channel?"
+        message={`Stats and videos of ${ytConfirm?.title ?? 'this channel'} are removed from Growth, and its comments stop syncing. Reconnect any time.`}
+        confirmLabel="Disconnect"
+        danger
+        onCancel={() => setYtConfirm(null)}
+        onConfirm={() => {
+          const c = ytConfirm;
+          setYtConfirm(null);
+          if (c) void run(`ytdel${c.id}`, () => growthApi.youtubeDisconnect(c.id), 'Channel disconnected');
+        }}
+      />
 
       <ConfirmDialog
         open={!!confirm}

@@ -37,6 +37,30 @@ export function ttStatus(s: string | null | undefined): string | null {
   return u;
 }
 
+/** TikTok ad-group bidding → the normalised strategy Growth stores. */
+export function ttBid(g: { bid_type?: string; bid_price?: number; conversion_bid_price?: number; deep_bid_type?: string; roas_bid?: number }): {
+  bidStrategy: string | null; bidAmount: number | null; roasFloor: number | null;
+} {
+  if (g.deep_bid_type === 'VO_MIN_ROAS' && (g.roas_bid ?? 0) > 0) return { bidStrategy: 'LOWEST_COST_WITH_MIN_ROAS', bidAmount: null, roasFloor: g.roas_bid ?? null };
+  if ((g.conversion_bid_price ?? 0) > 0) return { bidStrategy: 'COST_CAP', bidAmount: g.conversion_bid_price ?? null, roasFloor: null };
+  if (g.bid_type === 'BID_TYPE_CUSTOM' && (g.bid_price ?? 0) > 0) return { bidStrategy: 'LOWEST_COST_WITH_BID_CAP', bidAmount: g.bid_price ?? null, roasFloor: null };
+  return { bidStrategy: g.bid_type ? 'LOWEST_COST_WITHOUT_CAP' : null, bidAmount: null, roasFloor: null };
+}
+
+/** TikTok optimisation goal → Growth's vocabulary. */
+export function ttGoal(g: string | null | undefined): string | null {
+  if (!g) return null;
+  const map: Record<string, string> = { CONVERT: 'OFFSITE_CONVERSIONS', VALUE: 'VALUE', CLICK: 'LINK_CLICKS', TRAFFIC_LANDING_PAGE_VIEW: 'LANDING_PAGE_VIEWS', REACH: 'REACH' };
+  return map[g] ?? g;
+}
+
+/** TikTok "YYYY-MM-DD HH:MM:SS" (UTC) → ISO. */
+export function ttIso(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const d = new Date(`${s.replace(' ', 'T')}Z`);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 /** Split [since, until] (YYYY-MM-DD) into ≤30-day windows — TikTok's daily-report range limit. */
 export function ttWindows(since: string, until: string, days = 30): Array<[string, string]> {
   const out: Array<[string, string]> = [];
@@ -102,23 +126,64 @@ export class TikTokAdsAdapter implements AdPlatformAdapter {
   async listEntities(token: string, externalId: string): Promise<AdEntityRow[]> {
     const adv = `advertiser_id=${encodeURIComponent(externalId)}`;
     const out: AdEntityRow[] = [];
-    type C = { campaign_id: string; campaign_name?: string; operation_status?: string; objective_type?: string; budget?: number };
+    type C = { campaign_id: string; campaign_name?: string; operation_status?: string; objective_type?: string; budget?: number; budget_mode?: string; budget_optimize_on?: boolean; campaign_type?: string };
     for (const c of await this.paged<C>(`/campaign/get/?${adv}`, token)) {
+      // The campaign owns the budget only with budget optimisation on (TikTok's CBO).
+      const owns = !!c.budget_optimize_on && c.budget_mode !== 'BUDGET_MODE_INFINITE';
       out.push({ level: 'campaign', externalId: String(c.campaign_id), parentExternalId: null, campaignId: String(c.campaign_id),
-        name: c.campaign_name ?? null, status: ttStatus(c.operation_status), configuredStatus: ttStatus(c.operation_status), objective: c.objective_type ?? null,
-        dailyBudget: c.budget ?? null, creativeThumbUrl: null, destinationUrl: null });
+        name: c.campaign_name ?? null, status: ttStatus(c.operation_status), configuredStatus: ttStatus(c.operation_status),
+        objective: c.campaign_type && c.campaign_type !== 'REGULAR_CAMPAIGN' ? `${c.objective_type ?? ''} ${c.campaign_type}`.trim() : c.objective_type ?? null,
+        dailyBudget: owns && c.budget_mode === 'BUDGET_MODE_DAY' ? c.budget ?? null : null,
+        lifetimeBudget: owns && c.budget_mode === 'BUDGET_MODE_TOTAL' ? c.budget ?? null : null,
+        creativeThumbUrl: null, destinationUrl: null });
     }
-    type G = { adgroup_id: string; adgroup_name?: string; campaign_id?: string; operation_status?: string; budget?: number };
+    type G = {
+      adgroup_id: string; adgroup_name?: string; campaign_id?: string; operation_status?: string; budget?: number; budget_mode?: string;
+      bid_type?: string; bid_price?: number; conversion_bid_price?: number; deep_bid_type?: string; roas_bid?: number;
+      optimization_goal?: string; optimization_event?: string; schedule_start_time?: string; schedule_end_time?: string; schedule_type?: string;
+    };
     for (const g of await this.paged<G>(`/adgroup/get/?${adv}`, token)) {
+      const bid = ttBid(g);
+      const hasBudget = g.budget_mode && g.budget_mode !== 'BUDGET_MODE_INFINITE' && (g.budget ?? 0) > 0;
       out.push({ level: 'adset', externalId: String(g.adgroup_id), parentExternalId: g.campaign_id ? String(g.campaign_id) : null,
         campaignId: g.campaign_id ? String(g.campaign_id) : null, name: g.adgroup_name ?? null, status: ttStatus(g.operation_status), configuredStatus: ttStatus(g.operation_status),
-        objective: null, dailyBudget: g.budget ?? null, creativeThumbUrl: null, destinationUrl: null });
+        objective: null,
+        dailyBudget: hasBudget && g.budget_mode === 'BUDGET_MODE_DAY' ? g.budget ?? null : null,
+        lifetimeBudget: hasBudget && g.budget_mode === 'BUDGET_MODE_TOTAL' ? g.budget ?? null : null,
+        ...bid,
+        optimizationGoal: ttGoal(g.optimization_goal), conversionEvent: g.optimization_event ?? null,
+        startTime: ttIso(g.schedule_start_time), endTime: g.schedule_type === 'SCHEDULE_START_END' ? ttIso(g.schedule_end_time) : null,
+        creativeThumbUrl: null, destinationUrl: null });
     }
-    type A = { ad_id: string; ad_name?: string; adgroup_id?: string; campaign_id?: string; operation_status?: string; landing_page_url?: string };
-    for (const a of await this.paged<A>(`/ad/get/?${adv}`, token)) {
+    type A = { ad_id: string; ad_name?: string; adgroup_id?: string; campaign_id?: string; operation_status?: string; landing_page_url?: string; video_id?: string; image_ids?: string[] };
+    const ads = await this.paged<A>(`/ad/get/?${adv}`, token);
+    const covers = await this.videoCovers(token, externalId, ads.map((a) => a.video_id).filter((v): v is string => !!v));
+    for (const a of ads) {
       out.push({ level: 'ad', externalId: String(a.ad_id), parentExternalId: a.adgroup_id ? String(a.adgroup_id) : null,
         campaignId: a.campaign_id ? String(a.campaign_id) : null, name: a.ad_name ?? null, status: ttStatus(a.operation_status), configuredStatus: ttStatus(a.operation_status),
-        objective: null, dailyBudget: null, creativeThumbUrl: null, destinationUrl: a.landing_page_url ?? null });
+        objective: null, dailyBudget: null, creativeThumbUrl: a.video_id ? covers.get(a.video_id) ?? null : null, destinationUrl: a.landing_page_url ?? null });
+    }
+    return out;
+  }
+
+  /** video_id → cover url (best-effort, 60 ids per call). */
+  private async videoCovers(token: string, externalId: string, ids: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    const uniq = [...new Set(ids)];
+    for (let i = 0; i < uniq.length && i < 600; i += 60) {
+      try {
+        const part = uniq.slice(i, i + 60);
+        const data = await this.call<{ list?: Array<{ video_id?: string; video_cover_url?: string; poster_url?: string }> }>(
+          `/file/video/ad/info/?advertiser_id=${encodeURIComponent(externalId)}&video_ids=${encodeURIComponent(JSON.stringify(part))}`,
+          token,
+        );
+        for (const v of data?.list ?? []) {
+          const url = v.video_cover_url ?? v.poster_url;
+          if (v.video_id && url) out.set(v.video_id, url);
+        }
+      } catch {
+        break;
+      }
     }
     return out;
   }
@@ -137,7 +202,7 @@ export class TikTokAdsAdapter implements AdPlatformAdapter {
         const id = r[idKey];
         if (!id) continue;
         const st = ttStatus(r.operation_status);
-        out.push({ level, externalId: String(id), status: st, configuredStatus: st, endTime: r.schedule_end_time ?? null });
+        out.push({ level, externalId: String(id), status: st, configuredStatus: st, endTime: ttIso(r.schedule_end_time) });
       }
     }
     return out;

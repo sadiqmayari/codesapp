@@ -8,7 +8,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { GrowthService } from './growth.service';
 import { AdManageService, ChangeInput } from './services/ad-manage.service';
 import { AdCreateService, UploadedMedia } from './services/ad-create.service';
-import { CreateDraft } from './platforms/ad-writer.types';
+import { AnyCreateDraft } from './platforms/ad-writer.types';
 import {
   CitySearchDto,
   CreateAccountDto,
@@ -22,7 +22,22 @@ import {
   TargetQueryDto,
 } from './dtos/ad-manage.dto';
 import { GrowthTargetService } from './services/growth-target.service';
-import { AskGrowthDto, ConnectAdAccountDto, GrowthRangeDto, GrowthStoreDto, TikTokConnectDto, TikTokExchangeDto, UpdateAdAccountDto } from './dtos/growth.dto';
+import {
+  AskGrowthDto,
+  ConnectAdAccountDto,
+  GoogleAuthUrlDto,
+  GoogleConnectDto,
+  GoogleExchangeDto,
+  GrowthRangeDto,
+  GrowthStoreDto,
+  TikTokConnectDto,
+  TikTokExchangeDto,
+  UpdateAdAccountDto,
+  YoutubeConnectDto,
+  YoutubeOverviewDto,
+} from './dtos/growth.dto';
+import { GoogleOAuthService } from './platforms/google/google-oauth.service';
+import { YoutubeService } from './services/youtube.service';
 import { TikTokOAuthService } from './platforms/tiktok/tiktok-oauth.service';
 import { ModuleGuard } from '../../common/guards/module.guard';
 import { RequireModule } from '../../common/decorators/require-module.decorator';
@@ -46,6 +61,8 @@ export class GrowthController {
     private readonly creator: AdCreateService,
     private readonly targets: GrowthTargetService,
     private readonly tiktok: TikTokOAuthService,
+    private readonly google: GoogleOAuthService,
+    private readonly youtube: YoutubeService,
   ) {}
 
   // ── Monthly net sales target + coach ───────────────────────────────────────
@@ -144,6 +161,48 @@ export class GrowthController {
   @Post('tiktok/oauth/connect')
   tiktokConnect(@CurrentUser() u: U, @Body() dto: TikTokConnectDto) {
     return this.growth.connectTikTok(u.companyId, dto);
+  }
+
+  // ── Google "Connect with Google" (Ads accounts + YouTube channels) ─────────
+  @Post('google/oauth/url')
+  googleAuthUrl(@CurrentUser() u: U, @Body() dto: GoogleAuthUrlDto) {
+    return this.google.authUrl(u.companyId, u.userId, dto.purpose);
+  }
+
+  @Post('google/oauth/exchange')
+  googleExchange(@CurrentUser() u: U, @Body() dto: GoogleExchangeDto) {
+    return this.google.exchange(u.companyId, u.userId, dto.code, dto.state);
+  }
+
+  @Post('google/oauth/connect')
+  googleConnect(@CurrentUser() u: U, @Body() dto: GoogleConnectDto) {
+    return this.growth.connectGoogle(u.companyId, dto);
+  }
+
+  // ── YouTube channels (stats, link to Ads, uploads for video ads) ───────────
+  @Post('youtube/connect')
+  youtubeConnect(@CurrentUser() u: U, @Body() dto: YoutubeConnectDto) {
+    return this.youtube.connect(u.companyId, dto.pickId, dto.channelIds);
+  }
+
+  @Get('youtube/channels')
+  youtubeChannels(@CurrentUser() u: U) {
+    return this.youtube.list(u.companyId);
+  }
+
+  @Delete('youtube/channels/:id')
+  youtubeDisconnect(@CurrentUser() u: U, @Param('id', ParseIntPipe) id: number) {
+    return this.youtube.disconnect(u.companyId, id);
+  }
+
+  @Post('youtube/sync')
+  youtubeSync(@CurrentUser() u: U) {
+    return this.youtube.requestForCompany(u.companyId);
+  }
+
+  @Get('youtube/overview')
+  youtubeOverview(@CurrentUser() u: U, @Query() q: YoutubeOverviewDto) {
+    return this.youtube.overview(u.companyId, q);
   }
 
   @Patch('accounts/:id')
@@ -266,6 +325,6 @@ export class GrowthController {
   @Post('create')
   @RequireModule('growth_publish')
   createCampaign(@CurrentUser() u: U, @Body() dto: CreateCampaignDto) {
-    return this.creator.create({ companyId: u.companyId, userId: u.userId }, dto.accountId, dto.draft as unknown as CreateDraft);
+    return this.creator.create({ companyId: u.companyId, userId: u.userId }, dto.accountId, dto.draft as unknown as AnyCreateDraft);
   }
 }

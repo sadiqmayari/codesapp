@@ -113,6 +113,68 @@ export interface CreateAssets {
   whatsappNumbers: Array<{ id: number; number: string | null; label: string | null; primary: boolean }>;
   benchmarks: Benchmarks;
   riskyCities: Array<{ key: string; name: string; rate: number; lostMonthly: number }>;
+  /** Google: enabled conversion actions (purchase first). */
+  conversionActions?: Array<{ id: string; name: string; category: string | null; primary: boolean }>;
+  /** Google: videos of the connected YouTube channels. */
+  youtubeVideos?: Array<{ id: string; title: string | null; thumb: string | null }>;
+  /** TikTok: identities + library videos. */
+  identities?: Array<{ id: string; type: string; name: string | null; avatar: string | null }>;
+  videos?: Array<{ id: string; name: string | null; cover: string | null; durationS: number | null }>;
+}
+
+export type DraftBid = 'LOWEST_COST_WITHOUT_CAP' | 'COST_CAP' | 'LOWEST_COST_WITH_MIN_ROAS';
+
+export interface GoogleCreateDraft {
+  platform: 'google';
+  type: 'search' | 'pmax' | 'video';
+  name: string;
+  budget: number;
+  bidStrategy: DraftBid;
+  bidFamily: 'conversions' | 'value';
+  bidAmount?: number | null;
+  roasFloor?: number | null;
+  countries: string[];
+  excludeCities: Array<{ key: string; name: string }>;
+  languages: string[];
+  startTime?: string | null;
+  endTime?: string | null;
+  url: string;
+  businessName?: string | null;
+  headlines: string[];
+  longHeadlines?: string[];
+  descriptions: string[];
+  keywords?: Array<{ text: string; match: 'BROAD' | 'PHRASE' | 'EXACT' }>;
+  landscapeImages?: string[];
+  squareImages?: string[];
+  logoImages?: string[];
+  youtubeVideoIds?: string[];
+}
+
+export interface TikTokCreateDraft {
+  platform: 'tiktok';
+  objective: 'WEB_CONVERSIONS' | 'TRAFFIC' | 'VIDEO_VIEWS';
+  name: string;
+  cbo: boolean;
+  budgetType: 'daily' | 'lifetime';
+  budget: number;
+  bidStrategy: DraftBid;
+  bidAmount?: number | null;
+  roasFloor?: number | null;
+  pixelId?: string | null;
+  conversionEvent?: string | null;
+  locationIds: string[];
+  excludeLocationIds?: string[];
+  ageGroups: string[];
+  gender: 'GENDER_UNLIMITED' | 'GENDER_MALE' | 'GENDER_FEMALE';
+  startTime?: string | null;
+  endTime?: string | null;
+  identityId?: string | null;
+  identityType?: string | null;
+  displayName?: string | null;
+  videoId: string;
+  adText: string;
+  cta: string;
+  url: string;
 }
 
 export interface CreateDraft {
@@ -218,7 +280,7 @@ export const growthManageApi = {
   },
   getDraft: () => apiFetch<{ payload: { accountId?: number; draft?: Partial<CreateDraft> }; updatedAt: string } | null>('/growth/create/draft'),
   saveDraft: (payload: Record<string, unknown> | null) => apiFetch('/growth/create/draft', { method: 'PUT', body: { payload } }),
-  create: (accountId: number, draft: CreateDraft) =>
+  create: (accountId: number, draft: CreateDraft | GoogleCreateDraft | TikTokCreateDraft) =>
     apiFetch<{ ok: boolean; campaignId?: string; adsetId?: string; creativeId?: string; adId?: string; logId: number }>('/growth/create', {
       method: 'POST',
       body: { accountId, draft },

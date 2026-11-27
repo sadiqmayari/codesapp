@@ -463,6 +463,7 @@ export class AdSyncService implements OnModuleInit, OnModuleDestroy {
             attribution_spec: (e.attributionSpec ?? undefined) as Prisma.InputJsonValue | undefined,
             start_time: when(e.startTime),
             end_time: when(e.endTime),
+            youtube_video_id: e.youtubeVideoId?.slice(0, 16) ?? null,
             updated_at: new Date(),
           };
           return this.prisma.adEntity.upsert({

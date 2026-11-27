@@ -327,6 +327,72 @@ const qs = (q: GrowthQuery) => {
 
 type Opt = { signal?: AbortSignal };
 
+export interface GoogleAdsPickRow {
+  customerId: string;
+  name: string | null;
+  currency: string | null;
+  timezone: string | null;
+  loginCustomerId: string | null;
+  managerName: string | null;
+  isManager: boolean;
+  testAccount: boolean;
+}
+
+export interface YoutubePickChannel {
+  id: string;
+  title: string | null;
+  handle: string | null;
+  thumb: string | null;
+  subscribers: number;
+  videos: number;
+}
+
+export interface GoogleExchange {
+  pickId: string;
+  purpose: 'ads' | 'youtube';
+  email: string | null;
+  accounts: GoogleAdsPickRow[];
+  channels: YoutubePickChannel[];
+}
+
+export interface YoutubeChannelRow {
+  id: number;
+  channelId: string;
+  title: string | null;
+  handle: string | null;
+  thumb: string | null;
+  status: string;
+  subscribers: number;
+  views: number;
+  videos: number;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+  connectedAt: string;
+  videosInAds: number;
+  adAccounts: Array<{ accountId: number; name: string | null; ads: number; videos: number }>;
+}
+
+export interface YoutubeChannels {
+  available: boolean;
+  channels: YoutubeChannelRow[];
+  unconnectedAdVideos: number;
+}
+
+export interface YoutubeOverview {
+  from: string;
+  to: string;
+  channels: Array<{ id: number; title: string | null; handle: string | null; subscribers: number; views: number; videos: number; thumb: string | null }>;
+  organic: { views: number; watchHours: number; subsNet: number; likes: number; comments: number };
+  organicPrev: { views: number; watchHours: number; subsNet: number; likes: number; comments: number };
+  ads: { spend: number; impressions: number; views: number; purchases: number; videos: number; cpv: number | null; viewRate: number | null };
+  adsPrev: { spend: number; impressions: number; views: number; purchases: number; videos: number; cpv: number | null; viewRate: number | null };
+  trend: Array<{ date: string; organic: number; ads: number; adSpend: number }>;
+  topVideos: Array<{
+    videoId: string; title: string | null; thumb: string | null; publishedAt: string | null; views: number; likes: number; comments: number;
+    usedInAds: boolean; ads: number; adSpend: number; adViews: number; viewRate: number | null; cpv: number | null; purchases: number; net: number;
+  }>;
+}
+
 export const growthApi = {
   catalog: () => apiFetch<Catalog>('/growth/catalog'),
   status: () => apiFetch<GrowthStatus>('/growth/status'),
@@ -355,6 +421,19 @@ export const growthApi = {
     apiFetch<{ pickId: string; advertisers: Array<{ id: string; name: string | null }> }>('/growth/tiktok/oauth/exchange', { method: 'POST', body: { authCode, state } }),
   tiktokConnect: (body: { pickId: string; advertiserIds: string[]; storeId?: number | null }) =>
     apiFetch<{ connected: number; failed: Array<{ advertiserId: string; error: string }> }>('/growth/tiktok/oauth/connect', { method: 'POST', body }),
+  googleAuthUrl: (purpose: 'ads' | 'youtube') =>
+    apiFetch<{ url: string; redirectUri: string }>('/growth/google/oauth/url', { method: 'POST', body: { purpose } }),
+  googleExchange: (code: string, state: string) =>
+    apiFetch<GoogleExchange>('/growth/google/oauth/exchange', { method: 'POST', body: { code, state } }),
+  googleConnect: (body: { pickId: string; customerIds: string[]; storeId?: number | null }) =>
+    apiFetch<{ connected: number; failed: Array<{ customerId: string; error: string }> }>('/growth/google/oauth/connect', { method: 'POST', body }),
+  youtubeConnect: (body: { pickId: string; channelIds: string[] }) =>
+    apiFetch<{ connected: number; failed: Array<{ channelId: string; error: string }> }>('/growth/youtube/connect', { method: 'POST', body }),
+  youtubeChannels: () => apiFetch<YoutubeChannels>('/growth/youtube/channels'),
+  youtubeDisconnect: (id: number) => apiFetch('/growth/youtube/channels/' + id, { method: 'DELETE' }),
+  youtubeSync: () => apiFetch<{ started: number }>('/growth/youtube/sync', { method: 'POST' }),
+  youtubeOverview: (q: { from: string; to: string; channelId?: number | null }, o: Opt = {}) =>
+    apiFetch<YoutubeOverview>('/growth/youtube/overview', { params: { from: q.from, to: q.to, ...(q.channelId ? { channelId: String(q.channelId) } : {}) }, ...o }),
   syncAccount: (id: number) => apiFetch('/growth/accounts/' + id + '/sync', { method: 'POST' }),
   syncToday: () => apiFetch<{ started: number; accounts: number }>('/growth/sync/today', { method: 'POST' }),
   syncAll: () => apiFetch<{ started: true; accounts: number }>('/growth/sync', { method: 'POST' }),

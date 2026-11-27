@@ -180,7 +180,7 @@ function ReviewModal({ onClose }: { onClose: () => void }) {
       const okN = r.results.filter((x) => x.ok).length;
       if (r.ok) {
         clear();
-        toast.success(`Published ${okN} change${okN === 1 ? '' : 's'} to Meta`);
+        toast.success(`Published ${okN} change${okN === 1 ? '' : 's'}`);
       } else {
         // Keep only the failed ones staged so they can be fixed and retried.
         const failed = new Set(r.results.filter((x) => !x.ok).map((x) => x.entityId));
@@ -234,7 +234,7 @@ function ReviewModal({ onClose }: { onClose: () => void }) {
             </li>
           ))}
         </ul>
-        <p className="mt-3 text-xs text-muted">Meta can take a minute to reflect a change. Every change is in Growth → Activity.</p>
+        <p className="mt-3 text-xs text-muted">The ad platform can take a minute to reflect a change. Every change is in Growth → Activity.</p>
       </Modal>
     );
   }
@@ -257,14 +257,14 @@ function ReviewModal({ onClose }: { onClose: () => void }) {
             <button type="button" onClick={onClose} className="rounded-lg px-3 py-2 text-sm font-semibold text-muted hover:text-ink">Keep editing</button>
             <button type="button" onClick={publish} disabled={busy || !preview || blocked || (turnsOn && !confirmLive)}
               className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">
-              {busy && <Loader2 size={15} className="animate-spin" />} Publish to Meta
+              {busy && <Loader2 size={15} className="animate-spin" />} Publish
             </button>
           </div>
         </div>
       }>
       {err && <div className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{err}</div>}
       {!preview && !err && (
-        <div className="flex items-center gap-2 py-10 text-sm text-muted"><Loader2 size={16} className="animate-spin" /> Checking each change against Meta’s rules…</div>
+        <div className="flex items-center gap-2 py-10 text-sm text-muted"><Loader2 size={16} className="animate-spin" /> Checking each change against the platform’s rules…</div>
       )}
       <div className="mb-3 flex flex-wrap gap-1.5">
         {items.map((i) => (

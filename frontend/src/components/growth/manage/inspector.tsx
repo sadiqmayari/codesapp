@@ -28,6 +28,32 @@ import {
 import { useStaged } from './staged';
 
 const STRATEGIES: BidStrategy[] = ['LOWEST_COST_WITHOUT_CAP', 'COST_CAP', 'LOWEST_COST_WITH_MIN_ROAS', 'LOWEST_COST_WITH_BID_CAP'];
+
+/** What each platform calls the normalised strategies (Google has no bid cap). */
+function strategyCopy(platform: string, valueFamily: boolean): { list: BidStrategy[]; label: Record<BidStrategy, string>; hint: Record<BidStrategy, string> } {
+  if (platform === 'google') {
+    return {
+      list: ['LOWEST_COST_WITHOUT_CAP', 'COST_CAP', 'LOWEST_COST_WITH_MIN_ROAS'],
+      label: { ...BID_LABEL, LOWEST_COST_WITHOUT_CAP: valueFamily ? 'Maximize conversion value' : 'Maximize conversions', COST_CAP: 'Target CPA', LOWEST_COST_WITH_MIN_ROAS: 'Target ROAS' },
+      hint: {
+        ...BID_HINT,
+        LOWEST_COST_WITHOUT_CAP: 'Google spends the budget to get the most conversions (or value). Best while learning.',
+        COST_CAP: 'Maximize conversions while keeping the average cost per conversion near a target.',
+        LOWEST_COST_WITH_MIN_ROAS: 'Maximize conversion value while aiming for a return on ad spend.',
+      },
+    };
+  }
+  if (platform === 'tiktok') {
+    return {
+      list: STRATEGIES,
+      label: { ...BID_LABEL, LOWEST_COST_WITHOUT_CAP: 'Maximum delivery', COST_CAP: 'Cost cap', LOWEST_COST_WITH_MIN_ROAS: 'Minimum ROAS', LOWEST_COST_WITH_BID_CAP: 'Bid cap' },
+      hint: { ...BID_HINT, LOWEST_COST_WITH_MIN_ROAS: 'Keep return on ad spend above a floor (value optimisation).' },
+    };
+  }
+  return { list: STRATEGIES, label: BID_LABEL, hint: BID_HINT };
+}
+
+const PLATFORM_NAME: Record<string, string> = { meta: 'Meta', google: 'Google Ads', tiktok: 'TikTok' };
 const GOALS: OptimizationGoal[] = ['OFFSITE_CONVERSIONS', 'VALUE', 'CONVERSATIONS', 'LANDING_PAGE_VIEWS', 'LINK_CLICKS'];
 const WINDOWS: AttributionWindow[] = ['7d_click_1d_view', '7d_click', '1d_click'];
 
@@ -84,8 +110,16 @@ export function Inspector({ node, breakEven, canEdit, onClose }: { node: Campaig
   }, [onClose]);
 
   const fmt = (v: number | null | undefined) => money(v ?? null, currency, mode);
+  const platform = s?.platform ?? node.platform ?? 'meta';
+  const pname = PLATFORM_NAME[platform] ?? platform;
+  const isMeta = platform === 'meta';
   const owns = s?.budgetOwner === node.level && node.level !== 'ad';
   const isSet = node.level === 'adset';
+  // Where the bid lives: Meta = with the budget, Google = campaign, TikTok = ad group.
+  const bidHere = isMeta ? owns : platform === 'google' ? node.level === 'campaign' : node.level === 'adset';
+  const endHere = isMeta ? node.level !== 'ad' : platform === 'google' ? node.level === 'campaign' : node.level === 'adset';
+  const copy = strategyCopy(platform, s?.snapshot.optimizationGoal === 'VALUE');
+  const canCopy = !(node.level === 'ad' && !isMeta) && !(platform === 'google' && node.level === 'campaign' && s?.objective != null && !/^(SEARCH|DISPLAY)$/.test(s.objective));
   const wa = s?.destinationType === 'WHATSAPP';
   // Meta reports PLACED-order value; translate the delivered break-even into Meta's terms.
   const placedFactor = node.platformRoas && node.expRoas ? node.platformRoas / node.expRoas : null;
@@ -104,7 +138,7 @@ export function Inspector({ node, breakEven, canEdit, onClose }: { node: Campaig
 
   const issues: string[] = [];
   if (form.bidStrategy === 'LOWEST_COST_WITH_MIN_ROAS') {
-    const goals = isSet ? [form.optimizationGoal] : s?.childGoals.map((c) => c.optimizationGoal) ?? [];
+    const goals = !isMeta ? [] : isSet ? [form.optimizationGoal] : s?.childGoals.map((c) => c.optimizationGoal) ?? [];
     if (goals.some((g) => g !== 'VALUE')) issues.push(isSet ? 'A ROAS goal needs “Maximise value of conversions”.' : 'Every ad set must optimise for value of conversions to use a ROAS goal.');
     if (!(Number(form.roasFloor) > 0)) issues.push('Enter the ROAS goal.');
   }
@@ -146,8 +180,8 @@ export function Inspector({ node, breakEven, canEdit, onClose }: { node: Campaig
     return (
       <button key={b} type="button" disabled={!canEdit} onClick={() => setForm((f) => ({ ...f, bidStrategy: b }))} aria-pressed={active}
         className={cn('rounded-xl border p-3 text-left transition', active ? 'border-violet-400 bg-violet-50/70 ring-1 ring-violet-300 dark:border-violet-600 dark:bg-violet-950/30 dark:ring-violet-700' : 'border-line hover:bg-sunken')}>
-        <div className="text-sm font-bold text-ink">{BID_LABEL[b]}</div>
-        <div className="mt-0.5 text-xs leading-snug text-muted">{BID_HINT[b]}</div>
+        <div className="text-sm font-bold text-ink">{copy.label[b]}</div>
+        <div className="mt-0.5 text-xs leading-snug text-muted">{copy.hint[b]}</div>
       </button>
     );
   };
@@ -159,7 +193,7 @@ export function Inspector({ node, breakEven, canEdit, onClose }: { node: Campaig
         <header className="border-b border-line px-5 pb-3 pt-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-xs font-bold uppercase tracking-wide text-muted">{node.level === 'adset' ? 'Ad set' : node.level}</div>
+              <div className="text-xs font-bold uppercase tracking-wide text-muted">{pname} · {node.level === 'adset' ? (isMeta ? 'Ad set' : 'Ad group') : node.level}</div>
               <h2 className="mt-0.5 truncate text-lg font-extrabold text-ink" title={node.name}>{node.name}</h2>
             </div>
             <button type="button" onClick={onClose} aria-label="Close" className="rounded-lg p-1.5 text-muted hover:bg-sunken hover:text-ink"><X size={18} /></button>
@@ -167,7 +201,7 @@ export function Inspector({ node, breakEven, canEdit, onClose }: { node: Campaig
           <div className="mt-3 grid grid-cols-4 gap-2 text-center">
             {[
               ['Spend', fmt(node.spend)],
-              ['Meta ROAS', ratio(node.platformRoas)],
+              [`${isMeta ? 'Meta' : platform === 'google' ? 'Google' : 'TikTok'} ROAS`, ratio(node.platformRoas)],
               ['Expected', ratio(node.expRoas)],
               ['Orders', String(Math.round(node.orders))],
             ].map(([l, v]) => (
@@ -199,7 +233,7 @@ export function Inspector({ node, breakEven, canEdit, onClose }: { node: Campaig
 
               {node.level !== 'ad' && (
                 <Field label="Budget"
-                  hint={owns ? 'Edit the amount in the table, or below.' : node.level === 'adset' ? 'This campaign uses Advantage+ campaign budget — the budget is on the campaign.' : 'Budgets are set on each ad set.'}>
+                  hint={owns ? 'Edit the amount in the table, or below.' : node.level === 'adset' ? (isMeta ? 'This campaign uses Advantage+ campaign budget — the budget is on the campaign.' : 'The budget is set on the campaign.') : isMeta ? 'Budgets are set on each ad set.' : 'Budgets are set on each ad group.'}>
                   {owns ? (
                     <div className="flex items-center gap-2">
                       <input className={inputCls} inputMode="decimal" disabled={!canEdit}
@@ -211,14 +245,14 @@ export function Inspector({ node, breakEven, canEdit, onClose }: { node: Campaig
                       <span className="whitespace-nowrap text-xs font-semibold text-muted">{currency} {s.budgetType === 'lifetime' ? 'total' : '/ day'}</span>
                     </div>
                   ) : (
-                    <div className="rounded-lg border border-dashed border-line px-3 py-2 text-sm text-muted">{node.level === 'adset' ? 'Campaign budget' : 'Ad set budgets'}</div>
+                    <div className="rounded-lg border border-dashed border-line px-3 py-2 text-sm text-muted">{node.level === 'adset' ? 'Campaign budget' : isMeta ? 'Ad set budgets' : 'Ad group budgets'}</div>
                   )}
                 </Field>
               )}
 
-              {owns && (
+              {bidHere && (
                 <Field label="Bid strategy">
-                  <div className="grid grid-cols-2 gap-2">{STRATEGIES.map(strategyCard)}</div>
+                  <div className="grid grid-cols-2 gap-2">{copy.list.map(strategyCard)}</div>
                   {(form.bidStrategy === 'COST_CAP' || form.bidStrategy === 'LOWEST_COST_WITH_BID_CAP') && (
                     <div className="mt-3">
                       <div className="flex items-center gap-2">
@@ -228,13 +262,13 @@ export function Inspector({ node, breakEven, canEdit, onClose }: { node: Campaig
                       </div>
                       {s.stats.platformCpa != null && (
                         <p className="mt-1.5 text-xs text-muted">
-                          Recent cost per purchase in Meta: <b className="text-ink">{fmt(s.stats.platformCpa)}</b>.
+                          Recent cost per purchase in {pname}: <b className="text-ink">{fmt(s.stats.platformCpa)}</b>.
                           {form.bidAmount != null && form.bidAmount < s.stats.platformCpa * 0.8 && (
                             <span className="ml-1 font-semibold text-amber-700 dark:text-amber-300">A goal this low will limit delivery; ~{fmt(s.stats.platformCpa * 0.95)} is realistic.</span>
                           )}
                         </p>
                       )}
-                      {node.level === 'campaign' && <p className="mt-1 text-xs text-muted">With a campaign budget, Meta stores this amount on each ad set. CodesApp sets it on all {s.childGoals.length}.</p>}
+                      {isMeta && node.level === 'campaign' && <p className="mt-1 text-xs text-muted">With a campaign budget, Meta stores this amount on each ad set. CodesApp sets it on all {s.childGoals.length}.</p>}
                     </div>
                   )}
                   {form.bidStrategy === 'LOWEST_COST_WITH_MIN_ROAS' && (
@@ -248,8 +282,8 @@ export function Inspector({ node, breakEven, canEdit, onClose }: { node: Campaig
                         <div className="mt-2 rounded-lg border border-violet-200 bg-violet-50/60 px-3 py-2 text-xs text-violet-900 dark:border-violet-800 dark:bg-violet-950/30 dark:text-violet-100">
                           <div className="flex items-center gap-1.5 font-bold"><Sparkles size={13} /> CodesApp insight</div>
                           <p className="mt-1 leading-relaxed">
-                            Your break-even on <b>delivered</b> orders is {ratio(breakEven)}. Meta counts <b>placed</b> orders, about {placedFactor!.toFixed(2)}× more,
-                            so break-even in Meta’s terms is <b>{ratio(metaBreakEven)}</b>.
+                            Your break-even on <b>delivered</b> orders is {ratio(breakEven)}. {pname} counts <b>placed</b> orders, about {placedFactor!.toFixed(2)}× more,
+                            so break-even in {pname}’s terms is <b>{ratio(metaBreakEven)}</b>.
                           </p>
                           <button type="button" className="mt-1.5 font-bold underline" onClick={() => setForm((f) => ({ ...f, roasFloor: Math.round(metaBreakEven * 1.1 * 100) / 100 }))}>
                             Use {ratio(metaBreakEven * 1.1)} (break-even + 10%)
@@ -261,7 +295,7 @@ export function Inspector({ node, breakEven, canEdit, onClose }: { node: Campaig
                 </Field>
               )}
 
-              {isSet && (
+              {isSet && isMeta && (
                 <>
                   <Field label="Performance goal" hint={form.optimizationGoal === 'VALUE' ? 'Meta looks for the buyers who spend the most — needs purchase values on your pixel.' : undefined}>
                     <select className={inputCls} disabled={!canEdit} value={form.optimizationGoal ?? ''} onChange={(e) => setForm((f) => ({ ...f, optimizationGoal: e.target.value as OptimizationGoal }))}>
@@ -291,7 +325,7 @@ export function Inspector({ node, breakEven, canEdit, onClose }: { node: Campaig
                 </>
               )}
 
-              {node.level !== 'ad' && (
+              {endHere && (
                 <Field label="End date" hint={s.budgetType === 'lifetime' ? 'A lifetime budget needs an end date.' : 'Optional.'}>
                   <input type="date" className={inputCls} disabled={!canEdit} value={form.endTime ? form.endTime.slice(0, 10) : ''}
                     onChange={(e) => setForm((f) => ({ ...f, endTime: e.target.value ? `${e.target.value}T23:59:00Z` : null }))} />
@@ -309,7 +343,7 @@ export function Inspector({ node, breakEven, canEdit, onClose }: { node: Campaig
                 </div>
               )}
               {!canEdit && (
-                <p className="flex items-start gap-1.5 text-xs text-muted"><Info size={13} className="mt-px shrink-0" /> Read-only: the ad account token needs the ads_management permission. See Connections.</p>
+                <p className="flex items-start gap-1.5 text-xs text-muted"><Info size={13} className="mt-px shrink-0" /> Read-only: {isMeta ? 'the ad account token needs the ads_management permission' : `CodesApp can't edit this ${pname} account yet`}. See Connections.</p>
               )}
             </div>
           )}
@@ -344,7 +378,7 @@ export function Inspector({ node, breakEven, canEdit, onClose }: { node: Campaig
 
         {tab === 'settings' && (
           <footer className="flex items-center justify-between gap-2 border-t border-line px-5 py-3">
-            <button type="button" onClick={duplicate} disabled={!canEdit || busy}
+            <button type="button" onClick={duplicate} disabled={!canEdit || busy || !canCopy} title={canCopy ? undefined : `${pname} can't duplicate this from CodesApp`}
               className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink hover:bg-sunken disabled:opacity-50">
               {busy ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />} Duplicate (paused)
             </button>

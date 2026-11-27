@@ -1131,3 +1131,9 @@ The old `/ad-report` had these defects; each is fixed by the Growth module (see 
 - **Causes (three):** (1) a fulfilment cancelled in Shopify flips the shipment to `cancelled` but kept its tracking number; on re-book `claimShipmentTx` reused the row and the booking job skipped the courier call because a tracking number existed — the OLD consignment shipped. (2) The REST webhook mapper and the GraphQL import/reconcile used each line's original `quantity` (and `total_price`), so after an edit they wrote the pre-edit cart back into the mirror; booking reads COD + items from the mirror. (3) Address edits had no booked-shipment guard, so an address changed after booking never reached the courier.
 - **Fix:** shared `common/utils/order-lines.ts` (current quantities, removed lines dropped, current money for open orders) in every mirror writer; booking takes items + COD from live Shopify (`getOrderForBooking`, gid-checked) and heals the mirror; re-booking a cancelled row clears its courier leg (and best-effort cancels the old consignment); items AND address are locked once a courier holds the parcel (address-issue rows stay editable). Orders already booked with stale data must be cancelled and re-booked.
 
+
+
+## [Google] Google syncs stop after exactly 7 days ("invalid_grant") (known gotcha, 2026-11-27)
+- **Symptom:** Google Ads / YouTube connections work, then a week later every sync fails with "Google sign-in was revoked or expired" (`invalid_grant`).
+- **Cause:** the Google Cloud OAuth consent screen is in **Testing**. Refresh tokens for sensitive scopes (`adwords`, `youtube.force-ssl`) issued to a Testing app expire after 7 days.
+- **Fix:** OAuth consent screen → Publish app (Production). Then reconnect each account once (old tokens stay dead). Verification is separate: until Google verifies the app, users see an "unverified app" warning (100-user cap), but tokens no longer expire.

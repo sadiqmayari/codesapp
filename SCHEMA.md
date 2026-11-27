@@ -869,5 +869,14 @@ Supersedes the Meta Ads / Ad Report tables above: **`ad_spend_daily`, `ad_campai
 - `suppliers`, `purchase_orders`, `purchase_order_lines`, `goods_receipts`, `goods_receipt_lines`, `stock_counts`, `stock_count_lines`, `stock_transfers`, `stock_transfer_lines`, `inventory_cost_history`, `stock_waitlist`, `product_publish_jobs`.
 - `companies.inventory_settings` (JSON, resolveInventorySettings) + `inventory_v2_at`.
 
+## Google Ads + YouTube (migration 20261129000000_google_youtube · Nov-2026)
+Additive, real Prisma migration (auto-applies on container start).
+- `ad_entities.youtube_video_id VARCHAR(16) NULL` — the YouTube video a Google ad plays (filled by the Google sync).
+- `youtube_channels` — one row per connected channel: `company_id, channel_id (UC…), title, handle, thumb_url, uploads_playlist_id, token_encrypted (channel owner's Google refresh token, AES-GCM), status, subscribers, views BIGINT, videos, last_attempt_at, last_success_at, last_error, connected_at, updated_at`; unique `(company_id, channel_id)`.
+- `youtube_channel_daily` — `company_id, channel_id (→ youtube_channels.id), date, views, watch_minutes, subs_gained, subs_lost, likes, comments, shares`; unique `(channel_id, date)`.
+- `youtube_videos` — `company_id, channel_id (→ youtube_channels.id), video_id, title, thumb_url, published_at, duration_s, privacy, views BIGINT, likes, comments, used_in_ads, updated_at`; unique `(company_id, video_id)`.
+- `ad_accounts.token_encrypted` for `platform='google'` now holds JSON `{r, l, c}` (refresh token, login/manager customer id, customer id); no column change.
+- `social_comments` rows with `platform='youtube'` use `account_id` = `youtube_channels.id`, `post_id` = video id.
+
 ## social_comments (migration 20261128000000_social_comments · Nov-2026)
 - One row per ad/social comment (TikTok ad comments first). `platform`, `source` (ad|organic), `account_id` (→ ad_accounts.id, no FK), `external_id` (unique per company+platform), `parent_external_id`, `ad_id`, `ad_name`, `post_id`, `author_name`, `author_id`, `text`, `status` visible|hidden, `commented_at`, `reply_text`, `replied_by_user_id`, `replied_at`, `raw` JSON (full platform row). Indexes `(company_id, commented_at)`, `(company_id, status)`.

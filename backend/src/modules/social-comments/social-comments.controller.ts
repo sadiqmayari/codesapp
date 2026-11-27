@@ -14,7 +14,7 @@ import { SocialCommentsService } from './social-comments.service';
 type U = { companyId: number; userId: number };
 
 class ListCommentsDto {
-  @IsOptional() @IsIn(['tiktok', 'meta', 'instagram']) platform?: string;
+  @IsOptional() @IsIn(['tiktok', 'youtube', 'meta', 'instagram']) platform?: string;
   @IsOptional() @IsIn(['visible', 'hidden', 'unreplied', 'all']) status?: 'visible' | 'hidden' | 'unreplied' | 'all';
   @IsOptional() @IsString() @MaxLength(100) q?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;

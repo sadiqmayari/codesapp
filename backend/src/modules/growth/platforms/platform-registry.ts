@@ -6,6 +6,8 @@ import { MetaWriter } from './meta/meta.writer';
 import { GoogleAdsAdapter } from './google/google.adapter';
 import { TikTokAdsAdapter } from './tiktok/tiktok.adapter';
 import { SnapAdsAdapter } from './snap/snap.adapter';
+import { GoogleAdsWriter } from './google/google.writer';
+import { TikTokWriter } from './tiktok/tiktok.writer';
 
 /** Resolves the adapter (read) and writer (manage) for a platform — the single place a platform plugs in. */
 @Injectable()
@@ -19,9 +21,11 @@ export class PlatformRegistry {
     tiktok: TikTokAdsAdapter,
     snap: SnapAdsAdapter,
     metaWriter: MetaWriter,
+    googleWriter: GoogleAdsWriter,
+    tiktokWriter: TikTokWriter,
   ) {
     this.map = { meta, google, tiktok, snap };
-    this.writers = { meta: metaWriter };
+    this.writers = { meta: metaWriter, google: googleWriter, tiktok: tiktokWriter };
   }
 
   get(platform: string): AdPlatformAdapter {

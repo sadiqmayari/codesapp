@@ -125,7 +125,7 @@ export function BudgetCell({ n, canEdit }: { n: CampaignNode; canEdit: boolean }
           </div>
           {Math.abs(changePct) > 20 && (
             <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-              <AlertTriangle size={13} className="mt-px shrink-0" /> Over 20% can restart Meta’s learning phase. Steps of ~20% every 2–3 days are safer.
+              <AlertTriangle size={13} className="mt-px shrink-0" /> Over 20% can restart the platform’s learning phase. Steps of ~20% every 2–3 days are safer.
             </p>
           )}
           <div className="mt-3 flex justify-end gap-2">
@@ -133,7 +133,7 @@ export function BudgetCell({ n, canEdit }: { n: CampaignNode; canEdit: boolean }
             <button type="button" onClick={apply} disabled={!(num > 0) || Math.abs(changePct) < 0.5}
               className="rounded-lg bg-ink px-3 py-1.5 text-xs font-bold text-surface disabled:opacity-40">Stage change</button>
           </div>
-          <p className="mt-2 text-[11px] text-muted">Nothing changes in Meta until you review and publish.</p>
+          <p className="mt-2 text-[11px] text-muted">Nothing changes on the ad platform until you review and publish.</p>
         </Popover>
       )}
     </>

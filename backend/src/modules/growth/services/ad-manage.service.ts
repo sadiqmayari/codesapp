@@ -31,6 +31,8 @@ type Actor = { companyId: number; userId: number | null };
 
 const BUDGET_JUMP_WARN = 0.2;
 
+const platformName = (p: string) => (p === 'google' ? 'Google Ads' : p === 'tiktok' ? 'TikTok' : 'Meta');
+
 /** Attribution spec JSON → our window id. */
 function windowOf(spec: unknown): AttributionWindow | null {
   if (!Array.isArray(spec)) return null;
@@ -110,7 +112,7 @@ export class AdManageService {
         continue;
       }
       try {
-        const r = await this.registry.writer(a.platform).checkWriteAccess(token);
+        const r = await this.registry.writer(a.platform).checkWriteAccess(token, a.external_id);
         out.push({ accountId: a.id, platform: a.platform, name: a.name, canManage: r.ok, missing: r.missing, granted: r.granted, reason: r.ok ? null : `Missing ${r.missing.join(', ')}` });
       } catch (e) {
         out.push({ accountId: a.id, platform: a.platform, name: a.name, canManage: false, missing: [], reason: (e as Error).message });
@@ -162,18 +164,31 @@ export class AdManageService {
     return out;
   }
 
-  /** Mirror Meta's rules so we fail fast with a clear message. */
+  /** Mirror the platform's rules so we fail fast with a clear message. */
   private async validate(companyId: number, x: Expanded, e: EntityRow): Promise<void> {
     const p = x.patch;
     const what = e.name ?? x.entityId;
     const owns = e.budget_owner === e.level;
+    const writer = this.registry.canManage(e.platform) ? this.registry.writer(e.platform) : null;
+    const own = writer?.validatePatch?.(x.level, p, { objective: e.objective, destination_type: e.destination_type, name: e.name });
+    if (own) throw new BadRequestException(own);
     if ((p.dailyBudget != null || p.lifetimeBudget != null) && !owns) {
-      throw new BadRequestException(`“${what}”: the budget is set on the ${e.level === 'adset' ? 'campaign (Advantage+ campaign budget)' : 'ad sets'}.`);
+      const where = e.platform === 'meta' ? (e.level === 'adset' ? 'campaign (Advantage+ campaign budget)' : 'ad sets') : e.level === 'adset' ? 'campaign' : 'ad groups';
+      throw new BadRequestException(`“${what}”: the budget is set on the ${where}.`);
     }
     if (p.dailyBudget != null && e.budget_type === 'lifetime') throw new BadRequestException(`“${what}” uses a lifetime budget.`);
     if (p.lifetimeBudget != null && e.budget_type === 'daily') throw new BadRequestException(`“${what}” uses a daily budget.`);
     for (const v of [p.dailyBudget, p.lifetimeBudget]) {
       if (v != null && (!Number.isFinite(v) || v <= 0 || v > 1e9)) throw new BadRequestException('Enter a budget greater than zero.');
+    }
+    if (p.name != null && (!p.name.trim() || p.name.length > 400)) throw new BadRequestException('Names must be 1–400 characters.');
+    if (e.platform !== 'meta') {
+      // Google: bidding on the campaign; TikTok: bidding on the ad group (validatePatch covers the rest).
+      if ((p.bidStrategy === 'COST_CAP' || p.bidStrategy === 'LOWEST_COST_WITH_BID_CAP') && p.bidAmount == null && e.bid_amount == null) {
+        throw new BadRequestException(e.platform === 'google' ? 'Enter the target CPA.' : 'Enter the cost / bid cap.');
+      }
+      if (p.bidStrategy === 'LOWEST_COST_WITH_MIN_ROAS' && p.roasFloor == null && e.roas_floor == null) throw new BadRequestException('Enter the ROAS goal.');
+      return;
     }
     if (p.bidStrategy && !owns) throw new BadRequestException(`“${what}”: the bid strategy is set where the budget is.`);
     if ((p.optimizationGoal || p.conversionEvent || p.attributionWindow) && e.level !== 'adset') {
@@ -233,7 +248,7 @@ export class AdManageService {
       spendDeltaMonthly = delta * 30;
       const ratio = Math.abs(delta) / oldDaily;
       if (ratio > BUDGET_JUMP_WARN) {
-        warnings.push(`A ${Math.round(ratio * 100)}% change can send it back into Meta's learning phase. Changes of ~20% every 2–3 days keep delivery steady.`);
+        warnings.push(`A ${Math.round(ratio * 100)}% change can send it back into ${platformName(e.platform)}'s learning phase. Changes of ~20% every 2–3 days keep delivery steady.`);
       }
       if (stats.curve && stats.dailySpend > 0) {
         const { a, b } = stats.curve;
@@ -246,11 +261,11 @@ export class AdManageService {
     }
     if (p.bidStrategy === 'COST_CAP' && p.bidAmount != null && stats.platformCpa && p.bidAmount < stats.platformCpa * 0.8) {
       warnings.push(
-        `This cost goal is ${Math.round((1 - p.bidAmount / stats.platformCpa) * 100)}% below its recent cost per purchase in Meta (${Math.round(stats.platformCpa).toLocaleString()}). Expect limited delivery; around ${Math.round(stats.platformCpa * 0.95).toLocaleString()} is realistic.`,
+        `This cost goal is ${Math.round((1 - p.bidAmount / stats.platformCpa) * 100)}% below its recent cost per purchase in ${platformName(e.platform)} (${Math.round(stats.platformCpa).toLocaleString()}). Expect limited delivery; around ${Math.round(stats.platformCpa * 0.95).toLocaleString()} is realistic.`,
       );
     }
     if (p.bidStrategy === 'LOWEST_COST_WITH_MIN_ROAS' && p.roasFloor != null && stats.platformRoas && p.roasFloor > stats.platformRoas * 1.15) {
-      warnings.push(`A ${p.roasFloor.toFixed(2)}× goal is above the ${stats.platformRoas.toFixed(2)}× Meta has achieved here recently — delivery will be limited.`);
+      warnings.push(`A ${p.roasFloor.toFixed(2)}× goal is above the ${stats.platformRoas.toFixed(2)}× ${platformName(e.platform)} has achieved here recently — delivery will be limited.`);
     }
     if (p.status === 'ACTIVE') warnings.push('Turning it on starts spending right away.');
     return { spendDeltaMonthly, expectedNetDeltaMonthly, roasAfter, warnings, stats: { platformCpa: stats.platformCpa, platformRoas: stats.platformRoas } };
@@ -300,8 +315,8 @@ export class AdManageService {
     for (const x of items) {
       const e = await this.entity(actor.companyId, x.level, x.entityId);
       await this.validate(actor.companyId, x, e);
-      // CBO + cost/ROAS goal: the amount is set on each ad set.
-      if (x.level === 'campaign' && (x.patch.bidAmount != null || x.patch.roasFloor != null)) {
+      // Meta CBO + cost/ROAS goal: the amount is set on each ad set (Google keeps it on the campaign).
+      if (e.platform === 'meta' && x.level === 'campaign' && (x.patch.bidAmount != null || x.patch.roasFloor != null)) {
         const kids = await this.children(actor.companyId, e.external_id);
         x.children = kids.map((k) => ({
           entityId: k.external_id,
@@ -359,7 +374,7 @@ export class AdManageService {
     if (!acc) throw new NotFoundException('Ad account not found');
     const token = await this.accounts.resolveToken(acc);
     if (!token) throw new AdPlatformAuthError('No token for this ad account. Reconnect it in Connections.', 'token');
-    await this.registry.writer(acc.platform).update(token, level, e.external_id, patch, acc.currency);
+    await this.registry.writer(acc.platform).update(token, level, e.external_id, patch, acc.currency, acc.external_id);
     const d: Prisma.AdEntityUpdateInput = { updated_at: new Date() };
     if (patch.status) {
       d.configured_status = patch.status;
@@ -413,7 +428,7 @@ export class AdManageService {
       },
     });
     try {
-      const newId = await this.registry.writer(acc.platform).copy(token, level, entityId);
+      const newId = await this.registry.writer(acc.platform).copy(token, level, entityId, acc.external_id);
       await this.prisma.adChangeLog.update({ where: { id: log.id }, data: { result: 'ok', after: { newIds: [newId], level, paused: true } } });
       void this.sync.refreshEntities(acc.id);
       return { newId, logId: log.id };
@@ -469,7 +484,7 @@ export class AdManageService {
           if (!acc || !token) throw new Error('No token for this ad account.');
           const ids = after.campaignId ? [after.campaignId] : after.newIds ?? [];
           const level: EntityLevel = after.campaignId ? 'campaign' : after.level ?? (r.level as EntityLevel);
-          for (const id of ids) await this.registry.writer(acc.platform).update(token, level, id, { status: 'PAUSED' }, acc.currency);
+          for (const id of ids) await this.registry.writer(acc.platform).update(token, level, id, { status: 'PAUSED' }, acc.currency, acc.external_id);
         } else {
           const e = await this.entity(actor.companyId, r.level as EntityLevel, r.entity_id);
           const before = (r.before ?? {}) as EntityPatch;

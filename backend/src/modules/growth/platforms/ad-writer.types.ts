@@ -44,6 +44,14 @@ export interface AdAssets {
   /** `pageId` = the Page it is linked to, when known. */
   instagram: Array<{ id: string; username: string; pageId: string | null }>;
   pixels: Array<{ id: string; name: string }>;
+  /** Google: enabled conversion actions (purchase first). */
+  conversionActions?: Array<{ id: string; name: string; category: string | null; primary: boolean }>;
+  /** Google: videos of the tenant's connected YouTube channels (filled by AdCreateService). */
+  youtubeVideos?: Array<{ id: string; title: string | null; thumb: string | null }>;
+  /** TikTok: identities the ad can run under. */
+  identities?: Array<{ id: string; type: string; name: string | null; avatar: string | null }>;
+  /** TikTok: recent ad videos in the library. */
+  videos?: Array<{ id: string; name: string | null; cover: string | null; durationS: number | null }>;
 }
 
 export type Objective = 'OUTCOME_SALES' | 'OUTCOME_ENGAGEMENT' | 'OUTCOME_TRAFFIC' | 'OUTCOME_LEADS' | 'OUTCOME_AWARENESS';
@@ -82,6 +90,73 @@ export interface CreateDraft {
   videoId?: string | null;
 }
 
+/** Google campaign builder draft (platform 'google'). Money in major units. */
+export interface GoogleCreateDraft {
+  platform: 'google';
+  type: 'search' | 'pmax' | 'video';
+  name: string;
+  budget: number;
+  /** Max conversions · Target CPA (COST_CAP) · Max conversion value (+ optional Target ROAS = MIN_ROAS). */
+  bidStrategy: 'LOWEST_COST_WITHOUT_CAP' | 'COST_CAP' | 'LOWEST_COST_WITH_MIN_ROAS';
+  /** 'value' = maximise conversion value family (Target ROAS optional). */
+  bidFamily: 'conversions' | 'value';
+  bidAmount?: number | null;
+  roasFloor?: number | null;
+  /** ISO-2 countries + geo target constant resource names to exclude. */
+  countries: string[];
+  excludeCities: Array<{ key: string; name: string }>;
+  languages: string[];
+  startTime?: string | null;
+  endTime?: string | null;
+  url: string;
+  businessName?: string | null;
+  headlines: string[];
+  longHeadlines?: string[];
+  descriptions: string[];
+  /** Search: keywords. */
+  keywords?: Array<{ text: string; match: 'BROAD' | 'PHRASE' | 'EXACT' }>;
+  /** Asset resource names (uploaded via create/media). */
+  landscapeImages?: string[];
+  squareImages?: string[];
+  logoImages?: string[];
+  /** YouTube video ids. */
+  youtubeVideoIds?: string[];
+  cta?: string | null;
+}
+
+/** TikTok campaign builder draft (platform 'tiktok'). Money in major units. */
+export interface TikTokCreateDraft {
+  platform: 'tiktok';
+  objective: 'WEB_CONVERSIONS' | 'TRAFFIC' | 'VIDEO_VIEWS';
+  name: string;
+  /** Campaign budget optimisation (budget on the campaign) or ad-group budget. */
+  cbo: boolean;
+  budgetType: 'daily' | 'lifetime';
+  budget: number;
+  bidStrategy: 'LOWEST_COST_WITHOUT_CAP' | 'COST_CAP' | 'LOWEST_COST_WITH_MIN_ROAS';
+  bidAmount?: number | null;
+  roasFloor?: number | null;
+  pixelId?: string | null;
+  /** TikTok optimization_event, e.g. SHOPPING (complete payment). */
+  conversionEvent?: string | null;
+  locationIds: string[];
+  excludeLocationIds?: string[];
+  ageGroups: string[];
+  gender: 'GENDER_UNLIMITED' | 'GENDER_MALE' | 'GENDER_FEMALE';
+  startTime?: string | null;
+  endTime?: string | null;
+  identityId?: string | null;
+  identityType?: string | null;
+  /** Used to create a custom identity when no identity is picked. */
+  displayName?: string | null;
+  videoId: string;
+  adText: string;
+  cta: string;
+  url: string;
+}
+
+export type AnyCreateDraft = CreateDraft | GoogleCreateDraft | TikTokCreateDraft;
+
 export interface CreatedIds {
   campaignId?: string;
   adsetId?: string;
@@ -91,18 +166,23 @@ export interface CreatedIds {
 
 export interface AdPlatformWriter {
   readonly platform: AdPlatform;
-  checkWriteAccess(token: string): Promise<{ ok: boolean; granted: string[]; missing: string[] }>;
-  update(token: string, level: EntityLevel, id: string, patch: EntityPatch, currency: string | null): Promise<void>;
-  copy(token: string, level: EntityLevel, id: string): Promise<string>;
+  /** `externalId` = the ad account id (Google customer / TikTok advertiser); Meta ignores it. */
+  checkWriteAccess(token: string, externalId?: string): Promise<{ ok: boolean; granted: string[]; missing: string[] }>;
+  update(token: string, level: EntityLevel, id: string, patch: EntityPatch, currency: string | null, externalId?: string): Promise<void>;
+  copy(token: string, level: EntityLevel, id: string, externalId?: string): Promise<string>;
+  /** Platform rules for a patch beyond the shared ones; returns an error sentence or null. */
+  validatePatch?(level: EntityLevel, patch: EntityPatch, entity: { objective: string | null; destination_type: string | null; name: string | null }): string | null;
+  /** Platform rules for a create draft (non-Meta builders). */
+  validateDraft?(draft: AnyCreateDraft): string[];
   listAssets(token: string, externalId: string): Promise<AdAssets>;
   uploadImage(token: string, externalId: string, bytes: Buffer, filename: string): Promise<string>;
   uploadVideo(token: string, externalId: string, bytes: Buffer, filename: string): Promise<string>;
-  searchCities(token: string, query: string, country: string): Promise<Array<{ key: string; name: string; region: string }>>;
+  searchCities(token: string, query: string, country: string, externalId?: string): Promise<Array<{ key: string; name: string; region: string }>>;
   /** Campaign → ad set → creative → ad, all PAUSED. `onStep` records ids as they are created. */
   createAll(
     token: string,
     externalId: string,
-    draft: CreateDraft,
+    draft: AnyCreateDraft,
     currency: string | null,
     onStep: (ids: CreatedIds) => void,
   ): Promise<Required<CreatedIds>>;

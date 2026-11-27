@@ -15,7 +15,7 @@ import { SkeletonRows } from '@/components/ui/skeleton';
 import { EmptyState, NoResults } from '@/components/ui/empty-state';
 import { SearchInput } from '@/components/ui/search-input';
 import { StatusChips } from '@/components/ui/filter-bar';
-import { commentsApi, type CommentList, type CommentStatus, type SocialComment } from '@/lib/social-comments';
+import { commentsApi, PLATFORM_NAME, type CommentList, type CommentPlatform, type CommentStatus, type SocialComment } from '@/lib/social-comments';
 
 const err = (e: unknown, fb: string) => (e instanceof ApiError ? e.userMessage : fb);
 
@@ -42,17 +42,22 @@ function CommentCard({ c, onChanged }: { c: SocialComment; onChanged: (row: Soci
     }
   };
 
+  const pname = PLATFORM_NAME[c.platform] ?? c.platform;
+  const yt = c.platform === 'youtube';
   return (
     <Card className="p-4">
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-        <Badge tone="neutral">TikTok</Badge>
-        {c.ad_name && <span className="truncate font-semibold text-ink" title={c.ad_id ?? undefined}>Ad: {c.ad_name}</span>}
+        <span className={yt ? 'rounded-md bg-[#CC0000] px-2 py-0.5 text-xs font-bold text-white' : 'rounded-md bg-gray-900 px-2 py-0.5 text-xs font-bold text-white'}>{pname}</span>
+        <Badge tone={c.source === 'ad' ? 'warn' : 'neutral'}>{c.source === 'ad' ? 'Ad' : 'Organic'}</Badge>
+        {c.ad_name && (yt && c.post_id
+          ? <a href={`https://youtu.be/${c.post_id}`} target="_blank" rel="noreferrer" className="truncate font-semibold text-ink hover:underline">on {c.ad_name}</a>
+          : <span className="truncate font-semibold text-ink" title={c.ad_id ?? undefined}>{yt ? 'on' : 'Ad:'} {c.ad_name}</span>)}
         {c.parent_external_id && <span>Reply in a thread</span>}
         {c.status === 'hidden' && <Badge tone="warn">Hidden</Badge>}
         <span className="ml-auto">{fmtDateTime(c.commented_at)}</span>
       </div>
       <p className="mt-2 text-sm text-ink">
-        <span className="font-semibold">{c.author_name ?? 'TikTok user'}</span> <span className="whitespace-pre-wrap break-words">{c.text}</span>
+        <span className="font-semibold">{c.author_name ?? `${pname} user`}</span> <span className="whitespace-pre-wrap break-words">{c.text}</span>
       </p>
       {c.reply_text && (
         <p className="mt-2 rounded-lg bg-sunken px-3 py-2 text-sm text-ink">
@@ -65,7 +70,7 @@ function CommentCard({ c, onChanged }: { c: SocialComment; onChanged: (row: Soci
           <textarea value={text} onChange={(e) => setText(e.target.value)} maxLength={500} rows={2} autoFocus
             className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink" placeholder="Write a public reply…" />
           <div className="flex gap-2">
-            <Button size="sm" loading={busy === 'reply'} disabled={!text.trim()} onClick={() => void act('reply', () => commentsApi.reply(c.id, text), 'Reply posted on TikTok')}>Post reply</Button>
+            <Button size="sm" loading={busy === 'reply'} disabled={!text.trim()} onClick={() => void act('reply', () => commentsApi.reply(c.id, text), `Reply posted on ${pname}`)}>Post reply</Button>
             <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
           </div>
         </div>
@@ -76,7 +81,7 @@ function CommentCard({ c, onChanged }: { c: SocialComment; onChanged: (row: Soci
           {c.status === 'hidden' ? (
             <Button size="sm" variant="ghost" loading={busy === 'hide'} onClick={() => void act('hide', () => commentsApi.unhide(c.id), 'Comment visible again')}><Eye size={14} /> Unhide</Button>
           ) : (
-            <Button size="sm" variant="ghost" loading={busy === 'hide'} onClick={() => void act('hide', () => commentsApi.hide(c.id), 'Comment hidden on TikTok')}><EyeOff size={14} /> Hide</Button>
+            <Button size="sm" variant="ghost" loading={busy === 'hide'} onClick={() => void act('hide', () => commentsApi.hide(c.id), yt ? 'Comment held for review on YouTube' : `Comment hidden on ${pname}`)}><EyeOff size={14} /> Hide</Button>
           )}
         </div>
       )}
@@ -90,6 +95,7 @@ export default function CommentsPage() {
   const { on, reconnectSeq } = useSocket();
   const canManage = user?.role === 'owner' || user?.role === 'admin';
   const [status, setStatus] = useState<CommentStatus>('unreplied');
+  const [platform, setPlatform] = useState<CommentPlatform>('all');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [data, setData] = useState<CommentList | null>(null);
@@ -103,14 +109,14 @@ export default function CommentsPage() {
     ctrl.current = c;
     if (!silent) setLoading(true);
     try {
-      const r = await commentsApi.list({ status, q: q.trim() || undefined, page }, c.signal);
+      const r = await commentsApi.list({ status, q: q.trim() || undefined, page, platform }, c.signal);
       if (ctrl.current === c) setData(r);
     } catch (e) {
       if (!isAbortError(e)) toast.error(err(e, 'Could not load comments'));
     } finally {
       if (ctrl.current === c) setLoading(false);
     }
-  }, [status, q, page, toast]);
+  }, [status, q, page, platform, toast]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), q ? 300 : 0);
@@ -130,7 +136,7 @@ export default function CommentsPage() {
       else toast.success(r.created ? `${r.created} new comment${r.created === 1 ? '' : 's'}` : 'No new comments');
       await load(true);
     } catch (e) {
-      toast.error(err(e, 'Could not check TikTok'));
+      toast.error(err(e, 'Could not check for new comments'));
     } finally {
       setRefreshing(false);
     }
@@ -145,11 +151,22 @@ export default function CommentsPage() {
     <div className="mx-auto max-w-3xl space-y-4 p-4 md:p-6">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold text-ink">Comments</h1>
-        <span className="text-sm text-muted">Comments on your TikTok ads. New ones arrive every 10 minutes.</span>
+        <span className="text-sm text-muted">Comments on your TikTok ads and YouTube videos. New ones arrive every 10 minutes.</span>
         {canManage && (
           <Button size="sm" variant="secondary" className="ml-auto" loading={refreshing} onClick={() => void refresh()}><RefreshCw size={14} /> Check now</Button>
         )}
       </div>
+      {(data?.hasTikTok && data?.hasYoutube) || platform !== 'all' ? (
+        <StatusChips<CommentPlatform>
+          value={platform}
+          onChange={(v) => { setPlatform(v); setPage(1); }}
+          options={[
+            { value: 'all', label: 'All' },
+            { value: 'tiktok', label: 'TikTok', count: data?.unrepliedByPlatform?.tiktok ?? null },
+            { value: 'youtube', label: 'YouTube', count: data?.unrepliedByPlatform?.youtube ?? null },
+          ]}
+        />
+      ) : null}
       <div className="flex flex-wrap items-center gap-3">
         <StatusChips<CommentStatus>
           value={status}
@@ -167,14 +184,14 @@ export default function CommentsPage() {
       {loading && !data ? (
         <SkeletonRows rows={5} />
       ) : data && !data.hasAccounts ? (
-        <EmptyState icon={MessageSquareText} title="Connect a TikTok ad account"
-          description="Comments come from the TikTok ad accounts connected in Growth."
+        <EmptyState icon={MessageSquareText} title="Connect TikTok or YouTube"
+          description="Comments come from the TikTok ad accounts and YouTube channels connected in Growth."
           action={canManage ? <Link href="/growth/connections" className="text-sm font-semibold text-brand-600">Go to Connections</Link> : undefined} />
       ) : data && data.rows.length === 0 ? (
         q || status !== 'all' ? (
           <NoResults query={q} noun="comments" onClear={() => { setQ(''); setStatus('all'); setPage(1); }} />
         ) : (
-          <EmptyState icon={MessageSquareText} title="No comments yet" description="New comments on your TikTok ads show up here." />
+          <EmptyState icon={MessageSquareText} title="No comments yet" description="New comments on your TikTok ads and YouTube videos show up here." />
         )
       ) : (
         <div className="space-y-3">

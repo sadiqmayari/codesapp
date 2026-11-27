@@ -2988,6 +2988,8 @@ model AdEntity {
   attribution_spec   Json?
   start_time         DateTime?
   end_time           DateTime?
+  // Google Ads video ads: the YouTube video the ad plays (links ads ↔ youtube_videos).
+  youtube_video_id   String?   @db.VarChar(16)
   updated_at         DateTime  @default(now())
 
   @@unique([account_id, level, external_id])
@@ -3455,4 +3457,72 @@ model SocialComment {
   @@index([company_id, commented_at])
   @@index([company_id, status])
   @@map("social_comments")
+}
+
+// YouTube channels connected for Growth (channel stats + comments). Token =
+// the channel owner's Google OAuth refresh token (AES-GCM). One row per channel.
+model YoutubeChannel {
+  id                  Int       @id @default(autoincrement())
+  company_id          Int
+  channel_id          String    @db.VarChar(32)
+  title               String?   @db.VarChar(255)
+  handle              String?   @db.VarChar(128)
+  thumb_url           String?   @db.Text
+  uploads_playlist_id String?   @db.VarChar(64)
+  token_encrypted     String?   @db.Text
+  status              String    @default("active") @db.VarChar(16)
+  subscribers         Int       @default(0)
+  views               BigInt    @default(0)
+  videos              Int       @default(0)
+  last_attempt_at     DateTime?
+  last_success_at     DateTime?
+  last_error          String?   @db.VarChar(500)
+  connected_at        DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+
+  @@unique([company_id, channel_id])
+  @@index([company_id, status])
+  @@map("youtube_channels")
+}
+
+// Daily channel analytics (YouTube Analytics API), channel timezone days.
+model YoutubeChannelDaily {
+  id            Int      @id @default(autoincrement())
+  company_id    Int
+  channel_id    Int      // youtube_channels.id
+  date          DateTime @db.Date
+  views         Int      @default(0)
+  watch_minutes Int      @default(0)
+  subs_gained   Int      @default(0)
+  subs_lost     Int      @default(0)
+  likes         Int      @default(0)
+  comments      Int      @default(0)
+  shares        Int      @default(0)
+
+  @@unique([channel_id, date])
+  @@index([company_id, date])
+  @@map("youtube_channel_daily")
+}
+
+// The channel's videos (most recent uploads) + lifetime counters.
+// used_in_ads = some Google Ads ad of this tenant plays the video.
+model YoutubeVideo {
+  id           Int       @id @default(autoincrement())
+  company_id   Int
+  channel_id   Int       // youtube_channels.id
+  video_id     String    @db.VarChar(16)
+  title        String?   @db.VarChar(255)
+  thumb_url    String?   @db.Text
+  published_at DateTime?
+  duration_s   Int?
+  privacy      String?   @db.VarChar(16)
+  views        BigInt    @default(0)
+  likes        Int       @default(0)
+  comments     Int       @default(0)
+  used_in_ads  Boolean   @default(false)
+  updated_at   DateTime  @updatedAt
+
+  @@unique([company_id, video_id])
+  @@index([channel_id])
+  @@map("youtube_videos")
 }

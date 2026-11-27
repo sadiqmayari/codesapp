@@ -14,6 +14,7 @@ const TABS: Array<[string, string]> = [
   ['/growth/channels', 'Channels'],
   ['/growth/campaigns', 'Campaigns'],
   ['/growth/creatives', 'Creatives'],
+  ['/growth/youtube', 'YouTube'],
   ['/growth/attribution', 'Attribution'],
   ['/growth/customers', 'Customers'],
   ['/growth/forecast', 'Forecast'],
@@ -21,7 +22,7 @@ const TABS: Array<[string, string]> = [
   ['/growth/connections', 'Connections'],
 ];
 
-const NO_ATTRIBUTION = new Set(['/growth/customers', '/growth/forecast', '/growth/connections', '/growth/activity', '/growth/campaigns/new']);
+const NO_ATTRIBUTION = new Set(['/growth/youtube', '/growth/customers', '/growth/forecast', '/growth/connections', '/growth/activity', '/growth/campaigns/new']);
 
 function Shortcuts() {
   const { filters, set, setAskOpen } = useGrowth();
@@ -91,7 +92,7 @@ export default function GrowthLayout({ children }: { children: React.ReactNode }
             );
           })}
         </nav>
-        {pathname !== '/growth/connections' && pathname !== '/growth/activity' && pathname !== '/growth/campaigns/new' && <GrowthControlBar showAttribution={!NO_ATTRIBUTION.has(pathname)} />}
+        {!pathname.startsWith('/growth/connections') && pathname !== '/growth/activity' && pathname !== '/growth/campaigns/new' && <GrowthControlBar showAttribution={!NO_ATTRIBUTION.has(pathname)} />}
         <div className="pb-24 pt-4">{children}</div>
       </div>
       <AskPanel />

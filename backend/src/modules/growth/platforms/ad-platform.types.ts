@@ -46,6 +46,8 @@ export interface AdEntityRow {
   attributionSpec?: unknown;
   startTime?: string | null;
   endTime?: string | null;
+  /** Google video ads: the YouTube video id the ad plays. */
+  youtubeVideoId?: string | null;
 }
 
 /** One row per ad per day, in the ACCOUNT's currency + timezone. */

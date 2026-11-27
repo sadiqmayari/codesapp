@@ -1,4 +1,6 @@
 import { TikTokOAuthService } from './platforms/tiktok/tiktok-oauth.service';
+import { GoogleOAuthService } from './platforms/google/google-oauth.service';
+import { serializeGoogleToken } from './platforms/google/google-ads.client';
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
@@ -33,6 +35,7 @@ export class GrowthService {
     readonly opportunities: GrowthOpportunityService,
     readonly ai: GrowthAiService,
     private readonly tiktokOAuth: TikTokOAuthService,
+    private readonly googleOAuth: GoogleOAuthService,
   ) {}
 
   catalog() {
@@ -82,6 +85,30 @@ export class GrowthService {
         connected.push(acc.id);
       } catch (e) {
         failed.push({ advertiserId: id, error: (e as Error).message });
+      }
+    }
+    return { connected: connected.length, failed };
+  }
+
+  /** Connect the Google Ads accounts picked after "Connect with Google" (refresh token parked server-side). */
+  async connectGoogle(companyId: number, dto: { pickId: string; customerIds: string[]; storeId?: number | null }) {
+    const pick = await this.googleOAuth.takePick(companyId, dto.pickId, 'ads');
+    const rows = new Map((pick.accounts ?? []).filter((a) => !a.isManager).map((a) => [a.customerId, a]));
+    const connected: number[] = [];
+    const failed: Array<{ customerId: string; error: string }> = [];
+    for (const raw of [...new Set(dto.customerIds)]) {
+      const id = raw.replace(/\D/g, '');
+      const row = rows.get(id);
+      if (!row) {
+        failed.push({ customerId: raw, error: 'Not part of this Google sign-in (or a manager account).' });
+        continue;
+      }
+      try {
+        const token = serializeGoogleToken({ r: pick.refresh, l: row.loginCustomerId, c: id });
+        const acc = await this.connect(companyId, { platform: 'google', externalId: id, token, storeId: dto.storeId ?? null });
+        connected.push(acc.id);
+      } catch (e) {
+        failed.push({ customerId: raw, error: (e as Error).message });
       }
     }
     return { connected: connected.length, failed };

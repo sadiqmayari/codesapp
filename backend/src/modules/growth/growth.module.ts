@@ -8,6 +8,10 @@ import { GrowthService } from './growth.service';
 import { MetaAdapter } from './platforms/meta/meta.adapter';
 import { GoogleAdsAdapter } from './platforms/google/google.adapter';
 import { TikTokOAuthService } from './platforms/tiktok/tiktok-oauth.service';
+import { TikTokWriter } from './platforms/tiktok/tiktok.writer';
+import { GoogleAdsWriter } from './platforms/google/google.writer';
+import { GoogleOAuthService } from './platforms/google/google-oauth.service';
+import { YoutubeService } from './services/youtube.service';
 import { TikTokAdsAdapter } from './platforms/tiktok/tiktok.adapter';
 import { SnapAdsAdapter } from './platforms/snap/snap.adapter';
 import { PlatformRegistry } from './platforms/platform-registry';
@@ -43,6 +47,10 @@ import { GrowthTargetService } from './services/growth-target.service';
     GoogleAdsAdapter,
     TikTokAdsAdapter,
     TikTokOAuthService,
+    TikTokWriter,
+    GoogleAdsWriter,
+    GoogleOAuthService,
+    YoutubeService,
     SnapAdsAdapter,
     PlatformRegistry,
     AdAccountsService,

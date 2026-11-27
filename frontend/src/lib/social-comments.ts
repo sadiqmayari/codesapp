@@ -6,6 +6,7 @@ export interface SocialComment {
   source: string;
   ad_id: string | null;
   ad_name: string | null;
+  post_id?: string | null;
   author_name: string | null;
   text: string;
   status: 'visible' | 'hidden';
@@ -21,14 +22,22 @@ export interface CommentList {
   page: number;
   limit: number;
   unreplied: number;
+  unrepliedByPlatform?: Record<string, number>;
   hasAccounts: boolean;
+  hasTikTok?: boolean;
+  hasYoutube?: boolean;
 }
+
+export type CommentPlatform = 'all' | 'tiktok' | 'youtube';
+
+export const PLATFORM_NAME: Record<string, string> = { tiktok: 'TikTok', youtube: 'YouTube', meta: 'Facebook', instagram: 'Instagram' };
 
 export type CommentStatus = 'unreplied' | 'all' | 'visible' | 'hidden';
 
 export const commentsApi = {
-  list: (q: { status?: CommentStatus; q?: string; page?: number }, signal?: AbortSignal) => {
+  list: (q: { status?: CommentStatus; q?: string; page?: number; platform?: CommentPlatform }, signal?: AbortSignal) => {
     const p = new URLSearchParams();
+    if (q.platform && q.platform !== 'all') p.set('platform', q.platform);
     if (q.status && q.status !== 'all') p.set('status', q.status);
     if (q.q) p.set('q', q.q);
     if (q.page) p.set('page', String(q.page));

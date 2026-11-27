@@ -3,7 +3,8 @@ import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { PlatformRegistry } from '../platforms/platform-registry';
-import { ATTRIBUTION_WINDOWS, BID_STRATEGIES, CreateDraft, CreatedIds, OPTIMIZATION_GOALS } from '../platforms/ad-writer.types';
+import { ATTRIBUTION_WINDOWS, AnyCreateDraft, BID_STRATEGIES, CreateDraft, CreatedIds, OPTIMIZATION_GOALS } from '../platforms/ad-writer.types';
+import { YoutubeService } from './youtube.service';
 import { AdAccountsService } from './ad-accounts.service';
 import { AdSyncService } from './ad-sync.service';
 import { GrowthVersionService } from './growth-version.service';
@@ -34,6 +35,7 @@ export class AdCreateService {
     private readonly version: GrowthVersionService,
     private readonly query: GrowthQueryService,
     private readonly mirror: GrowthMirrorService,
+    private readonly youtube: YoutubeService,
   ) {}
 
   private async account(companyId: number, accountId: number) {
@@ -49,7 +51,7 @@ export class AdCreateService {
   async assets(companyId: number, accountId: number) {
     const { acc, token } = await this.account(companyId, accountId);
     const writer = this.registry.writer(acc.platform);
-    const [assets, numbers, bench, cities] = await Promise.all([
+    const [assets, numbers, bench, cities, ytVideos] = await Promise.all([
       writer.listAssets(token, acc.external_id),
       this.prisma.whatsAppNumber.findMany({
         where: { company_id: companyId, status: 'active' },
@@ -58,12 +60,14 @@ export class AdCreateService {
       }),
       this.benchmarks(companyId, acc.id),
       this.highRtoCities(companyId),
+      acc.platform === 'google' ? this.youtube.videosForBuilder(companyId) : Promise.resolve([]),
     ]);
+    if (acc.platform === 'google') assets.youtubeVideos = ytVideos;
     // Resolve the risky cities to Meta location keys (best-effort, top 5).
     const resolved: Array<{ key: string; name: string; rate: number; lostMonthly: number }> = [];
     for (const c of cities.slice(0, 5)) {
       try {
-        const hit = (await writer.searchCities(token, c.city, 'PK'))[0];
+        const hit = (await writer.searchCities(token, c.city, 'PK', acc.external_id))[0];
         if (hit) resolved.push({ key: hit.key, name: hit.name, rate: c.rate, lostMonthly: c.lostMonthly });
       } catch {
         /* skip */
@@ -153,7 +157,7 @@ export class AdCreateService {
   async searchCities(companyId: number, accountId: number, q: string, country: string) {
     const { acc, token } = await this.account(companyId, accountId);
     if (!q || q.trim().length < 2) return [];
-    return this.registry.writer(acc.platform).searchCities(token, q.trim(), (country || 'PK').slice(0, 2).toUpperCase());
+    return this.registry.writer(acc.platform).searchCities(token, q.trim(), (country || 'PK').slice(0, 2).toUpperCase(), acc.external_id);
   }
 
   async uploadMedia(companyId: number, accountId: number, file: UploadedMedia | undefined) {
@@ -166,6 +170,8 @@ export class AdCreateService {
     }
     if (/^video\/(mp4|quicktime)$/.test(file.mimetype)) {
       if (file.size > MAX_VIDEO) throw new BadRequestException('Videos up to 200 MB.');
+      // Google video ads play YouTube videos: upload to the connected channel (unlisted).
+      if (acc.platform === 'google') return { kind: 'video', videoId: await this.youtube.uploadForAds(companyId, file) };
       return { kind: 'video', videoId: await w.uploadVideo(token, acc.external_id, file.buffer, file.originalname) };
     }
     throw new BadRequestException('Use a JPG/PNG image or an MP4/MOV video.');
@@ -224,11 +230,12 @@ export class AdCreateService {
     return errs;
   }
 
-  async create(actor: Actor, accountId: number, d: CreateDraft) {
-    const errs = this.validate(d);
-    if (errs.length) throw new BadRequestException(errs.join(' '));
+  async create(actor: Actor, accountId: number, draft: AnyCreateDraft) {
     const { acc, token } = await this.account(actor.companyId, accountId);
     const writer = this.registry.writer(acc.platform);
+    const errs = acc.platform === 'meta' ? this.validate(draft as CreateDraft) : writer.validateDraft?.(draft) ?? [];
+    if (errs.length) throw new BadRequestException(errs.join(' '));
+    const d = draft;
     const userName = actor.userId ? (await this.prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } }))?.name ?? null : null;
     const log = await this.prisma.adChangeLog.create({
       data: {
@@ -252,7 +259,7 @@ export class AdCreateService {
     } catch (err) {
       const msg = (err as Error)?.message ?? 'Creating the campaign failed.';
       if (ids.campaignId) {
-        await writer.update(token, 'campaign', ids.campaignId, { status: 'PAUSED' }, acc.currency).catch(() => undefined);
+        await writer.update(token, 'campaign', ids.campaignId, { status: 'PAUSED' }, acc.currency, acc.external_id).catch(() => undefined);
       }
       await this.prisma.adChangeLog.update({
         where: { id: log.id },
