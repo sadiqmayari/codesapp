@@ -82,9 +82,14 @@ export function googleErrorOf(body: unknown, status: number): { message: string;
 /** Google error → the platform error classes the sync/manage layers understand. */
 export function mapGoogleError(body: unknown, status: number): Error {
   const { message, code, http } = googleErrorOf(body, status);
-  if (code === 'DEVELOPER_TOKEN_NOT_APPROVED' || code === 'DEVELOPER_TOKEN_PROHIBITED') {
+  // Access is per Google Cloud project since the developer-token sunset (2026-09-09):
+  // a project on Test access can only reach test accounts.
+  if (
+    code === 'DEVELOPER_TOKEN_NOT_APPROVED' || code === 'DEVELOPER_TOKEN_PROHIBITED' ||
+    /test account|access level|not approved|explorer access/i.test(message) && http === 403
+  ) {
     return new AdPlatformAuthError(
-      'CodesApp\'s Google Ads API access is still waiting for Google\'s approval (Basic access). Only Google Ads test accounts work until then.',
+      'CodesApp\'s Google Ads API access level is still being upgraded by Google (Test → Explorer/Basic). Only Google Ads test accounts work until then.',
       'permission',
     );
   }
@@ -101,6 +106,7 @@ export function mapGoogleError(body: unknown, status: number): Error {
 }
 
 export interface GoogleAdsConfig {
+  /** Optional since Google retired developer tokens (2026-09-09); sent only when set. */
   devToken: string;
   clientId: string;
   clientSecret: string;
@@ -164,7 +170,7 @@ export class GoogleAdsClient {
     const login = loginCustomerId === undefined ? this.loginCustomerId : loginCustomerId;
     return {
       Authorization: `Bearer ${await this.access()}`,
-      'developer-token': this.cfg.devToken,
+      ...(this.cfg.devToken ? { 'developer-token': this.cfg.devToken } : {}),
       ...(login ? { 'login-customer-id': login } : {}),
     };
   }

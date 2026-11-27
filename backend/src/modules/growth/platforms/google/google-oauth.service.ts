@@ -116,7 +116,7 @@ export class GoogleOAuthService {
   authUrl(companyId: number, userId: number, purpose: GooglePurpose) {
     const { clientId } = this.creds();
     if (purpose === 'ads' && !this.ads.available) {
-      throw new ServiceUnavailableException('Google Ads is not enabled yet — CodesApp\'s developer token is pending.');
+      throw new ServiceUnavailableException('Google Ads is not set up on this server yet.');
     }
     const payload = `${companyId}.${userId}.${purpose}.${Date.now() + STATE_TTL_MS}.${randomBytes(6).toString('base64url')}`;
     const state = `${payload}.${this.sign(payload)}`;

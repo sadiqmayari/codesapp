@@ -1137,3 +1137,7 @@ The old `/ad-report` had these defects; each is fixed by the Growth module (see 
 - **Symptom:** Google Ads / YouTube connections work, then a week later every sync fails with "Google sign-in was revoked or expired" (`invalid_grant`).
 - **Cause:** the Google Cloud OAuth consent screen is in **Testing**. Refresh tokens for sensitive scopes (`adwords`, `youtube.force-ssl`) issued to a Testing app expire after 7 days.
 - **Fix:** OAuth consent screen → Publish app (Production). Then reconnect each account once (old tokens stay dead). Verification is separate: until Google verifies the app, users see an "unverified app" warning (100-user cap), but tokens no longer expire.
+
+## [Google] Google Ads developer token no longer exists (2026-11-27)
+- **Finding:** Google retired Google Ads API developer tokens on 2026-09-09. API access is now an access level on the Google Cloud project (Test → Explorer → Basic → Standard), managed at Cloud Console → Google Ads API → Overview. The old API Center token page only shows a notice.
+- **Fix:** `GOOGLE_ADS_DEVELOPER_TOKEN` is optional (header sent only when set); Google is "available" with just the OAuth client id + secret. CodesApp's project `codesapp-516010` applied for Explorer on 2026-11-27; Basic needs brand verification of the project first.

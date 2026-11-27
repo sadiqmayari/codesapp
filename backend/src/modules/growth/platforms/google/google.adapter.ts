@@ -110,7 +110,7 @@ export function insightOf(date: string, campaignId: string, adsetId: string | nu
  * Google Ads API adapter (REST + GAQL searchStream). The stored token is the
  * JSON {r: refresh token, l: login (manager) customer id, c: customer id} written
  * by "Connect with Google"; a bare refresh token (legacy) still works. Needs the
- * CodesApp developer token + OAuth client (GOOGLE_ADS_*), else "coming soon".
+ * OAuth client (GOOGLE_ADS_CLIENT_ID/SECRET), else "coming soon". The developer token is optional.
  */
 @Injectable()
 export class GoogleAdsAdapter implements AdPlatformAdapter {
@@ -126,7 +126,8 @@ export class GoogleAdsAdapter implements AdPlatformAdapter {
       version: config.get<string>('GOOGLE_ADS_API_VERSION') || DEFAULT_API_VERSION,
       defaultLoginCustomerId: digits(config.get<string>('GOOGLE_ADS_LOGIN_CUSTOMER_ID')),
     };
-    this.available = !!(this.cfg.devToken && this.cfg.clientId && this.cfg.clientSecret);
+    // Access is granted to the Google Cloud project of this OAuth client (no developer token since 2026-09).
+    this.available = !!(this.cfg.clientId && this.cfg.clientSecret);
   }
 
   client(token: string, customerId?: string | null) {

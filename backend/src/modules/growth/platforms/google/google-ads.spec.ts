@@ -31,7 +31,7 @@ describe('google errors', () => {
   it('maps developer-token approval to a clear permission error', () => {
     const e = mapGoogleError(body({ authorizationError: 'DEVELOPER_TOKEN_NOT_APPROVED' }), 403);
     expect(e).toBeInstanceOf(AdPlatformAuthError);
-    expect(e.message).toMatch(/Basic access/);
+    expect(e.message).toMatch(/access level/);
   });
   it('maps quota to rate limit and 401 to token', () => {
     expect(mapGoogleError(body({ quotaError: 'RESOURCE_EXHAUSTED' }, 429), 429)).toBeInstanceOf(AdPlatformRateLimitError);
