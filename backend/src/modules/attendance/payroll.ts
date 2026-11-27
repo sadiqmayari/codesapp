@@ -52,8 +52,6 @@ export interface PayrollPolicy {
   otOnlyAfterShiftEnd: boolean;
   /** Monthly overtime cap in minutes (0 = no cap). */
   otMonthlyCapMin: number;
-  /** What an auto-closed (forgot to check out) day costs. */
-  autoCheckoutPenalty: AutoCheckoutPenalty;
   /** Statutory / recurring deductions (tax, EOBI, PF…), fixed Rs or % of base. */
   statutory: StatutoryDeduction[];
   /** Display currency label, e.g. "Rs", "PKR", "$". */
@@ -61,9 +59,7 @@ export interface PayrollPolicy {
 }
 
 export type DayRateBasis = 'calendar' | 'fixed' | 'thirty';
-export type AutoCheckoutPenalty = 'none' | 'half_day' | 'absent';
 export const DAY_RATE_BASES: DayRateBasis[] = ['calendar', 'fixed', 'thirty'];
-export const AUTO_CHECKOUT_PENALTIES: AutoCheckoutPenalty[] = ['none', 'half_day', 'absent'];
 
 export interface StatutoryDeduction {
   label: string;
@@ -84,7 +80,6 @@ export const DEFAULT_PAYROLL_POLICY: PayrollPolicy = {
   dayRateBasis: 'calendar',
   otOnlyAfterShiftEnd: true,
   otMonthlyCapMin: 0,
-  autoCheckoutPenalty: 'none',
   statutory: [],
   currency: 'Rs',
 };
@@ -145,9 +140,6 @@ export function resolvePolicy(raw: unknown): PayrollPolicy {
         ? p.otOnlyAfterShiftEnd
         : DEFAULT_PAYROLL_POLICY.otOnlyAfterShiftEnd,
     otMonthlyCapMin: Math.round(clampNum(p.otMonthlyCapMin, 0, 31 * 24 * 60, 0)),
-    autoCheckoutPenalty: AUTO_CHECKOUT_PENALTIES.includes(p.autoCheckoutPenalty as AutoCheckoutPenalty)
-      ? (p.autoCheckoutPenalty as AutoCheckoutPenalty)
-      : DEFAULT_PAYROLL_POLICY.autoCheckoutPenalty,
     statutory: resolveStatutory(p.statutory),
     currency:
       typeof p.currency === 'string' && p.currency.trim()

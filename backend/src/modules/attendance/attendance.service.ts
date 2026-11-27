@@ -21,19 +21,14 @@ import { UpdateMemberDto } from './dto/update-member.dto';
 import { CorrectionRequestDto, LeaveRequestDto, ReviewLeaveDto } from './dto/leave.dto';
 import { AdjustmentDto, HolidayDto } from './dto/payroll.dto';
 import { Allowance, PayrollPolicy, resolveAllowances, resolvePolicy } from './payroll';
-import {
-  AutoCheckoutPolicy,
-  DEFAULT_REQUIRED_MINUTES,
-  DEFAULT_SHIFT_LENGTH_MIN,
-  autoCheckoutDecision,
-  autoEarnsOvertime,
-  isAutoSource,
-  resolveAutoCheckout,
-} from './auto-checkout';
 import { DEFAULT_LOCK_BUFFER_MIN } from './work-lock';
 import { Payslip, PayslipRecord, computePayslip, isAdditiveAdjustment } from './payroll-math';
 import {
+  DEFAULT_REQUIRED_MINUTES,
+  DEFAULT_SHIFT_LENGTH_MIN,
   MONTH_RE,
+  autoEarnsOvertime,
+  isAutoSource,
   WorkCalendar,
   addDays,
   dateCol,
@@ -71,7 +66,6 @@ export interface AttendanceCell {
   isLate: boolean;
   missedCheckout: boolean;
   checkoutSource: string | null;
-  lastActiveAt: string | null; // ISO, last app heartbeat while the day was open
   workedMinutes: number | null;
   note: string | null;
   overridden: boolean;
@@ -184,7 +178,6 @@ type CompanyDefaults = {
   lockBufferMin: number;
   policy: PayrollPolicy;
   checkinWindow: number;
-  autoCheckout: AutoCheckoutPolicy;
   weeklyOff: number[];
   annualPaidLeave: number;
 };
@@ -213,7 +206,6 @@ export class AttendanceService {
         attendance_office_ips: true,
         attendance_payroll_policy: true,
         attendance_checkin_window_minutes: true,
-        attendance_auto_checkout: true,
         attendance_weekly_off: true,
         attendance_annual_paid_leave: true,
         attendance_lock_after_shift: true,
@@ -230,7 +222,6 @@ export class AttendanceService {
       lockBufferMin: c?.attendance_lock_buffer_min ?? DEFAULT_LOCK_BUFFER_MIN,
       policy: resolvePolicy(c?.attendance_payroll_policy),
       checkinWindow: c?.attendance_checkin_window_minutes ?? DEFAULT_CHECKIN_WINDOW_MIN,
-      autoCheckout: resolveAutoCheckout(c?.attendance_auto_checkout),
       weeklyOff: resolveWeeklyOff(c?.attendance_weekly_off, [0]),
       annualPaidLeave: c?.attendance_annual_paid_leave ?? 0,
     };
@@ -283,7 +274,6 @@ export class AttendanceService {
       officeNetworks: co.officeNetworks,
       lockBufferMin: co.lockBufferMin,
       policy: co.policy,
-      autoCheckout: co.autoCheckout,
       checkinWindow: co.checkinWindow,
       checkinOpensAt,
       checkinCutoff,
@@ -350,7 +340,6 @@ export class AttendanceService {
       isLate: row.is_late,
       missedCheckout: row.missed_checkout,
       checkoutSource: row.checkout_source ?? null,
-      lastActiveAt: row.last_active_at ? row.last_active_at.toISOString() : null,
       workedMinutes: this.workedMinutes(row),
       note: row.note,
       overridden: row.marked_by_user_id != null && !row.system_marked,
@@ -423,7 +412,6 @@ export class AttendanceService {
       lockAfterShift: u.lockAfterShift && !u.flexible,
       appLocksAt: await this.appLocksAt(companyId, userId, u.role),
       requiredMinutes: u.flexible ? u.requiredMinutes ?? DEFAULT_REQUIRED_MINUTES : null,
-      autoCheckout: u.autoCheckout,
       excluded: NOT_TRACKED_ROLES.includes(u.role),
       record: row ? this.toCell(row) : null,
     };
@@ -523,21 +511,6 @@ export class AttendanceService {
     })) as DbRow;
     this.safeEmit(() => this.gateway.emitToCompany(companyId, 'attendance.changed', { userId, at: now.toISOString() }));
     return this.toCell(updated);
-  }
-
-  /** App-activity heartbeat: stamps the open day so auto-checkout can credit real hours. */
-  async heartbeat(companyId: number, userId: number) {
-    const now = new Date();
-    const res = await this.prisma.attendanceRecord.updateMany({
-      where: {
-        company_id: companyId,
-        user_id: userId,
-        check_in_at: { not: null, gte: new Date(now.getTime() - OPEN_ROW_MAX_MS) },
-        check_out_at: null,
-      },
-      data: { last_active_at: now },
-    });
-    return { ok: true, open: res.count > 0 };
   }
 
   /** When the app locks for this member today (ISO), null when no lock applies. */
@@ -1161,65 +1134,6 @@ export class AttendanceService {
     };
   }
 
-  // ── auto-checkout (worker tick) ───────────────────────────────────────────
-  async runAutoCheckout(now = new Date()) {
-    const open = (await this.prisma.attendanceRecord.findMany({
-      where: { check_in_at: { not: null, lte: new Date(now.getTime() - 60 * 60_000) }, check_out_at: null },
-      take: 2000,
-    })) as (DbRow & { company_id: number })[];
-    if (!open.length) return { closed: 0 };
-    const granted = await this.feature.companiesWith('attendance');
-    const byCompany = new Map<number, typeof open>();
-    for (const r of open) {
-      if (!granted.has(r.company_id)) continue;
-      if (!byCompany.has(r.company_id)) byCompany.set(r.company_id, []);
-      byCompany.get(r.company_id)!.push(r);
-    }
-    let closed = 0;
-    for (const [companyId, rows] of byCompany) {
-      try {
-        const co = await this.companyDefaults(companyId);
-        if (co.autoCheckout.mode === 'off') continue;
-        const members = (await this.prisma.user.findMany({
-          where: { company_id: companyId, id: { in: rows.map((r) => r.user_id) } },
-          select: MEMBER_SELECT,
-        })) as MemberRow[];
-        const byId = new Map(members.map((m) => [m.id, m]));
-        for (const r of rows) {
-          const m = byId.get(r.user_id);
-          if (!m || !r.check_in_at) continue;
-          const s = this.schedule(m, co);
-          const d = autoCheckoutDecision(
-            { workDay: r.work_date.toISOString().slice(0, 10), checkInAt: r.check_in_at, lastActiveAt: r.last_active_at ?? null },
-            { start: s.start, end: s.end, flexible: s.flexible, requiredMinutes: s.requiredMinutes },
-            co.autoCheckout,
-            co.tz,
-            now,
-          );
-          if (!d.close) continue;
-          const res = await this.prisma.attendanceRecord.updateMany({
-            where: { id: r.id, check_out_at: null },
-            data: {
-              check_out_at: d.at,
-              checkout_source: d.creditedBy === 'activity' ? 'auto_activity' : 'auto',
-              missed_checkout: true,
-            },
-          });
-          if (res.count) {
-            closed += 1;
-            this.safeEmit(() => {
-              this.gateway.emitToUsers([r.user_id], 'attendance.auto_checkout', { at: d.at.toISOString(), reason: d.reason });
-              this.gateway.emitToCompany(companyId, 'attendance.changed', { userId: r.user_id });
-            });
-          }
-        }
-      } catch (e) {
-        this.log.warn(`auto-checkout failed for company ${companyId}: ${(e as Error).message}`);
-      }
-    }
-    return { closed };
-  }
-
   /**
    * Worker tick: drop live sockets of members whose app just locked (after
    * shift end). REST is already refused by JwtStrategy; this ends realtime.
@@ -1346,7 +1260,6 @@ export class AttendanceService {
       lockBufferMinutes: co.lockBufferMin,
       checkinWindowMinutes: co.checkinWindow,
       payrollPolicy: co.policy,
-      autoCheckout: co.autoCheckout,
       weeklyOff: co.weeklyOff,
       annualPaidLeave: co.annualPaidLeave,
       yourIp: yourIp ?? '',
@@ -1373,9 +1286,6 @@ export class AttendanceService {
     if (dto.checkinWindowMinutes !== undefined) data.attendance_checkin_window_minutes = dto.checkinWindowMinutes ?? null;
     if (dto.payrollPolicy !== undefined) {
       data.attendance_payroll_policy = resolvePolicy({ ...co.policy, ...dto.payrollPolicy }) as unknown as object;
-    }
-    if (dto.autoCheckout !== undefined) {
-      data.attendance_auto_checkout = resolveAutoCheckout({ ...co.autoCheckout, ...dto.autoCheckout }) as unknown as object;
     }
     if (dto.weeklyOff !== undefined) data.attendance_weekly_off = resolveWeeklyOff(dto.weeklyOff, []);
     if (dto.annualPaidLeave !== undefined) data.attendance_annual_paid_leave = dto.annualPaidLeave ?? null;
@@ -1741,7 +1651,7 @@ export class AttendanceService {
     const header = [
       'Member', 'Role', 'Period', 'Work days', 'Present', 'Half days', 'Absent', 'Paid leave', 'Unpaid leave',
       'Late', 'Late min', 'OT min', 'Base', 'Allowances', 'Overtime', 'Commission', 'Additions',
-      'Absence', 'Unpaid leave ded', 'Half-day ded', 'Late ded', 'Missed check-out ded', 'Statutory', 'Other deductions',
+      'Absence', 'Unpaid leave ded', 'Half-day ded', 'Late ded', 'Statutory', 'Other deductions',
       'Gross', 'Deductions', 'Net',
     ];
     const lines = [header.map(csvCell).join(',')];
@@ -1751,7 +1661,7 @@ export class AttendanceService {
           r.name, r.role, `${r.periodFrom}..${r.periodTo}`, r.scheduledDays, r.present, r.halfDay, r.absent, r.paidLeave,
           r.unpaidLeave, r.lateCount, r.lateMinutes, r.overtimeMinutes, r.base, r.allowanceTotal, r.overtimePay,
           r.commission, r.adjustmentsPlus, r.absenceDeduction, r.unpaidLeaveDeduction, r.halfDayDeduction,
-          r.lateDeduction, r.autoCheckoutDeduction, r.statutoryDeduction, r.adjustmentsMinus, r.gross, r.deductions,
+          r.lateDeduction, r.statutoryDeduction, r.adjustmentsMinus, r.gross, r.deductions,
           r.netPayable,
         ]
           .map(csvCell)

@@ -6,7 +6,10 @@
 
 ## Current Status
 
-**PayFast statements accurate + returned orders keep their items (2026-11-27, latest):** no migration.
+**Attendance auto-checkout removed (2026-11-27, latest):** no migration.
+- The system no longer closes anyone's day. Forgotten check-outs are flagged "missed check-out" by the hourly sweep and fixed with a "Fix my day" request or by an admin in the grid. Auto-checkout settings, the payroll "missed check-out" penalty and the activity heartbeat are gone; old auto-closed days keep their label.
+
+**PayFast statements accurate + returned orders keep their items (2026-11-27):** no migration.
 - PayFast: refunds/deductions from the summary deducted (+ refund rows shown in their payout), UNIONPAY lot fixed, exact payout split, per-order WHT adds up, PKT transaction dates; preview shows refunds + "not matched" payouts. Sois 10–25 Nov file now matches PayFast's net to the rupee (was Rs 11,252.93 over).
 - Orders: cancelled / fully-refunded orders mirror their ORIGINAL items again (returns sheet + restock picklist were blank since 2026-11-26); worker re-reads affected orders once on boot.
 

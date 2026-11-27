@@ -3,13 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
-import { startAttendanceHeartbeat } from '@/lib/attendance-heartbeat';
 import { getMyToday, onAttendanceChanged, tenantHHMM, tenantNowHHMM, toMin, type MyToday } from '@/lib/attendance';
 
 /**
  * ONE source of "my attendance today" for the navbar chip, the reminder bar and
- * the My attendance tab. Refetches on: a check-in/out anywhere in the app, an
- * auto-checkout (socket), window focus, and when the tenant day rolls over (so
+ * the My attendance tab. Refetches on: a check-in/out anywhere in the app, a
+ * reviewed request (socket), window focus, and when the tenant day rolls over (so
  * a forgotten check-out from yesterday never lingers past midnight).
  * `now` ticks every 30 s so live timers and time-gated buttons flip on time.
  */
@@ -56,10 +55,8 @@ export function useMyToday() {
 
   useEffect(() => {
     if (!tracked) return;
-    const offAuto = on('attendance.auto_checkout', () => load());
     const offRev = on('attendance.request.reviewed', () => load());
     return () => {
-      offAuto();
       offRev();
     };
   }, [tracked, on, load]);
@@ -67,13 +64,6 @@ export function useMyToday() {
   const rec = today?.record ?? null;
   const checkedIn = !!rec?.checkInAt;
   const open = checkedIn && !rec?.checkOutAt;
-
-  // While the day is open, report app activity so a forgotten check-out is
-  // credited at the last activity (extra hours count).
-  useEffect(() => {
-    if (!tracked || !open) return;
-    return startAttendanceHeartbeat();
-  }, [tracked, open]);
 
   // "Lock app after shift end": minutes until the lock (null = no lock ahead).
   const locksInMin = today?.appLocksAt

@@ -766,7 +766,7 @@ ALTER TABLE users ADD COLUMN attendance_never_late BOOLEAN NOT NULL DEFAULT fals
 ALTER TABLE companies ADD COLUMN attendance_lock_after_shift BOOLEAN NOT NULL DEFAULT false,
                       ADD COLUMN attendance_lock_buffer_min INT NULL;              -- NULL = 30
 ALTER TABLE attendance_records MODIFY checkout_source VARCHAR(16) NULL,          -- + auto_activity
-                               ADD COLUMN last_active_at DATETIME(3) NULL;       -- app heartbeat
+                               ADD COLUMN last_active_at DATETIME(3) NULL;       -- app heartbeat (dormant since 2026-11-27: auto-checkout removed; companies.attendance_auto_checkout dormant too)
 -- companies.attendance_office_ips now holds JSON [{label, ip}] (legacy CSV still parsed).
 ALTER TABLE attendance_leave_requests ADD COLUMN kind VARCHAR(16) NOT NULL DEFAULT 'leave', -- leave | correction
   ADD COLUMN paid BOOLEAN NOT NULL DEFAULT true, ADD COLUMN leave_type VARCHAR(16) NULL,

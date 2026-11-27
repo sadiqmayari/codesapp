@@ -1,4 +1,3 @@
-import { autoCheckoutDecision, resolveAutoCheckout } from './auto-checkout';
 import { computePayslip, PayslipInput, PayslipRecord } from './payroll-math';
 import { resolvePolicy } from './payroll';
 import {
@@ -33,42 +32,6 @@ describe('schedule', () => {
     expect(resolveWeeklyOff(null)).toEqual([0]);
     expect(resolveWeeklyOff([6, 0, 0, 9])).toEqual([0, 6]);
     expect(resolveWeeklyOff([])).toEqual([]);
-  });
-});
-
-describe('auto-checkout', () => {
-  const policy = resolveAutoCheckout(null);
-  it('closes a fixed shift 30 min after its end, credited at the end', () => {
-    const day = { workDay: '2026-11-20', checkInAt: at('2026-11-20', '09:25') };
-    const sched = { start: '09:30', end: '18:30', flexible: false, requiredMinutes: null };
-    expect(autoCheckoutDecision(day, sched, policy, TZ, at('2026-11-20', '18:50')).close).toBe(false);
-    const d = autoCheckoutDecision(day, sched, policy, TZ, at('2026-11-20', '19:05'));
-    expect(d.close).toBe(true);
-    if (d.close) expect(d.at.toISOString()).toBe(at('2026-11-20', '18:30').toISOString());
-  });
-  it('closes a night shift the next morning', () => {
-    const day = { workDay: '2026-11-20', checkInAt: at('2026-11-20', '22:00') };
-    const sched = { start: '22:00', end: '06:00', flexible: false, requiredMinutes: null };
-    expect(autoCheckoutDecision(day, sched, policy, TZ, at('2026-11-21', '05:00')).close).toBe(false);
-    const d = autoCheckoutDecision(day, sched, policy, TZ, at('2026-11-21', '07:00'));
-    expect(d.close && d.at.toISOString()).toBe(at('2026-11-21', '06:00').toISOString());
-  });
-  it('closes flexible staff after max hours, credited the required hours', () => {
-    const day = { workDay: '2026-11-20', checkInAt: at('2026-11-20', '11:00') };
-    const sched = { start: '09:30', end: null, flexible: true, requiredMinutes: 480 };
-    expect(autoCheckoutDecision(day, sched, policy, TZ, at('2026-11-20', '22:00')).close).toBe(false);
-    const d = autoCheckoutDecision(day, sched, policy, TZ, at('2026-11-20', '23:05'));
-    expect(d.close && d.at.toISOString()).toBe(at('2026-11-20', '19:00').toISOString());
-  });
-  it('does nothing when off', () => {
-    const d = autoCheckoutDecision(
-      { workDay: '2026-11-20', checkInAt: at('2026-11-20', '09:00') },
-      { start: '09:30', end: '18:30', flexible: false, requiredMinutes: null },
-      resolveAutoCheckout({ mode: 'off' }),
-      TZ,
-      at('2026-11-21', '09:00'),
-    );
-    expect(d.close).toBe(false);
   });
 });
 
@@ -190,13 +153,6 @@ describe('payroll-math', () => {
     expect(p.lateDeduction).toBe(0);
     expect(p.overtimeMinutes).toBe(60);
   });
-  it('applies the auto-checkout penalty', () => {
-    const policy = resolvePolicy({ autoCheckoutPenalty: 'half_day' });
-    const p = computePayslip(
-      baseInput({ policy, records: [rec('2026-11-02', 'present', '09:30', '18:30', { checkoutSource: 'auto' })] }),
-    )!;
-    expect(p.autoCheckoutDeduction).toBe(1040);
-  });
   it('legacy policy with workingDaysPerMonth keeps the fixed divisor', () => {
     expect(resolvePolicy({ workingDaysPerMonth: 26 }).dayRateBasis).toBe('fixed');
     expect(resolvePolicy({}).dayRateBasis).toBe('calendar');
@@ -253,34 +209,6 @@ describe('commission-math', () => {
 import { formatOpensAt, workLockState } from './work-lock';
 import { isValidIpEntry, matchOfficeNetwork, parseOfficeNetworks } from '../../common/utils/ip-match';
 
-describe('auto-checkout credits last activity', () => {
-  const policy = resolveAutoCheckout(null);
-  const sched = { start: '09:30', end: '18:30', flexible: false, requiredMinutes: null };
-  it('waits while still active, then credits the last activity', () => {
-    const day = { workDay: '2026-11-20', checkInAt: at('2026-11-20', '09:25'), lastActiveAt: at('2026-11-20', '20:40') };
-    expect(autoCheckoutDecision(day, sched, policy, TZ, at('2026-11-20', '21:00')).close).toBe(false);
-    const d = autoCheckoutDecision(day, sched, policy, TZ, at('2026-11-20', '21:15'));
-    expect(d.close && d.at.toISOString()).toBe(at('2026-11-20', '20:40').toISOString());
-    expect(d.close && d.creditedBy).toBe('activity');
-  });
-  it('never credits less than shift end', () => {
-    const day = { workDay: '2026-11-20', checkInAt: at('2026-11-20', '09:25'), lastActiveAt: at('2026-11-20', '14:00') };
-    const d = autoCheckoutDecision(day, sched, policy, TZ, at('2026-11-20', '19:05'));
-    expect(d.close && d.at.toISOString()).toBe(at('2026-11-20', '18:30').toISOString());
-    expect(d.close && d.creditedBy).toBe('schedule');
-  });
-  it('caps activity credit at max hours', () => {
-    const day = { workDay: '2026-11-20', checkInAt: at('2026-11-20', '09:00'), lastActiveAt: at('2026-11-20', '23:30') };
-    const d = autoCheckoutDecision(day, sched, policy, TZ, at('2026-11-21', '00:10'));
-    expect(d.close && d.at.toISOString()).toBe(at('2026-11-20', '21:00').toISOString());
-  });
-  it('flexible staff get their later activity', () => {
-    const day = { workDay: '2026-11-20', checkInAt: at('2026-11-20', '11:00'), lastActiveAt: at('2026-11-20', '21:30') };
-    const d = autoCheckoutDecision(day, { ...sched, flexible: true, requiredMinutes: 480 }, policy, TZ, at('2026-11-20', '23:05'));
-    expect(d.close && d.at.toISOString()).toBe(at('2026-11-20', '21:30').toISOString());
-  });
-});
-
 describe('payroll follow-ups', () => {
   it('relaxed staff are never late but keep fixed-shift overtime', () => {
     const policy = resolvePolicy({ overtimeMethod: 'per_minute', lateMethod: 'fixed_per_late', lateFixedAmount: 500 });
@@ -294,7 +222,7 @@ describe('payroll follow-ups', () => {
     expect(p.lateDeduction).toBe(0);
     expect(p.overtimeMinutes).toBe(60);
   });
-  it('auto_activity days earn overtime, plain auto days do not', () => {
+  it('historical auto_activity days earn overtime, plain auto days do not', () => {
     const policy = resolvePolicy({ overtimeMethod: 'per_minute' });
     const a = computePayslip(baseInput({ policy, records: [rec('2026-11-02', 'present', '09:30', '20:30', { checkoutSource: 'auto_activity' })] }))!;
     const b = computePayslip(baseInput({ policy, records: [rec('2026-11-02', 'present', '09:30', '20:30', { checkoutSource: 'auto' })] }))!;
