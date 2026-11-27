@@ -34,7 +34,8 @@ import { AiKnowledgeService } from '../../ai/ai-knowledge.service';
 import { AiRagService, RagItem } from '../../ai/ai-rag.service';
 import { COURIER_DISPLAY_NAME, courierTrackingUrl } from '../../couriers/couriers.constants';
 import { formatLineItemsSummary } from '../../../common/utils/line-items-summary';
-import { effectiveQty } from '../../../common/utils/order-lines';
+import { mirrorLines } from '../../../common/utils/order-lines';
+import { runsBackground } from '../../../common/utils/process-role';
 import { classifySearch, likeContains } from '../../../common/utils/search';
 import { SharedStateService } from '../../../common/services/shared-state.service';
 
@@ -217,6 +218,7 @@ type ShopifyJob =
   | { kind: 'syncCancellations'; companyId: number }
   | { kind: 'syncOrderSources'; companyId: number }
   | { kind: 'backfillPrepaidTags'; companyId: number }
+  | { kind: 'healEmptyLines'; companyId: number; beforeId?: number }
   | { kind: 'reconcileOrderCarts'; companyId: number; order: ShopifyOrderPayload }
   | {
       kind: 'notify';
@@ -476,7 +478,67 @@ export class ShopifyService implements OnModuleInit {
       120,
     );
     this.logger.log('Registered shopify worker (concurrency=4, lease=120s)');
+    // One-shot heal (Nov-2026): returned / cancelled orders mirrored between
+    // 2026-11-25 and the mirrorLines fix were saved with NO items (every line at
+    // current 0). Re-read them from Shopify once on worker boot; a healed row no
+    // longer matches, so this goes quiet by itself.
+    if (runsBackground()) {
+      setTimeout(() => void this.enqueueEmptyLineHeal().catch(() => undefined), 90_000);
+    }
   }
+
+  private async enqueueEmptyLineHeal(): Promise<void> {
+    const rows = await this.prisma.$queryRawUnsafe<Array<{ company_id: number }>>(
+      `SELECT DISTINCT company_id FROM shopify_orders
+        WHERE updated_at >= '2026-11-25' AND shopify_order_gid LIKE 'gid://shopify/Order/%'
+          AND (line_items IS NULL OR JSON_LENGTH(line_items) = 0)`,
+    );
+    for (const r of rows) {
+      await this.jobQueue.enqueue(
+        'shopify',
+        { kind: 'healEmptyLines', companyId: Number(r.company_id) } satisfies ShopifyJob,
+        { dedupKey: `shopify:heal-empty-lines:${r.company_id}`, maxAttempts: 1 },
+      );
+    }
+    if (rows.length) this.logger.log(`Empty-line heal queued for ${rows.length} compan(ies)`);
+  }
+
+  /** Re-read orders mirrored with no items (see enqueueEmptyLineHeal). 60 per job
+   *  (fits the 120 s shopify lease), newest first, then chains the next page. */
+  private async healEmptyLines(companyId: number, beforeId?: number): Promise<void> {
+    const PAGE = 60;
+    const rows = await this.prisma.$queryRawUnsafe<Array<{ id: number; gid: string }>>(
+      `SELECT id, shopify_order_gid gid FROM shopify_orders
+        WHERE company_id = ? AND id < ? AND updated_at >= '2026-11-25'
+          AND shopify_order_gid LIKE 'gid://shopify/Order/%'
+          AND (line_items IS NULL OR JSON_LENGTH(line_items) = 0)
+        ORDER BY id DESC LIMIT ${PAGE}`,
+      companyId,
+      beforeId ?? 2_147_483_647,
+    );
+    let ok = 0;
+    for (const r of rows) {
+      try {
+        await this.refreshOrderMirror(companyId, r.gid);
+        ok++;
+      } catch (e) {
+        this.logger.warn(
+          `Empty-line heal failed (${r.gid}): ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+      await new Promise((res) => setTimeout(res, 200));
+    }
+    this.logger.log(`Empty-line heal: company ${companyId} — ${ok}/${rows.length} orders re-read`);
+    if (rows.length === PAGE) {
+      const next = Number(rows[rows.length - 1].id);
+      await this.jobQueue.enqueue(
+        'shopify',
+        { kind: 'healEmptyLines', companyId, beforeId: next } satisfies ShopifyJob,
+        { dedupKey: `shopify:heal-empty-lines:${companyId}:${next}`, maxAttempts: 1 },
+      );
+    }
+  }
+
 
   private async processJob(job: ShopifyJob): Promise<void> {
     if (job.kind === 'send') {
@@ -502,6 +564,8 @@ export class ShopifyService implements OnModuleInit {
       await this.syncOrderCancellations(job.companyId);
     } else if (job.kind === 'syncOrderSources') {
       await this.syncOrderSources(job.companyId);
+    } else if (job.kind === 'healEmptyLines') {
+      await this.healEmptyLines(job.companyId, job.beforeId);
     } else if (job.kind === 'backfillPrepaidTags') {
       await this.backfillPrepaidConfirmTags(job.companyId);
     } else if (job.kind === 'reconcileOrderCarts') {
@@ -8635,21 +8699,22 @@ export class ShopifyService implements OnModuleInit {
     // only open orders are re-priced here.
     const cancelled = !!order.cancelledAt;
     const amt = (m: Money | undefined) => m?.shopMoney?.amount ?? null;
-    const items = (order.lineItems?.edges ?? [])
-      .map((e) => ({
-        title: e.node?.title ?? 'Item',
-        quantity: effectiveQty(e.node ?? null),
-        sku: e.node?.sku || null,
-        variantTitle: e.node?.variantTitle ?? e.node?.variant?.title ?? null,
-        variantId: e.node?.variant?.id ?? null,
+    // Current lines; a cancelled / fully-refunded order keeps its ordered lines.
+    const items = mirrorLines((order.lineItems?.edges ?? []).flatMap((e) => (e.node ? [e.node] : []))).map(
+      ({ line: n, qty }) => ({
+        title: n.title ?? 'Item',
+        quantity: qty,
+        sku: n.sku || null,
+        variantTitle: n.variantTitle ?? n.variant?.title ?? null,
+        variantId: n.variant?.id ?? null,
         // Order-time unit price (before discount), not today's catalogue price.
-        price: amt(e.node?.originalUnitPriceSet) ?? e.node?.variant?.price ?? null,
-        lineDiscount: (e.node?.discountAllocations ?? []).reduce(
+        price: amt(n.originalUnitPriceSet) ?? n.variant?.price ?? null,
+        lineDiscount: (n.discountAllocations ?? []).reduce(
           (acc, d) => acc + (Number(amt(d.allocatedAmountSet)) || 0),
           0,
         ),
-      }))
-      .filter((i) => i.quantity > 0);
+      }),
+    );
     const summary = formatLineItemsSummary(items);
     const totalPrice = amt(order.currentTotalPriceSet);
     const outstanding = amt(order.totalOutstandingSet);

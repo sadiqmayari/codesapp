@@ -30,10 +30,41 @@ export function effectiveQty(line: QtyLine | null | undefined): number {
   return Number.isFinite(q) ? Math.max(0, q) : 0;
 }
 
-/** Keep only lines still on the order (effective qty > 0). */
-export function liveLines<T extends QtyLine>(lines: T[] | null | undefined): T[] {
+/** Units originally ordered on a line (ignores current quantity). */
+export function orderedQty(line: QtyLine | null | undefined): number {
+  if (!line) return 0;
+  if (line.quantity == null || line.quantity === '') return 1;
+  const q = Number(line.quantity);
+  return Number.isFinite(q) ? Math.max(0, q) : 0;
+}
+
+/**
+ * The lines to mirror, each with the quantity to store.
+ *
+ * Normally = the lines still on the order at their CURRENT quantity (removed
+ * lines dropped). But when EVERY line is at current 0 the order was cancelled /
+ * fully refunded (an RTO receipt cancels with restock) — Shopify never lets an
+ * edit remove the last line — so keep the ORIGINAL lines and quantities, like the
+ * money rule in `currentOrOriginal`. Otherwise a returned order mirrors with no
+ * items and the returns sheet / restock picklist print blank.
+ */
+export function mirrorLines<T extends QtyLine>(
+  lines: T[] | null | undefined,
+): Array<{ line: T; qty: number }> {
   if (!Array.isArray(lines)) return [];
-  return lines.filter((l) => effectiveQty(l) > 0);
+  const live = lines
+    .map((line) => ({ line, qty: effectiveQty(line) }))
+    .filter((x) => x.qty > 0);
+  if (live.length || !lines.length) return live;
+  return lines
+    .map((line) => ({ line, qty: orderedQty(line) }))
+    .filter((x) => x.qty > 0);
+}
+
+/** Lines to keep (see `mirrorLines`): current lines, or the ordered lines of a
+ *  cancelled / fully-refunded order. */
+export function liveLines<T extends QtyLine>(lines: T[] | null | undefined): T[] {
+  return mirrorLines(lines).map((x) => x.line);
 }
 
 /**

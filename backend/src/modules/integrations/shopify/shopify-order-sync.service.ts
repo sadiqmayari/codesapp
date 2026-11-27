@@ -5,7 +5,7 @@ import { EncryptionService } from '../../../common/services/encryption.service';
 import { ShopifyTokenService } from './shopify-token.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { formatLineItemsSummary } from '../../../common/utils/line-items-summary';
-import { currentOrOriginal, effectiveQty, liveLines } from '../../../common/utils/order-lines';
+import { currentOrOriginal, mirrorLines } from '../../../common/utils/order-lines';
 import { CustomerRegistryService } from '../../../common/services/customer-registry.service';
 import { classify } from '../../growth/attribution/attribution';
 
@@ -354,7 +354,8 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       null;
     // Current lines only: after an order edit REST `quantity` stays at the
     // ORIGINAL amount and removed lines remain with current_quantity 0.
-    const lineItems = liveLines(
+    // (A cancelled / fully-refunded order — every line at 0 — keeps its ordered lines.)
+    const lineItems = mirrorLines(
       Array.isArray(payload.line_items)
         ? (payload.line_items as Array<Record<string, unknown>>)
         : [],
@@ -417,9 +418,9 @@ export class ShopifyOrderSyncService implements OnModuleInit {
               0,
             )
           : null,
-        lineItems: lineItems.map((li) => ({
+        lineItems: lineItems.map(({ line: li, qty }) => ({
           title: li.title ?? null,
-          quantity: effectiveQty(li),
+          quantity: qty,
           sku: (li.sku as string) || null,
           variantId:
             li.variant_id != null
@@ -431,9 +432,9 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           lineDiscount: num(li.total_discount) ?? 0,
         })),
         lineItemsSummary: formatLineItemsSummary(
-          lineItems.map((li) => ({
+          lineItems.map(({ line: li, qty }) => ({
             title: li.title != null ? String(li.title) : null,
-            quantity: effectiveQty(li),
+            quantity: qty,
             variantTitle: li.variant_title != null ? String(li.variant_title) : null,
           })),
         ),
@@ -1151,7 +1152,11 @@ export class ShopifyOrderSyncService implements OnModuleInit {
         const n = edge.node;
         if (!n?.id) continue;
         // Current lines only (an edited order keeps removed lines at currentQuantity 0).
-        const li = (n.lineItems?.edges ?? []).filter((e) => effectiveQty(e.node) > 0);
+        // (A cancelled / fully-refunded order keeps its ordered lines — see mirrorLines.)
+        const li = mirrorLines((n.lineItems?.edges ?? []).map((e) => e.node)).map((x) => ({
+          node: x.line,
+          qty: x.qty,
+        }));
         const dispFul = (n.displayFulfillmentStatus ?? '').toLowerCase();
         // Delivery tracking from the order's fulfillments (latest wins).
         const ful = n.fulfillments ?? [];
@@ -1225,7 +1230,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
                   : 'unfulfilled',
             lineItems: li.map((e) => ({
               title: e.node.title ?? null,
-              quantity: effectiveQty(e.node),
+              quantity: e.qty,
               sku: e.node.sku || null,
               variantId: e.node.variant?.id ?? null,
               variantTitle: e.node.variantTitle ?? null,
@@ -1239,7 +1244,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             lineItemsSummary: formatLineItemsSummary(
               li.map((e) => ({
                 title: e.node.title ?? null,
-                quantity: effectiveQty(e.node),
+                quantity: e.qty,
                 variantTitle: e.node.variantTitle ?? null,
               })),
             ),
@@ -1664,7 +1669,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
         let lines: string | null = null;
         // Same live-lines rule as every mirror writer (removed lines dropped), so the
         // positional merge lines up with the stored (current-only) list.
-        const edges = (node.lineItems?.edges ?? []).filter((e) => effectiveQty(e.node) > 0);
+        const edges = mirrorLines((node.lineItems?.edges ?? []).map((e) => e.node)).map((x) => ({ node: x.line }));
         const stored = Array.isArray(r.line_items) ? (r.line_items as Array<Record<string, unknown>>) : null;
         if (stored && stored.length === edges.length) {
           lines = JSON.stringify(

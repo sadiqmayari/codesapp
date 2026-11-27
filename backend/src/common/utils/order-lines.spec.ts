@@ -1,4 +1,4 @@
-import { currentOrOriginal, effectiveQty, liveLines } from './order-lines';
+import { currentOrOriginal, effectiveQty, liveLines, mirrorLines } from './order-lines';
 
 describe('order lines — effective quantity', () => {
   it('uses currentQuantity (GraphQL) over the original quantity', () => {
@@ -21,6 +21,24 @@ describe('order lines — effective quantity', () => {
       { title: 'C', quantity: 1 },
     ];
     expect(liveLines(lines).map((l) => l.title)).toEqual(['B', 'C']);
+  });
+  it('keeps the ordered lines when every line is at 0 (cancelled / RTO)', () => {
+    const lines = [
+      { title: 'A', quantity: 2, current_quantity: 0 },
+      { title: 'B', quantity: 1, currentQuantity: 0 },
+    ];
+    expect(mirrorLines(lines).map((x) => [x.line.title, x.qty])).toEqual([
+      ['A', 2],
+      ['B', 1],
+    ]);
+    expect(liveLines(lines).map((l) => l.title)).toEqual(['A', 'B']);
+  });
+  it('mirrorLines uses the current quantity for open orders', () => {
+    const lines = [
+      { title: 'A', quantity: 2, current_quantity: 0 },
+      { title: 'B', quantity: 3, current_quantity: 1 },
+    ];
+    expect(mirrorLines(lines).map((x) => [x.line.title, x.qty])).toEqual([['B', 1]]);
   });
   it('currentOrOriginal keeps the original for cancelled orders only', () => {
     expect(currentOrOriginal(false, '3999', '4998')).toBe('3999');

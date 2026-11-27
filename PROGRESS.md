@@ -6,6 +6,10 @@
 
 ## Current Status
 
+**PayFast statements accurate + returned orders keep their items (2026-11-27, latest):** no migration.
+- PayFast: refunds/deductions from the summary deducted (+ refund rows shown in their payout), UNIONPAY lot fixed, exact payout split, per-order WHT adds up, PKT transaction dates; preview shows refunds + "not matched" payouts. Sois 10–25 Nov file now matches PayFast's net to the rupee (was Rs 11,252.93 over).
+- Orders: cancelled / fully-refunded orders mirror their ORIGINAL items again (returns sheet + restock picklist were blank since 2026-11-26); worker re-reads affected orders once on boot.
+
 **UI audit — contact drawer overlap, double attendance, overlays (2026-11-26, latest):** frontend only, no migration.
 - Inbox thread header now sizes to its own width (ResizeObserver): with the contact drawer open it collapses to Info + ⋮ instead of spilling over the drawer; chips/progress bar only when roomy; thread column clips.
 - Attendance shown once: reminder bar removed, navbar chip carries the check-in / shift-over / app-lock nudges (amber + pulse); admin toasts kept (headless `attendance-admin-toasts.tsx`).

@@ -47,6 +47,8 @@ export function PayfastSettlementModal({
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Payouts CodesApp couldn't line up with a row of the PayFast summary file.
+  const unmatchedPayouts = (preview?.batches ?? []).filter((b) => b.summaryMatched === false).length;
   const cur = preview?.currency ?? 'PKR';
   const money = (v: number | null | undefined) =>
     v == null ? '—' : `${cur} ${Math.round(v).toLocaleString()}`;
@@ -232,10 +234,17 @@ export function PayfastSettlementModal({
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div
+            className={cn(
+              'grid grid-cols-2 gap-2',
+              (summary.grandAdjustments ?? 0) > 0 ? 'sm:grid-cols-5' : 'sm:grid-cols-4',
+            )}
+          >
             {tile('Gross collected', money(summary.grandGross))}
             {tile('Fee (MDR+GST)', `- ${money(summary.grandFees)}`, 'red')}
             {tile('Tax (WHT+ST)', `- ${money(summary.grandWhtSt)}`, 'red')}
+            {(summary.grandAdjustments ?? 0) > 0 &&
+              tile('Refunds / adj.', `- ${money(summary.grandAdjustments ?? 0)}`, 'red')}
             {tile('Net received', money(summary.grandReceived), 'green')}
           </div>
 
@@ -248,6 +257,12 @@ export function PayfastSettlementModal({
                 ['Transactions in the file', String(summary.totalTxns), ''],
                 ['Matched to your orders', `${summary.matchedTxns} of ${summary.totalTxns}`, summary.unmatchedTxns ? 'amber' : 'green'],
                 ['Settlements (payout batches)', String(summary.batches), ''],
+                ...(unmatchedPayouts
+                  ? [['Payouts not matching the PayFast summary', String(unmatchedPayouts), 'amber']]
+                  : []),
+                ...((summary.refundTxns ?? 0) > 0
+                  ? [['Refunds PayFast deducted (not reconciled)', String(summary.refundTxns), '']]
+                  : []),
                 ['Will be marked reconciled', String(summary.matchedTxns), 'green'],
                 ['Already reconciled by an earlier statement', String(summary.alreadyReconciledTxns ?? 0), summary.alreadyReconciledTxns ? 'amber' : ''],
                 ['Not found in CodesApp', String(summary.unmatchedTxns), summary.unmatchedTxns ? 'amber' : ''],

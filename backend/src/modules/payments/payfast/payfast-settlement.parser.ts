@@ -51,6 +51,7 @@ export class PayfastSettlementParser {
     }
 
     const txns = this.parseTxns(txnRows);
+    const refunds = this.parseTxns(txnRows, 'refund');
     if (!txns.length) {
       throw new BadRequestException('No successful transactions were found in that file.');
     }
@@ -82,6 +83,7 @@ export class PayfastSettlementParser {
       currency: 'PKR',
       txns,
       summaryRows: summary,
+      refunds,
       totals: {
         txns: totals.txns,
         gross: round2(totals.gross),
@@ -109,12 +111,13 @@ export class PayfastSettlementParser {
     }
   }
 
-  private parseTxns(rows: Record<string, string>[]): PayfastTxn[] {
+  /** `want='success'` = the payments; `want='refund'` = refund rows (money
+   *  PayFast took back from a payout). Blank status counts as success. */
+  private parseTxns(rows: Record<string, string>[], want: 'success' | 'refund' = 'success'): PayfastTxn[] {
     const out: PayfastTxn[] = [];
     for (const r of rows) {
       const status = (this.pick(r, ['transaction_status', 'status']) ?? '').toLowerCase();
-      // Only settled/successful transactions carry money; skip anything else.
-      if (status && status !== 'success') continue;
+      if (want === 'success' ? status && status !== 'success' : status !== 'refund') continue;
       const paymentId = (this.pick(r, ['order_id']) ?? '').trim();
       if (!paymentId) continue;
       // fee = MDR + GST-on-MDR. Compute it from the two component columns rather
@@ -153,6 +156,14 @@ export class PayfastSettlementParser {
         // Withholding actually deducted for this payout (WHT income + sales tax).
         // Only some batches carry it — the authoritative source for net received.
         whtSt: this.num(this.pick(r, ['wht + st', 'wht+st'])),
+        // Refunds / deductions PayFast took off this payout. Merchant Amount is
+        // already net of them; Net Amount = Merchant Amount − WHT+ST.
+        adjustments: round2(
+          this.num(this.pick(r, ['refund/adj', 'refund / adj', 'refund'])) +
+            this.num(this.pick(r, ['deductions'])) +
+            this.num(this.pick(r, ['wrong debit adjustment'])),
+        ),
+        net: this.pick(r, ['net amount']) ? this.num(this.pick(r, ['net amount'])) : null,
       });
     }
     return out;
@@ -192,9 +203,17 @@ export class PayfastSettlementParser {
     return null;
   }
 
-  /** Transaction date is DAY-first: "18-08-26 23:41". Informational only. */
+  /** Transaction date: "2026-11-24 21:13:39" (current export, Pakistan time)
+   *  or the older DAY-first "18-08-26 23:41". Informational only. */
   private parseTxnDate(raw: string | null): Date | null {
     if (!raw) return null;
+    const iso = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(raw.trim());
+    if (iso) {
+      const d = new Date(
+        `${iso[1]}-${iso[2]}-${iso[3]}T${iso[4]}:${iso[5]}:${iso[6] ?? '00'}+05:00`,
+      );
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
     const m = /^(\d{1,2})-(\d{1,2})-(\d{2,4})/.exec(raw.trim());
     if (m) {
       const d = new Date(Date.UTC(this.y4(m[3]), Number(m[2]) - 1, Number(m[1])));

@@ -41,6 +41,11 @@ export interface PayfastSummaryRow {
   merchant: number;
   /** WHT+ST actually withheld for this batch (0 on batches with no withholding). */
   whtSt: number;
+  /** Refund/Adj + Deductions + Wrong Debit Adjustment PayFast took off this
+   *  payout (positive = deducted). Merchant Amount is already AFTER refunds. */
+  adjustments: number;
+  /** Net Amount column (what reached the bank), when present. */
+  net: number | null;
 }
 
 export interface ParsedPayfast {
@@ -50,6 +55,9 @@ export interface ParsedPayfast {
   currency: string;
   txns: PayfastTxn[];
   summaryRows: PayfastSummaryRow[]; // [] when no summary file uploaded
+  /** `Refund` rows of the transaction file — money PayFast clawed back from a
+   *  payout. Never reconciled; shown inside the payout they were deducted from. */
+  refunds: PayfastTxn[];
   totals: {
     txns: number;
     gross: number;
@@ -91,7 +99,11 @@ export interface PayfastBatch {
   fees: number;
   /** WHT+ST actually withheld for this batch (from the summary; 0 if none). */
   whtSt: number;
-  /** NET received = gross - fees - whtSt (what actually reaches the bank). */
+  /** Refunds / deductions PayFast took off this payout (summary file). */
+  adjustments?: number;
+  /** The refund transactions behind `adjustments` (when the file carries them). */
+  refunds?: ReconciledPayfastTxn[];
+  /** NET received = gross - fees - whtSt - adjustments (what reaches the bank). */
   received: number;
   /** Cross-check against the summary file (null when no summary uploaded). */
   summaryMatched: boolean | null;
@@ -115,6 +127,9 @@ export interface PayfastReconcileSummary {
   grandGst: number;
   grandWhtSt: number;
   grandReceived: number;
+  /** Refunds / deductions taken off payouts (summary file). */
+  grandAdjustments?: number;
+  refundTxns?: number;
   /** Present after apply. */
   progress?: {
     processed: number;

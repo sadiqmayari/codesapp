@@ -50,6 +50,10 @@ export interface PayfastBatch {
   gross: number;
   fees: number;
   whtSt: number;
+  /** Refunds / deductions PayFast took off this payout. */
+  adjustments?: number;
+  /** Refund rows behind `adjustments` (display only — never reconciled). */
+  refunds?: PayfastTxnRow[];
   received: number;
   summaryMatched: boolean | null;
   txns: PayfastTxnRow[];
@@ -70,6 +74,8 @@ export interface PayfastSummary {
   grandGst: number;
   grandWhtSt: number;
   grandReceived: number;
+  grandAdjustments?: number;
+  refundTxns?: number;
   progress?: {
     processed: number;
     total: number;

@@ -20,6 +20,8 @@ export interface PayfastStatementPdfOpts {
     gst: number;
     whtSt: number;
     received: number;
+    /** Refunds / deductions PayFast took off the payouts (0 = none). */
+    adjustments?: number;
   };
   batches: PayfastBatch[];
   unmatched: Array<{ paymentId: string; amount: number; issuer: string }>;
@@ -135,9 +137,14 @@ export async function buildPayfastStatementPdf(
     ['Gross collected', money(opts.grand.gross), ink],
     ['Fee (MDR+GST)', `- ${money(opts.grand.fees)}`, red],
     ['Tax (WHT+ST)', `- ${money(opts.grand.whtSt)}`, red],
+    ...((opts.grand.adjustments ?? 0) > 0
+      ? ([['Refunds / adj.', `- ${money(opts.grand.adjustments ?? 0)}`, red]] as Array<
+          [string, string, ReturnType<typeof rgb>]
+        >)
+      : []),
     ['Net received', money(opts.grand.received), green],
   ];
-  const cw = (usable - 3 * 10) / 4;
+  const cw = (usable - (cards.length - 1) * 10) / cards.length;
   const chH = 50;
   cards.forEach(([label, val, col], i) => {
     const x = M + i * (cw + 10);
@@ -156,7 +163,7 @@ export async function buildPayfastStatementPdf(
   // Show an Invoice column only when at least one order carries a courier
   // invoice number (i.e. the tenant has invoice-import on and it's been stamped).
   const hasInvoice = opts.batches.some((b) =>
-    b.txns.some((t) => !!t.courierInvoiceNumber),
+    [...b.txns, ...(b.refunds ?? [])].some((t) => !!t.courierInvoiceNumber),
   );
   const orderW = 78;
   const methodW = hasInvoice ? 96 : 120;
@@ -229,6 +236,31 @@ export async function buildPayfastStatementPdf(
       cell('recv', money(t.merchantAmount - (t.actualWht ?? 0)), font);
       y -= LH;
       zi++;
+    }
+    // Refunds PayFast deducted from this payout (shown as negative lines).
+    for (const r of b.refunds ?? []) {
+      ensure(LH);
+      if (y - LH < M) {
+        drawHeaderRow();
+      }
+      page.drawRectangle({ x: M, y: y - LH, width: usable, height: LH, color: rgb(1, 0.94, 0.94) });
+      cell('order', `Refund ${r.orderName ?? ''}`.trim(), bold, red);
+      if (hasInvoice) cell('invoice', r.courierInvoiceNumber || '—', font, grey);
+      cell('method', r.issuer, font, grey);
+      cell('amount', `- ${money(r.amount)}`, font, red);
+      cell('fee', '', font, grey);
+      cell('recv', `- ${money(r.merchantAmount)}`, font, red);
+      y -= LH;
+    }
+    // Deduction with no refund rows in the file (e.g. a PayFast adjustment).
+    const refundRowsSum = (b.refunds ?? []).reduce((s2, r) => s2 + r.merchantAmount, 0);
+    const otherAdj = Math.round(((b.adjustments ?? 0) - refundRowsSum) * 100) / 100;
+    if (Math.abs(otherAdj) >= 0.01) {
+      ensure(LH);
+      page.drawRectangle({ x: M, y: y - LH, width: usable, height: LH, color: rgb(1, 0.94, 0.94) });
+      cell('order', 'PayFast adjustment', bold, red);
+      cell('recv', `- ${money(otherAdj)}`, font, red);
+      y -= LH;
     }
     // subtotal row
     ensure(LH);

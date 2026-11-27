@@ -87,11 +87,18 @@ export function PayfastStatementViewModal({
           </div>
 
           {/* Grand totals */}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div
+            className={`grid grid-cols-2 gap-2 ${
+              (data.summary.grandAdjustments ?? 0) > 0 ? 'sm:grid-cols-5' : 'sm:grid-cols-4'
+            }`}
+          >
             {[
               ['Gross collected', money(data.gross), 'text-gray-800'],
               ['Fee (MDR+GST)', `- ${money(data.summary.grandFees)}`, 'text-red-700'],
               ['Tax (WHT+ST)', `- ${money(data.summary.grandWhtSt)}`, 'text-red-700'],
+              ...((data.summary.grandAdjustments ?? 0) > 0
+                ? [['Refunds / adj.', `- ${money(data.summary.grandAdjustments ?? 0)}`, 'text-red-700']]
+                : []),
               ['Net received', money(data.received), 'text-green-700'],
             ].map(([label, val, col]) => (
               <div key={label} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
@@ -108,12 +115,22 @@ export function PayfastStatementViewModal({
           {/* Per-settlement sections */}
           <div className="max-h-[52vh] space-y-3 overflow-y-auto pr-1">
             {data.batches.map((b, i) => {
-              const bHasInv = b.txns.some((t) => !!t.courierInvoiceNumber);
+              const bHasInv = [...b.txns, ...(b.refunds ?? [])].some((t) => !!t.courierInvoiceNumber);
+              const refundSum = (b.refunds ?? []).reduce((s2, r) => s2 + r.merchantAmount, 0);
+              const otherAdj = Math.round(((b.adjustments ?? 0) - refundSum) * 100) / 100;
               return (
               <details key={i} className="rounded-lg border border-gray-200" open={data.batches.length <= 3}>
                 <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-2 bg-gray-50 px-3 py-2 text-xs">
                   <span className="font-semibold text-gray-800">
                     {b.settlementDate ?? '—'} · {b.bank} · {b.count} orders
+                    {b.summaryMatched === false && (
+                      <span
+                        title="Couldn't be matched to a payout in the PayFast summary file — check this lot against the bank"
+                        className="ml-1.5 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold uppercase text-amber-700"
+                      >
+                        not matched
+                      </span>
+                    )}
                   </span>
                   <span className="font-semibold text-green-700">
                     {money(b.gross)} → {money(b.received)}
@@ -154,6 +171,26 @@ export function PayfastStatementViewModal({
                           <td className="px-3 py-1.5 text-right text-gray-700">{money(t.merchantAmount - (t.actualWht ?? 0))}</td>
                         </tr>
                       ))}
+                      {(b.refunds ?? []).map((r, j) => (
+                        <tr key={`r${j}`} className="border-b border-red-50 bg-red-50/60 text-red-700">
+                          <td className="px-3 py-1.5 font-medium">Refund {r.orderName ?? ''}</td>
+                          {bHasInv && <td className="px-2 py-1.5">{r.courierInvoiceNumber || '—'}</td>}
+                          <td className="px-2 py-1.5">{r.issuer}</td>
+                          <td className="px-2 py-1.5 text-right">- {money(r.amount)}</td>
+                          <td className="px-2 py-1.5" />
+                          <td className="px-3 py-1.5 text-right">- {money(r.merchantAmount)}</td>
+                        </tr>
+                      ))}
+                      {Math.abs(otherAdj) >= 0.01 && (
+                        <tr className="border-b border-red-50 bg-red-50/60 text-red-700">
+                          <td className="px-3 py-1.5 font-medium">PayFast adjustment</td>
+                          {bHasInv && <td className="px-2 py-1.5" />}
+                          <td className="px-2 py-1.5" />
+                          <td className="px-2 py-1.5" />
+                          <td className="px-2 py-1.5" />
+                          <td className="px-3 py-1.5 text-right">- {money(otherAdj)}</td>
+                        </tr>
+                      )}
                       <tr className="bg-gray-50 font-semibold">
                         <td className="px-3 py-1.5 text-gray-800">Subtotal</td>
                         {bHasInv && <td className="px-2 py-1.5" />}

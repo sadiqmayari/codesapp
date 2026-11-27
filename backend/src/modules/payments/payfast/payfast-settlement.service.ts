@@ -26,7 +26,11 @@ import {
 export const PAYFAST_APPLY_QUEUE = 'payfast-settlement-apply';
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const UNMATCHED_SAMPLE_CAP = 50;
-const CARD_ISSUER = /visa|master|amex|union|card|debit|credit/i;
+const CARD_ISSUER = /visa|master|amex|card|debit|credit/i;
+/** Schemes whose payout lot can't be told from the issuer name — e.g. PayFast
+ *  settles UNIONPAY with the wallet/bank lot (HMB), not with the card lot. The
+ *  summary split tries both lots for these before giving up. */
+const AMBIGUOUS_ISSUER = /union|paypak|amex/i;
 
 interface ApplyJob {
   companyId: number;
@@ -151,7 +155,8 @@ export class PayfastSettlementService implements OnModuleInit {
     companyId: number,
     parsed: ParsedPayfast,
   ): Promise<{ batches: PayfastBatch[]; summary: PayfastReconcileSummary }> {
-    const refs = [...new Set(parsed.txns.map((t) => t.paymentId))];
+    const refunds = parsed.refunds ?? [];
+    const refs = [...new Set([...parsed.txns, ...refunds].map((t) => t.paymentId))];
     // Only surface courier invoice numbers when the tenant has invoice-import on.
     const showInvoice = !!(
       await this.prisma.company.findUnique({
@@ -204,6 +209,23 @@ export class PayfastSettlementService implements OnModuleInit {
       ? batchesFromSummary(recon, parsed.summaryRows)
       : batchesByRail(recon);
 
+    // Refund rows of the transaction file → shown inside the payout PayFast took
+    // them from (display only: they are never reconciled or marked paid).
+    attachRefunds(
+      batches,
+      refunds.map((t) => {
+        const hit = map.get(t.paymentId);
+        return {
+          ...t,
+          orderName: hit?.orderName ?? null,
+          orderGid: hit?.orderGid ?? null,
+          courierInvoiceNumber: hit?.courierInvoiceNumber ?? null,
+          actualWht: 0,
+        };
+      }),
+      parsed.summaryRows.length > 0,
+    );
+
     // Newest settlement first.
     batches.sort((a, b) => (b.settlementDate ?? '').localeCompare(a.settlementDate ?? ''));
 
@@ -233,6 +255,8 @@ export class PayfastSettlementService implements OnModuleInit {
       grandGst: parsed.totals.gst,
       grandWhtSt: round2(batches.reduce((s, b) => s + b.whtSt, 0)),
       grandReceived: round2(batches.reduce((s, b) => s + b.received, 0)),
+      grandAdjustments: round2(batches.reduce((s, b) => s + (b.adjustments ?? 0), 0)),
+      refundTxns: refunds.length,
     };
 
     return { batches, summary };
@@ -484,6 +508,7 @@ export class PayfastSettlementService implements OnModuleInit {
         gst: summary.grandGst ?? 0,
         whtSt: Number(s.wht_st ?? 0),
         received: Number(s.received ?? 0),
+        adjustments: summary.grandAdjustments ?? 0,
       },
       batches,
       unmatched: summary.unmatchedSamples ?? [],
@@ -531,6 +556,7 @@ export class PayfastSettlementService implements OnModuleInit {
       return batches.map((b) => ({
         ...b,
         txns: b.txns.map((t) => ({ ...t, courierInvoiceNumber: null })),
+        refunds: (b.refunds ?? []).map((t) => ({ ...t, courierInvoiceNumber: null })),
       }));
     }
     const gids = [
@@ -822,13 +848,23 @@ function makeBatch(
   txns: ReconciledPayfastTxn[],
   summaryMatched: boolean | null,
   batchWht = 0,
+  adjustments = 0,
 ): PayfastBatch {
   const cardCount = txns.filter((t) => railOf(t.issuer) === 'card').length;
-  // WHT applies to this batch only when the summary says so (batchWht > 0). Stamp
-  // each txn's ACTUAL withholding accordingly (the raw whtSt is only real on a
-  // withholding batch); received = merchant amount minus the actual WHT.
-  const hasWht = batchWht > 0;
-  for (const t of txns) t.actualWht = hasWht ? t.whtSt : 0;
+  // WHT applies to this batch only when the summary says so (batchWht > 0).
+  // Each order's share is its file WHT scaled to the payout's REAL WHT (PayFast
+  // rounds some lots to whole rupees), residual on the last order — so the order
+  // rows always add up to the payout.
+  const rawWht = txns.reduce((s, t) => s + t.whtSt, 0);
+  let acc = 0;
+  for (const t of txns) {
+    t.actualWht = batchWht > 0 && rawWht > 0 ? round2((t.whtSt * batchWht) / rawWht) : 0;
+    acc += t.actualWht;
+  }
+  if (batchWht > 0 && rawWht > 0 && txns.length) {
+    const last = txns[txns.length - 1];
+    last.actualWht = round2(last.actualWht + batchWht - acc);
+  }
   const merchantSum = txns.reduce((s, t) => s + t.merchantAmount, 0);
   return {
     settlementDate: date,
@@ -838,10 +874,45 @@ function makeBatch(
     gross: round2(txns.reduce((s, t) => s + t.amount, 0)),
     fees: round2(txns.reduce((s, t) => s + t.fee, 0)),
     whtSt: round2(batchWht),
-    received: round2(merchantSum - batchWht),
+    adjustments: round2(adjustments),
+    refunds: [],
+    received: round2(merchantSum - batchWht - adjustments),
     summaryMatched,
     txns,
   };
+}
+
+/**
+ * Put each refund row into the payout it was deducted from. With a summary file
+ * the deduction amount comes from its Refund/Adj column: the refund goes to that
+ * day's deducting payout (one → all of the day's refunds; several → match by
+ * amount, else the largest). Without a summary, the refund is deducted from the
+ * day's largest payout using its own merchant amount. A refund on a day whose
+ * summary shows no deduction is left out (PayFast didn't take it from this
+ * statement's payouts).
+ */
+function attachRefunds(
+  batches: PayfastBatch[],
+  refunds: ReconciledPayfastTxn[],
+  hasSummary: boolean,
+): void {
+  for (const r of refunds) {
+    const day = batches.filter((b) => b.settlementDate === r.settlementDate);
+    if (!day.length) continue;
+    const deducting = day.filter((b) => (b.adjustments ?? 0) > 0);
+    let target: PayfastBatch | undefined;
+    if (deducting.length) {
+      target =
+        (deducting.length === 1 ? deducting[0] : undefined) ??
+        deducting.find((b) => Math.abs((b.adjustments ?? 0) - r.merchantAmount) < 0.5) ??
+        [...deducting].sort((a, b) => (b.adjustments ?? 0) - (a.adjustments ?? 0))[0];
+    } else if (!hasSummary) {
+      target = [...day].sort((a, b) => b.count - a.count)[0];
+      target.adjustments = round2((target.adjustments ?? 0) + r.merchantAmount);
+      target.received = round2(target.received - r.merchantAmount);
+    }
+    if (target) (target.refunds ??= []).push(r);
+  }
 }
 
 /** Fallback grouping (no summary uploaded): (settlement date + rail). */
@@ -890,18 +961,41 @@ function batchesFromSummary(
     if (assigned) out.push(...assigned);
     // No summary rows for this day, or the split couldn't be resolved → the
     // day still reconciles as (date + rail) lots so nothing is dropped.
-    else out.push(...railBatchesForDate(txns));
+    else out.push(...railBatchesForDate(txns, rows));
   }
   return out;
 }
 
-function railBatchesForDate(txns: ReconciledPayfastTxn[]): PayfastBatch[] {
-  const card = txns.filter((t) => railOf(t.issuer) === 'card');
-  const wallet = txns.filter((t) => railOf(t.issuer) === 'wallet');
-  const res: PayfastBatch[] = [];
-  if (card.length) res.push(makeBatch(card[0].settlementDate, 'Cards', card, false));
-  if (wallet.length) res.push(makeBatch(wallet[0].settlementDate, 'Wallets / Bank', wallet, false));
-  return res;
+/**
+ * Last-resort lots for a day the summary split couldn't reproduce: (date + rail).
+ * Still applies the day's withholding + refunds when the summary shows them
+ * (approximate: file WHT per order; adjustments on the biggest lot) instead of
+ * silently overstating net. Marked unmatched so the preview flags it.
+ */
+function railBatchesForDate(
+  txns: ReconciledPayfastTxn[],
+  rows: PayfastSummaryRow[] = [],
+): PayfastBatch[] {
+  const dayHasWht = rows.some((r) => r.whtSt > 0);
+  const dayAdj = round2(rows.reduce((s, r) => s + (r.adjustments ?? 0), 0));
+  const lots = [
+    { label: 'Cards', txns: txns.filter((t) => railOf(t.issuer) === 'card') },
+    { label: 'Wallets / Bank', txns: txns.filter((t) => railOf(t.issuer) === 'wallet') },
+  ].filter((l) => l.txns.length);
+  let biggest = 0;
+  lots.forEach((l, i) => {
+    if (l.txns.length > lots[biggest].txns.length) biggest = i;
+  });
+  return lots.map((l, i) =>
+    makeBatch(
+      l.txns[0].settlementDate,
+      l.label,
+      l.txns,
+      rows.length ? false : null,
+      dayHasWht ? round2(l.txns.reduce((s, t) => s + t.whtSt, 0)) : 0,
+      i === biggest ? dayAdj : 0,
+    ),
+  );
 }
 
 /**
@@ -915,9 +1009,31 @@ function assignDate(
   txns: ReconciledPayfastTxn[],
   rows: PayfastSummaryRow[],
 ): PayfastBatch[] | null {
+  const first = assignDateWith(txns, rows, new Set());
+  if (first) return first;
+  // The rail split didn't line up: an ambiguous-scheme payment (UNIONPAY…) may
+  // have settled with the other lot. Try moving those across (few per day).
+  const amb = txns.filter((t) => AMBIGUOUS_ISSUER.test(t.issuer)).slice(0, 6);
+  for (let mask = 1; mask < 1 << amb.length; mask++) {
+    const flipped = new Set(amb.filter((_, i) => mask & (1 << i)));
+    const res = assignDateWith(txns, rows, flipped);
+    if (res) return res;
+  }
+  return null;
+}
+
+function assignDateWith(
+  txns: ReconciledPayfastTxn[],
+  rows: PayfastSummaryRow[],
+  flipped: Set<ReconciledPayfastTxn>,
+): PayfastBatch[] | null {
+  const lotOf = (t: ReconciledPayfastTxn) => {
+    const r = railOf(t.issuer);
+    return flipped.has(t) ? (r === 'card' ? 'wallet' : 'card') : r;
+  };
   const railGroups = [
-    txns.filter((t) => railOf(t.issuer) === 'card'),
-    txns.filter((t) => railOf(t.issuer) === 'wallet'),
+    txns.filter((t) => lotOf(t) === 'card'),
+    txns.filter((t) => lotOf(t) === 'wallet'),
   ].filter((g) => g.length);
 
   let unassigned = [...rows];
@@ -945,7 +1061,9 @@ function splitGroup(
     const matched =
       txns.length === rows[0].count &&
       Math.abs(round2(txns.reduce((s, t) => s + t.amount, 0)) - rows[0].gross) < 1.5;
-    return [makeBatch(rows[0].settlementDate, rows[0].bank, txns, matched, rows[0].whtSt)];
+    return [
+      makeBatch(rows[0].settlementDate, rows[0].bank, txns, matched, rows[0].whtSt, rows[0].adjustments ?? 0),
+    ];
   }
   // Peel the smaller-count lots via subset search; the largest takes the rest.
   const sorted = [...rows].sort((a, b) => a.count - b.count);
@@ -957,22 +1075,30 @@ function splitGroup(
     // Prefer a merchant-accurate split; if the row's merchant total can't be
     // satisfied (unreliable/missing), fall back to gross-only so we never lose a
     // match we'd have made before — worst case is the old, gross-only behaviour.
+    // The summary's Merchant Amount is AFTER refunds; add them back so it compares
+    // with the payments' own merchant amounts.
+    const merchant = row.merchant > 0 ? round2(row.merchant + (row.adjustments ?? 0)) : 0;
+    const list = avail.map((p) => p.t);
+    // Exact first (card lots carry paisa-exact totals), then the rounded
+    // tolerance (wallet lots are rounded to whole rupees), then gross-only.
     const pick =
-      pickTxnSubset(avail.map((p) => p.t), row.count, row.gross, row.merchant, 1.0) ??
-      (row.merchant > 0
-        ? pickTxnSubset(avail.map((p) => p.t), row.count, row.gross, 0, 1.0)
-        : null);
+      pickTxnSubsetExact(list, row.count, row.gross, merchant) ??
+      pickTxnSubset(list, row.count, row.gross, merchant, 0.01, 0.05) ??
+      pickTxnSubset(list, row.count, row.gross, merchant, 1.0) ??
+      (merchant > 0 ? pickTxnSubset(list, row.count, row.gross, 0, 1.0) : null);
     if (!pick) return null;
     const chosen = pick.map((i) => avail[i]);
     chosen.forEach((c) => (c.used = true));
-    res.push(makeBatch(row.settlementDate, row.bank, chosen.map((c) => c.t), true, row.whtSt));
+    res.push(
+      makeBatch(row.settlementDate, row.bank, chosen.map((c) => c.t), true, row.whtSt, row.adjustments ?? 0),
+    );
   }
   const rest = pool.filter((p) => !p.used).map((p) => p.t);
   const last = sorted[sorted.length - 1];
   const matched =
     rest.length === last.count &&
     Math.abs(round2(rest.reduce((s, t) => s + t.amount, 0)) - last.gross) < 1.0;
-  res.push(makeBatch(last.settlementDate, last.bank, rest, matched, last.whtSt));
+  res.push(makeBatch(last.settlementDate, last.bank, rest, matched, last.whtSt, last.adjustments ?? 0));
   return res;
 }
 
@@ -1023,10 +1149,11 @@ function pickTxnSubset(
   gross: number,
   merchant: number,
   tol: number,
+  merchantTol?: number,
 ): number[] | null {
   const n = txns.length;
   if (k < 0 || k > n) return null;
-  const mTol = Math.max(tol, 1.5); // merchant totals are rounded in the summary
+  const mTol = merchantTol ?? Math.max(tol, 1.5); // merchant totals are rounded in the summary
   const merchantOk = (rm: number) => merchant <= 0 || Math.abs(rm) <= mTol;
   if (k === 0) return Math.abs(gross) <= tol && merchantOk(merchant) ? [] : null;
   const idx = txns.map((_, i) => i).sort((x, y) => txns[y].amount - txns[x].amount);
@@ -1050,4 +1177,89 @@ function pickTxnSubset(
     return dfs(start + 1, need, rg, rm);
   };
   return dfs(0, k, gross, merchant) ? [...chosen] : null;
+}
+
+/**
+ * Exact split by dynamic programming over (count, gross in paisa): finds `k`
+ * transactions whose gross equals the summary row EXACTLY and whose merchant
+ * total is within ±5 paisa (the summary rounds per payout, the file per order).
+ * The DFS below is fast but gives up on busy days with many equal amounts (e.g.
+ * 17 of 57 card payments, several identical 4,499s) and then picks a split that
+ * is Rs 0.50 off; this finds the true one. State-capped so a pathological day
+ * falls through to the DFS instead of eating memory. Returns indices or null.
+ */
+function pickTxnSubsetExact(
+  txns: ReconciledPayfastTxn[],
+  k: number,
+  gross: number,
+  merchant: number,
+): number[] | null {
+  const n = txns.length;
+  if (k <= 0 || k > n || n > 400) return null;
+  const target = Math.round(gross * 100);
+  const mTarget = merchant > 0 ? Math.round(merchant * 100) : null;
+  // Largest first, so "can this still reach the target?" bounds are tight.
+  const order = txns.map((_, i) => i).sort((a, b) => txns[b].amount - txns[a].amount);
+  const g = order.map((i) => Math.round(txns[i].amount * 100));
+  const m = order.map((i) => Math.round(txns[i].merchantAmount * 100));
+  // suffix bounds: maxNext[i][r] / minNext[i][r] = biggest / smallest sum of r items from i on
+  const maxFrom = (i: number, r: number) => {
+    let s2 = 0;
+    for (let j = i; j < i + r; j++) s2 += g[j];
+    return s2;
+  };
+  const minFrom = (i: number, r: number) => {
+    let s2 = 0;
+    for (let j = n - r; j < n; j++) s2 += g[j];
+    return s2;
+  };
+  const MAX_STATES = 1_200_000;
+  const PER_CELL = 120; // distinct merchant sums kept per (count, gross)
+  type Node = { i: number; parent: Node | null };
+  // layer[c]: gross -> (merchant -> path node)
+  const layers: Array<Map<number, Map<number, Node | null>>> = Array.from({ length: k + 1 }, () => new Map());
+  layers[0].set(0, new Map([[0, null]]));
+  let states = 1;
+  for (let i = 0; i < n; i++) {
+    for (let c = Math.min(k - 1, i); c >= 0; c--) {
+      const from = layers[c];
+      if (!from.size) continue;
+      const to = layers[c + 1];
+      for (const [s, cell] of from) {
+        const ns = s + g[i];
+        if (ns > target) continue;
+        const need = k - c - 1; // items still to pick after this one
+        if (need > n - i - 1) continue;
+        if (need > 0 && (ns + maxFrom(i + 1, need) < target || ns + minFrom(i + 1, need) > target)) continue;
+        if (need === 0 && ns !== target) continue;
+        let toCell = to.get(ns);
+        if (!toCell) {
+          toCell = new Map();
+          to.set(ns, toCell);
+        }
+        for (const [ms, node] of cell) {
+          if (toCell.size >= PER_CELL) break;
+          const nm = ms + m[i];
+          if (toCell.has(nm)) continue;
+          toCell.set(nm, { i, parent: node });
+          if (++states > MAX_STATES) return null;
+        }
+      }
+    }
+  }
+  const final = layers[k].get(target);
+  if (!final) return null;
+  let best: Node | null | undefined;
+  let bestDiff = Infinity;
+  for (const [ms, node] of final) {
+    const diff = mTarget == null ? 0 : Math.abs(ms - mTarget);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = node;
+    }
+  }
+  if (best === undefined || bestDiff > 5) return null;
+  const out: number[] = [];
+  for (let p: Node | null = best ?? null; p; p = p.parent) out.push(order[p.i]);
+  return out.length === k ? out : null;
 }
