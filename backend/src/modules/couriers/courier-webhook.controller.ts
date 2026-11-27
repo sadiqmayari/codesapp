@@ -1,6 +1,8 @@
 import {
   Body,
   Controller,
+  Get,
+  Head,
   Headers,
   Logger,
   HttpCode,
@@ -8,11 +10,13 @@ import {
   NotFoundException,
   Param,
   Post,
+  Query,
   RawBodyRequest,
   Req,
+  Res,
   UnauthorizedException,
 } from '@nestjs/common';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { CourierType } from '@prisma/client';
 import * as crypto from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -86,6 +90,44 @@ export class CourierWebhookController {
     return { received: true };
   }
 
+  /**
+   * Verification ping. Courier portals (TCS Envio "Webhook Setup") hit the URL
+   * with GET/HEAD before they let the tenant enable it — without this route the
+   * ping got 404 and TCS showed "account is not webhook-verified". A valid key
+   * answers 200; any challenge-style query param is echoed back as plain text.
+   */
+  @Get(':courier/:webhookKey')
+  @Head(':courier/:webhookKey')
+  async verify(
+    @Param('courier') courierParam: string,
+    @Param('webhookKey') webhookKey: string,
+    @Query() query: Record<string, unknown>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const courierType = courierParam as CourierType;
+    const cred = COURIER_TYPES.includes(courierType)
+      ? await this.prisma.courierCredential.findUnique({ where: { webhook_key: webhookKey } })
+      : null;
+    this.logger.log(
+      `verify ping ${req.method} ${courierParam} key=${webhookKey.slice(0, 6)}… ` +
+        `ok=${!!cred && cred.courier_type === courierType} query=${JSON.stringify(query).slice(0, 300)} ` +
+        `ua=${String(req.headers['user-agent'] ?? '').slice(0, 120)}`,
+    );
+    if (!cred || cred.courier_type !== courierType) {
+      res.status(404).json({ success: false, message: 'Invalid webhook URL.' });
+      return;
+    }
+    const challenge = ['challenge', 'hub.challenge', 'verify_token', 'token', 'echo']
+      .map((k) => query[k])
+      .find((v) => typeof v === 'string' && v.length > 0 && v.length <= 500) as string | undefined;
+    if (challenge) {
+      res.status(200).type('text/plain').send(challenge);
+      return;
+    }
+    res.status(200).json({ success: true, data: { verified: true }, message: 'OK' });
+  }
+
   @Post(':courier/:webhookKey')
   @HttpCode(HttpStatus.OK)
   async receive(
@@ -127,6 +169,9 @@ export class CourierWebhookController {
       if (!this.tokenEq(got, expected)) throw new UnauthorizedException('Invalid webhook token.');
     }
 
+    if (courierType === 'tcs') {
+      this.logger.log(`tcs push company=${cred.company_id} body=${JSON.stringify(body ?? null).slice(0, 800)}`);
+    }
     await this.dispatch(cred.company_id, courierType, body);
     return { received: true };
   }
