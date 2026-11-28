@@ -981,14 +981,23 @@ export class SuperAdminService {
       (await this.platformSetting.getUsageLimitAction());
 
     // Multi-Store: live counts of connected stores/numbers for the allowances UI.
-    const [storeCount, numberCount] = await Promise.all([
-      this.prisma.shopifyStore.count({
+    const [connectedStores, numberCount] = await Promise.all([
+      this.prisma.shopifyStore.findMany({
         where: { company_id: id, status: 'active' },
+        select: {
+          id: true,
+          provider: true,
+          label: true,
+          shop_domain: true,
+          base_url: true,
+        },
+        orderBy: { id: 'asc' },
       }),
       this.prisma.whatsAppNumber.count({
         where: { company_id: id, status: 'active' },
       }),
     ]);
+    const storeCount = connectedStores.length;
 
     return numifyDecimals({
       company: {
@@ -1011,6 +1020,10 @@ export class SuperAdminService {
         whatsapp_number_limit_override: company.whatsapp_number_limit_override,
         // Multi-Store: live connected counts for the allowances UI.
         shopify_store_count: storeCount,
+        // Multi-store connections (shopify_stores) — the Integrations card
+        // used to read only the legacy single-store fields and showed "Off"
+        // for every tenant connected the multi-store way.
+        connected_stores: connectedStores,
         whatsapp_number_count: numberCount,
         effective_limits: company.subscription
           ? {

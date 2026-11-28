@@ -63,6 +63,13 @@ interface ClientDetail {
     shopify_store_limit_override?: number | null;
     whatsapp_number_limit_override?: number | null;
     shopify_store_count?: number;
+    connected_stores?: Array<{
+      id: number;
+      provider: string;
+      label: string | null;
+      shop_domain: string;
+      base_url: string | null;
+    }>;
     whatsapp_number_count?: number;
     effective_limits: {
       contact_limit: number;
@@ -895,14 +902,27 @@ export default function SuperAdminClientProfilePage() {
             <IntegrationRow
               icon={Store}
               tone="emerald"
-              label="Shopify"
-              connected={c.has_shopify_admin_token || !!data.shopify}
+              label="Stores"
+              connected={
+                (c.connected_stores?.length ?? 0) > 0 ||
+                c.has_shopify_admin_token ||
+                !!data.shopify
+              }
               detail={
-                data.shopify
-                  ? `${data.shopify.shop_domain} · ${data.shopify.status}`
-                  : c.has_shopify_admin_token
-                    ? 'Admin token set (custom app)'
-                    : 'Not connected'
+                c.connected_stores && c.connected_stores.length > 0
+                  ? c.connected_stores
+                      .map(
+                        (s) =>
+                          `${s.label || s.shop_domain || s.base_url || `Store ${s.id}`}${
+                            s.provider !== 'shopify' ? ` (${s.provider})` : ''
+                          }`,
+                      )
+                      .join(' · ')
+                  : data.shopify
+                    ? `${data.shopify.shop_domain} · ${data.shopify.status}`
+                    : c.has_shopify_admin_token
+                      ? 'Admin token set (custom app)'
+                      : 'Not connected'
               }
             />
           </div>
