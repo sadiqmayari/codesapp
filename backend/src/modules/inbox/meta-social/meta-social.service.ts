@@ -76,7 +76,12 @@ type MetaPageRow = {
 };
 
 export class MetaGraphError extends Error {
-  constructor(message: string, readonly code?: number, readonly status?: number) {
+  constructor(
+    message: string,
+    readonly code?: number,
+    readonly status?: number,
+    readonly subcode?: number,
+  ) {
     super(message);
   }
 }
@@ -149,10 +154,12 @@ export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
     } catch {
       /* non-JSON */
     }
-    const err = json.error as { message?: string; code?: number; error_user_msg?: string } | undefined;
+    const err = json.error as
+      | { message?: string; code?: number; error_subcode?: number; error_user_msg?: string }
+      | undefined;
     if (!res.ok || err) {
       const msg = err?.error_user_msg || err?.message || `Meta returned HTTP ${res.status}`;
-      throw new MetaGraphError(msg, err?.code, res.status);
+      throw new MetaGraphError(msg, err?.code, res.status, err?.error_subcode);
     }
     return json as T;
   }
@@ -1200,8 +1207,19 @@ export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
   private friendly(err: unknown, channel: SocialChannel): Error {
     const e = err as MetaGraphError;
     const name = channel === 'messenger' ? 'Messenger' : 'Instagram';
-    if (e?.code === 10 || e?.code === 551 || /outside of allowed window/i.test(e?.message ?? '')) {
+    this.logger.warn(
+      `${name} send refused: code=${e?.code ?? '-'} subcode=${e?.subcode ?? '-'} ${String(e?.message ?? '').slice(0, 300)}`,
+    );
+    // Only these mean "outside the 24h window"; a bare code 10 is usually
+    // "app not allowed to message this person" (unpublished app / no
+    // Advanced Access for pages_messaging) and must not be shown as a window.
+    if (e?.subcode === 2018278 || e?.subcode === 2534022 || /outside of allowed window/i.test(e?.message ?? '')) {
       return new ForbiddenException(`${name}: the 24-hour reply window has closed for this person`);
+    }
+    if (e?.code === 10 || e?.code === 200 || e?.code === 230) {
+      return new ForbiddenException(
+        `${name}: Meta did not allow this reply (${e.message}). The Meta app needs to be published with Advanced Access for messaging.`,
+      );
     }
     if (e?.code === 190) return new ForbiddenException(`${name}: the Page token expired — reconnect in Settings`);
     return new BadRequestException(`${name}: ${e?.message ?? 'send failed'}`);
