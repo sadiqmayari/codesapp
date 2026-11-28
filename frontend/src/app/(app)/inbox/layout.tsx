@@ -876,6 +876,31 @@ export default function InboxLayout({
         )}
       >
         <div className="px-2 pt-2">
+          {socialOn && (
+            <div className="mb-2 flex items-center gap-1" role="group" aria-label="Filter by channel">
+              {([''] as ChannelFilter[]).concat(CHANNELS).map((c) => (
+                <button
+                  key={c || 'all'}
+                  type="button"
+                  onClick={() => {
+                    patchFilters({ channel: c });
+                    if (c && c !== 'whatsapp') setPanel('chats');
+                  }}
+                  aria-pressed={channel === c}
+                  title={c ? CHANNEL_LABEL[c] : 'All channels'}
+                  className={cn(
+                    'flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border text-xs font-semibold',
+                    channel === c
+                      ? 'border-brand-600 bg-brand-50 text-brand-700'
+                      : 'border-line text-muted hover:text-ink',
+                  )}
+                >
+                  {c ? <ChannelDot channel={c} /> : 'All'}
+                  {c && <span className="hidden lg:inline">{CHANNEL_LABEL[c]}</span>}
+                </button>
+              ))}
+            </div>
+          )}
           <div role="tablist" aria-label="Inbox view" className="flex gap-1 rounded-lg bg-sunken p-1">
             {(['chats', 'calls'] as const).map((p) => (
               <button
@@ -981,25 +1006,6 @@ export default function InboxLayout({
                 >
                   <UserCheck size={13} /> Mine
                 </button>
-                {socialOn && (
-                  <div className="flex items-center rounded-lg border border-line p-0.5" role="group" aria-label="Filter by channel">
-                    {([''] as ChannelFilter[]).concat(CHANNELS).map((c) => (
-                      <button
-                        key={c || 'all'}
-                        type="button"
-                        onClick={() => patchFilters({ channel: c })}
-                        aria-pressed={channel === c}
-                        title={c ? CHANNEL_LABEL[c] : 'All channels'}
-                        className={cn(
-                          'flex h-6 min-w-[26px] items-center justify-center rounded-md px-1 text-xs font-semibold',
-                          channel === c ? 'bg-sunken text-ink' : 'text-muted hover:text-ink',
-                        )}
-                      >
-                        {c ? <ChannelDot channel={c} /> : 'All'}
-                      </button>
-                    ))}
-                  </div>
-                )}
                 <LabelFilter
                   value={label}
                   options={labelOptions}
