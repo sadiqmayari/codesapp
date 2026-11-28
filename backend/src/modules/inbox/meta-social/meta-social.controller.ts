@@ -9,7 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
@@ -20,7 +20,8 @@ import { PRIVILEGED } from '../../../common/auth/roles';
 import { MetaSocialService } from './meta-social.service';
 
 class ConnectDto {
-  @IsString() @MinLength(20) @MaxLength(2000) token!: string;
+  /** Omit to use the WhatsApp token already saved for the workspace. */
+  @IsOptional() @IsString() @MinLength(20) @MaxLength(2000) token?: string;
 }
 
 class EnablePageDto {

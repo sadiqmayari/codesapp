@@ -18,6 +18,7 @@ import {
 import { UsageMeteringService } from '../../usage-metering/usage-metering.service';
 import { WebhookDispatcherService } from '../../webhooks/webhook-dispatcher.service';
 import { InboxGateway } from '../inbox.gateway';
+import { MetaClientService } from '../meta-client.service';
 import {
   ParsedComment,
   ParsedMessaging,
@@ -99,6 +100,7 @@ export class MetaSocialService {
     private readonly metering: UsageMeteringService,
     private readonly webhookDispatcher: WebhookDispatcherService,
     private readonly gateway: InboxGateway,
+    private readonly metaClient: MetaClientService,
   ) {
     this.version = this.config.get<string>('META_GRAPH_VERSION') ?? 'v19.0';
   }
@@ -153,14 +155,28 @@ export class MetaSocialService {
     }
   }
 
+  /**
+   * ONE token for everything: a separately saved Facebook & Instagram token
+   * wins, otherwise the WhatsApp token already stored for the workspace (a
+   * system-user token can carry the WhatsApp + Page + Instagram permissions).
+   */
   private async companyToken(companyId: number): Promise<string> {
+    const t = await this.resolveToken(companyId);
+    if (!t) throw new BadRequestException('Connect your Meta token first');
+    return t.token;
+  }
+
+  private async resolveToken(
+    companyId: number,
+  ): Promise<{ token: string; source: 'own' | 'whatsapp' } | null> {
     const c = await this.prisma.company.findUnique({
       where: { id: companyId },
       select: { meta_social_token_encrypted: true },
     });
-    const t = this.decryptOrNull(c?.meta_social_token_encrypted);
-    if (!t) throw new BadRequestException('Connect your Meta token first');
-    return t;
+    const own = this.decryptOrNull(c?.meta_social_token_encrypted);
+    if (own) return { token: own, source: 'own' };
+    const wa = await this.metaClient.getAccessToken(companyId).catch(() => null);
+    return wa ? { token: wa, source: 'whatsapp' } : null;
   }
 
   private pageToken(page: { page_token_encrypted: string }): string {
@@ -256,8 +272,10 @@ export class MetaSocialService {
       where: { company_id: companyId },
       orderBy: { id: 'asc' },
     });
+    const tok = await this.resolveToken(companyId);
     return {
-      tokenSet: info.tokenSet,
+      tokenSet: !!tok,
+      tokenSource: tok?.source ?? null,
       webhookKey: info.webhookKey,
       verifyToken: info.verifyToken,
       pages: pages.map((p) => this.pagePublic(p)),
@@ -265,8 +283,17 @@ export class MetaSocialService {
   }
 
   /** Validate + store the system-user token; returns permissions + Pages it can reach. */
-  async connect(companyId: number, rawToken: string) {
-    const token = rawToken.trim();
+  /**
+   * Validate a token and list its Pages. No token = use the WhatsApp token
+   * (nothing extra is stored). A pasted token is stored separately.
+   */
+  async connect(companyId: number, rawToken?: string | null) {
+    let token = (rawToken ?? '').trim();
+    const useWhatsapp = !token;
+    if (useWhatsapp) {
+      token = (await this.metaClient.getAccessToken(companyId).catch(() => null)) ?? '';
+      if (!token) throw new BadRequestException('No WhatsApp token is saved yet: paste a token instead');
+    }
     if (token.length < 20) throw new BadRequestException('Paste the full access token');
     let me: { id?: string; name?: string };
     try {
@@ -283,7 +310,8 @@ export class MetaSocialService {
     }
     await this.prisma.company.update({
       where: { id: companyId },
-      data: { meta_social_token_encrypted: this.encryption.encrypt(token) },
+      // Using the WhatsApp token: clear any separate one so there is ONE token.
+      data: { meta_social_token_encrypted: useWhatsapp ? null : this.encryption.encrypt(token) },
     });
     // Refresh the stored Page tokens of already-connected Pages.
     for (const p of pages) {

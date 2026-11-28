@@ -44,6 +44,8 @@ interface Available {
 
 interface Status {
   tokenSet: boolean;
+  /** 'whatsapp' = reusing the WhatsApp token (one token for everything). */
+  tokenSource?: 'own' | 'whatsapp' | null;
   webhookKey: string | null;
   verifyToken: string | null;
   pages: MetaPage[];
@@ -100,12 +102,13 @@ export function MetaSocialSection() {
   }
   if (!st) return <SettingsSkeleton cards={3} />;
 
-  const connect = async () => {
-    setBusy('connect');
+  // No token = use the WhatsApp token already saved (one token for everything).
+  const connect = async (useWhatsapp = false) => {
+    setBusy(useWhatsapp ? 'connect-wa' : 'connect');
     try {
       const r = await apiFetch<{ account: string | null; missingScopes: string[]; available: Available[] }>(`${BASE}/connect`, {
         method: 'POST',
-        body: { token: token.trim() },
+        body: useWhatsapp ? {} : { token: token.trim() },
       });
       setMissing(r.missingScopes);
       setAvailable(r.available);
@@ -180,16 +183,19 @@ export function MetaSocialSection() {
     >
       <SettingsCard
         title="Meta connection"
-        description="A system-user token from Business Settings → Users → System users, generated for the same Meta app you use for WhatsApp."
+        description="One token for WhatsApp, Facebook and Instagram: CodesApp uses the WhatsApp token you already saved. Give that system-user token the Page and Instagram permissions too."
         action={st.tokenSet ? <Badge tone="success">Connected</Badge> : <Badge tone="neutral">Not connected</Badge>}
       >
         {st.tokenSet && !editToken ? (
           <div className="flex flex-wrap items-center gap-3">
             <code className="min-w-0 flex-1 rounded-lg border border-line bg-sunken px-3 py-2 font-mono text-[12.5px] text-muted">
-              EAA•••••••••••••••••••• (stored encrypted)
+              {st.tokenSource === 'own' ? 'Separate Facebook & Instagram token (stored encrypted)' : 'Using your WhatsApp token'}
             </code>
-            <Button variant="secondary" size="sm" onClick={() => setEditToken(true)}>
-              Replace token
+            <Button variant="secondary" size="sm" loading={busy === 'connect-wa'} onClick={() => void connect(true)}>
+              {st.tokenSource === 'own' ? 'Use WhatsApp token instead' : 'Check permissions'}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setEditToken(true)}>
+              Use a different token
             </Button>
           </div>
         ) : (
@@ -197,7 +203,7 @@ export function MetaSocialSection() {
             <FormField
               label="System-user access token"
               htmlFor="meta-social-token"
-              hint="Give it: pages_show_list, pages_messaging, pages_manage_metadata, pages_read_engagement, pages_manage_engagement, instagram_basic, instagram_manage_messages, instagram_manage_comments. Assign the Page (and its Instagram account) to the system user."
+              hint="Only if you don't want to reuse the WhatsApp token. Give it: pages_show_list, pages_messaging, pages_manage_metadata, pages_read_engagement, pages_manage_engagement, instagram_basic, instagram_manage_messages, instagram_manage_comments. Assign the Page (and its Instagram account) to the system user."
             >
               <textarea
                 id="meta-social-token"
@@ -210,9 +216,9 @@ export function MetaSocialSection() {
                 spellCheck={false}
               />
             </FormField>
-            <div className="flex gap-2">
-              <Button onClick={connect} loading={busy === 'connect'} disabled={token.trim().length < 20}>
-                {st.tokenSet ? 'Save new token' : 'Connect'}
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => void connect(false)} loading={busy === 'connect'} disabled={token.trim().length < 20}>
+                {st.tokenSet ? 'Save this token' : 'Connect with this token'}
               </Button>
               {st.tokenSet && (
                 <Button variant="ghost" onClick={() => setEditToken(false)}>
@@ -224,7 +230,7 @@ export function MetaSocialSection() {
         )}
         {missing.length > 0 && (
           <Callout tone="warn" icon={<AlertTriangle size={16} className="text-amber-600" />}>
-            The token is missing: <b>{missing.join(', ')}</b>. Some messages or comments may not work until you add them.
+            The token is missing: <b>{missing.join(', ')}</b>. In Business Settings → System users, generate the token again with these permissions ticked too, then save it in Settings → WhatsApp so WhatsApp, Facebook and Instagram keep sharing one token.
           </Callout>
         )}
       </SettingsCard>
@@ -249,7 +255,7 @@ export function MetaSocialSection() {
           {available === null ? (
             <SettingsSkeleton cards={1} />
           ) : all.length === 0 ? (
-            <p className="text-sm text-muted">This token can&apos;t see any Pages. Assign the Page to the system user in Business Settings, then refresh.</p>
+            <p className="text-sm text-muted">No Pages found with this token. In Business Settings → System users: assign the Page (and its Instagram account) to the system user and generate the token with the Page + Instagram permissions, save it in Settings → WhatsApp, then refresh.</p>
           ) : (
             <div className="flex flex-col gap-2.5">
               {all.map((a) => {
