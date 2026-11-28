@@ -164,8 +164,8 @@ export class DashboardService {
           AND o.shopify_created_at >= ? AND o.shopify_created_at < ?
           AND o.manual_confirmed_at IS NULL
           AND COALESCE(o.financial_status,'') NOT IN ('paid','partially_paid')
-          AND NOT EXISTS (SELECT 1 FROM shopify_order_messages m WHERE m.company_id = o.company_id
-                AND m.shopify_order_gid = o.shopify_order_gid AND m.status IN ('confirmed','cancelled'))
+          AND o.shopify_order_gid NOT IN (SELECT m.shopify_order_gid FROM shopify_order_messages m
+                WHERE m.company_id = o.company_id AND m.status IN ('confirmed','cancelled'))
           AND NOT EXISTS (SELECT 1 FROM shipments s WHERE s.company_id = o.company_id
                 AND s.shopify_order_gid = o.shopify_order_gid)`,
       companyId,
@@ -279,21 +279,28 @@ export class DashboardService {
 
   /** Orders placed in the last 30 days and where they ended up (one row per order). */
   private async orderFlow(companyId: number) {
+    // Shipments via correlated EXISTS (unique index company_id+gid → fast);
+    // confirmations via IN (materialised once). A derived-table join or an
+    // EXISTS on shopify_order_messages without a gid index took ~160–190 s on
+    // 9k orders (Sois), see ERRORS "[Dashboard] order flow took minutes".
     const has = (cond: string) =>
       `EXISTS (SELECT 1 FROM shipments s WHERE s.company_id = o.company_id AND s.shopify_order_gid = o.shopify_order_gid AND ${cond})`;
-    const confirmed = `(o.manual_confirmed_at IS NOT NULL OR COALESCE(o.financial_status,'') IN ('paid','partially_paid')
-       OR EXISTS (SELECT 1 FROM shopify_order_messages m WHERE m.company_id = o.company_id AND m.shopify_order_gid = o.shopify_order_gid AND m.status = 'confirmed')
-       OR ${has('s.booked_at IS NOT NULL')})`;
+    const booked = has('s.booked_at IS NOT NULL');
+    const rtoCond = has(rtoSql("s"));
     const [r] = await this.prisma.$queryRawUnsafe<Record<string, unknown>[]>(
       `SELECT COUNT(*) placed,
-              SUM(${confirmed}) confirmed,
-              SUM(${has('s.booked_at IS NOT NULL')}) shipped,
+              SUM(o.manual_confirmed_at IS NOT NULL OR COALESCE(o.financial_status,'') IN ('paid','partially_paid')
+                  OR ${booked}
+                  OR o.shopify_order_gid IN (SELECT mx.shopify_order_gid FROM shopify_order_messages mx
+                                              WHERE mx.company_id = ? AND mx.status = 'confirmed')) confirmed,
+              SUM(${booked}) shipped,
               SUM(${has("s.status = 'delivered' AND s.received_at IS NULL")}) delivered,
-              SUM(${has(rtoSql('s'))}) rto,
-              SUM(o.cancelled_at IS NOT NULL AND NOT ${has('s.booked_at IS NOT NULL')}) cancelled_pre,
-              COALESCE(SUM(CASE WHEN ${has(rtoSql('s'))} THEN ${afterDiscountSql('o')} ELSE 0 END),0) rto_value
+              SUM(${rtoCond}) rto,
+              SUM(o.cancelled_at IS NOT NULL AND NOT ${booked}) cancelled_pre,
+              COALESCE(SUM(CASE WHEN ${rtoCond} THEN ${afterDiscountSql('o')} ELSE 0 END),0) rto_value
          FROM shopify_orders o
         WHERE o.company_id = ? AND o.shopify_created_at >= ?`,
+      companyId,
       companyId,
       new Date(Date.now() - 30 * DAY),
     );

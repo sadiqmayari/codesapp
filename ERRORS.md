@@ -1156,3 +1156,8 @@ The old `/ad-report` had these defects; each is fixed by the Growth module (see 
 - **Symptom:** a tenant with `contact_limit_override=50000` on a 25k plan saw "41,230 / 25,000" (over 100%) on the dashboard and billing page.
 - **Cause:** `AnalyticsService.usage()` and `BillingService.getSubscription()` read `subscription.*_limit` directly instead of `resolveEffectiveLimits`.
 - **Fix:** both use `resolveEffectiveLimits`; `getSubscription` also returns `planLimits`; the dashboard's Plan & access card marks overridden limits "Custom · plan N".
+
+## [Dashboard] Order flow query took minutes (fixed 2026-11-28)
+- **Symptom:** `GET /api/dashboard/manager` took ~140 s for Sois; the `orderFlow` section alone was ~190 s.
+- **Cause:** `shopify_order_messages` had no index on `shopify_order_gid`, so a per-order `EXISTS` on it scanned all ~39k rows for each of ~9k orders. A derived-table rewrite was no better (MariaDB BNL-joined two key-less derived tables).
+- **Fix:** shipments via correlated `EXISTS` (unique `(company_id, shopify_order_gid)` index), confirmations via `IN (SELECT …)` (materialised once), plus migration `20261201010000_order_messages_gid_index`. 2.4 s on the same data. Never join derived tables on a gid without a key; check `EXPLAIN` for `BNL join`.

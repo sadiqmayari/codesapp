@@ -2398,6 +2398,7 @@ model ShopifyOrderMessage {
   @@unique([company_id, shopify_order_gid])
   @@index([company_id])
   @@index([shopify_store_id])
+  @@index([company_id, shopify_order_gid])
   @@map("shopify_order_messages")
 }
 
