@@ -739,6 +739,13 @@ export class DashboardService {
           this.safe('aiDefault', () => this.aiMetering.getDefaultCapCents()),
         ]);
 
+      // Pre-multi-number / pre-multi-store tenants keep their connection on the
+      // company row (companies.phone_number_id / shopify_admin_token_encrypted)
+      // with no whatsapp_numbers / shopify_stores row — count that as one, or
+      // the setup checklist tells a connected tenant to "Connect WhatsApp".
+      const numbersUsed = numbers > 0 ? numbers : co.phone_number_id ? 1 : 0;
+      const storesUsed = stores > 0 ? stores : co.shopify_admin_token_encrypted ? 1 : 0;
+
       const limits = sub
         ? (() => {
             const eff = resolveEffectiveLimits(sub, co);
@@ -749,8 +756,8 @@ export class DashboardService {
               row('contacts', 'Contacts', contacts, eff.contact_limit, sub.contact_limit),
               row('templates', 'Templates', templates, eff.template_limit, sub.template_limit),
               row('seats', 'Team seats', seats, eff.user_limit, sub.user_limit),
-              row('stores', 'Shopify stores', stores, eff.shopify_store_limit, sub.shopify_store_limit ?? 1),
-              row('numbers', 'WhatsApp numbers', numbers, eff.whatsapp_number_limit, sub.whatsapp_number_limit ?? 1),
+              row('stores', 'Shopify stores', storesUsed, eff.shopify_store_limit, sub.shopify_store_limit ?? 1),
+              row('numbers', 'WhatsApp numbers', numbersUsed,eff.whatsapp_number_limit, sub.whatsapp_number_limit ?? 1),
             ];
           })()
         : [];
