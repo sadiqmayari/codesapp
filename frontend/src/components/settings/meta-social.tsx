@@ -105,7 +105,7 @@ export function MetaSocialSection() {
     try {
       const r = await apiFetch<{ account: string | null; missingScopes: string[]; available: Available[] }>(`${BASE}/connect`, {
         method: 'POST',
-        body: JSON.stringify({ token: token.trim() }),
+        body: { token: token.trim() },
       });
       setMissing(r.missingScopes);
       setAvailable(r.available);
@@ -126,7 +126,7 @@ export function MetaSocialSection() {
     setBusy(a.pageId);
     try {
       if (on) {
-        const p = await apiFetch<MetaPage>(`${BASE}/pages`, { method: 'POST', body: JSON.stringify({ pageId: a.pageId }) });
+        const p = await apiFetch<MetaPage>(`${BASE}/pages`, { method: 'POST', body: { pageId: a.pageId } });
         if (p.status === 'error') toast.error(p.lastError ?? 'Meta refused the Page subscription');
         else toast.success(`${a.name} is connected`);
       } else {
