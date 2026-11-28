@@ -75,7 +75,11 @@ export function ManagerHome({
   const [att, setAtt] = useState<TodaySummary | null>(null);
   const [agents, setAgents] = useState<AgentReportRow[] | null>(null);
   const [couriers, setCouriers] = useState<CourierPerfRow[] | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Which period each period-dependent payload belongs to. A section whose
+  // data is for another period shows a skeleton, never the old figures.
+  const [ordersFor, setOrdersFor] = useState<PeriodKey | null>(null);
+  const [mgrFor, setMgrFor] = useState<PeriodKey | null>(null);
+  const [agentsFor, setAgentsFor] = useState<PeriodKey | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [savingLayout, setSavingLayout] = useState(false);
   const seq = useRef(0);
@@ -85,23 +89,37 @@ export function ManagerHome({
   const loadPeriod = useCallback(
     async (silent = false) => {
       const id = ++seq.current;
-      if (!silent) setLoading(true);
-      const [o, m, a, y] = await Promise.allSettled([
+      void silent;
+      // Each section fills in as soon as ITS data lands (the 30-day agent report
+      // can take ~6 s; the hero shouldn't wait for it). A newer period wins.
+      const fresh = () => id === seq.current;
+      const mark = (setFor: (p: PeriodKey) => void) => () => {
+        if (fresh()) setFor(period);
+      };
+      const tasks: Promise<unknown>[] = [
         apiFetch<OrdersAnalytics>('/analytics/orders', {
           params: { ...range, compare: 'true', ...(period === 'today' ? { granularity: 'hour' } : {}) },
-        }),
-        getManager(range),
-        getAgentsReport(range),
-        period === 'today'
-          ? apiFetch<OrdersAnalytics>('/analytics/orders', { params: { ...zonedYesterdayRange(), compare: 'false', granularity: 'hour' } })
-          : Promise.resolve(null),
-      ]);
-      if (id !== seq.current) return; // a newer period answered first
-      if (o.status === 'fulfilled') setOrders(o.value);
-      if (m.status === 'fulfilled') setMgr(m.value);
-      if (a.status === 'fulfilled') setAgents(a.value.rows);
-      setYesterday(y.status === 'fulfilled' && y.value ? y.value.trend : null);
-      setLoading(false);
+        })
+          .then((o) => fresh() && setOrders(o))
+          .catch(() => undefined)
+          .finally(mark(setOrdersFor)),
+        getManager(range)
+          .then((m) => fresh() && setMgr(m))
+          .catch(() => undefined)
+          .finally(mark(setMgrFor)),
+        getAgentsReport(range)
+          .then((a) => fresh() && setAgents(a.rows))
+          .catch(() => undefined)
+          .finally(mark(setAgentsFor)),
+      ];
+      if (period === 'today') {
+        tasks.push(
+          apiFetch<OrdersAnalytics>('/analytics/orders', { params: { ...zonedYesterdayRange(), compare: 'false', granularity: 'hour' } })
+            .then((y) => fresh() && setYesterday(y.trend))
+            .catch(() => undefined),
+        );
+      } else setYesterday(null);
+      await Promise.allSettled(tasks);
     },
     [range, period],
   );
@@ -184,8 +202,12 @@ export function ManagerHome({
   };
 
   const show = (id: WidgetId) => !hidden.has(id);
+  const ordersStale = ordersFor !== period;
+  const mgrStale = mgrFor !== period;
+  const agentsStale = agentsFor !== period;
+  const loading = ordersStale || mgrStale;
   const periodLong = PERIODS.find((p) => p.key === period)?.long ?? '';
-  const k = orders?.kpis;
+  const k = ordersStale ? undefined : orders?.kpis;
   const heroSales: HeroSales | null = k
     ? { currency: orders!.currency, gross: k.gross.value, net: k.net.value, orders: k.orders.value, kept: k.ordersNet.value, netPrev: k.net.prev }
     : null;
@@ -239,10 +261,10 @@ export function ManagerHome({
           periodKey={period}
           periodLabel={periodLong}
           sales={heroSales}
-          trend={orders?.trend ?? []}
+          trend={ordersStale ? [] : orders?.trend ?? []}
           yesterday={yesterday}
           target={mgr?.target ?? null}
-          brief={mgr?.brief ?? []}
+          brief={mgrStale ? [] : mgr?.brief ?? []}
           loading={loading}
         />
       )}
@@ -254,19 +276,19 @@ export function ManagerHome({
         </section>
       )}
 
-      {show('kpis') && <HealthKpis m={mgr} s={periodSales} periodLabel={PERIODS.find((p) => p.key === period)?.label ?? ''} />}
+      {show('kpis') && <HealthKpis m={mgr} s={periodSales} periodLabel={periodLong} loading={ordersStale || mgrStale} />}
 
       {(show('flow') || show('feed')) && (
         <div className="grid gap-4 xl:grid-cols-2">
           {show('flow') && <OrderFlow flow={mgr?.flow ?? null} currency={currency} />}
-          {show('feed') && <LiveActivity events={events} loading={loading} />}
+          {show('feed') && <LiveActivity events={events} loading={!events} />}
         </div>
       )}
 
       {(show('heat') || show('team')) && (
         <div className="grid gap-4 xl:grid-cols-2">
           {show('heat') && <ChatHeatmap heat={mgr?.heat ?? null} convo={mgr?.conversations ?? null} />}
-          {show('team') && <TeamToday attendance={att} agents={agents} currency={currency} showAttendance={has('attendance')} />}
+          {show('team') && <TeamToday attendance={att} agents={agentsStale ? null : agents} loading={agentsStale} currency={currency} showAttendance={has('attendance')} />}
         </div>
       )}
 

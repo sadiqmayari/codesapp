@@ -193,7 +193,7 @@ export function Hero({
             {loading && !sales ? (
               <div className="mt-2 h-12 w-64 animate-pulse rounded-lg bg-navy-2" />
             ) : (
-              <div className="mt-1.5 text-[44px] font-extrabold leading-[1.05] tracking-[-.03em] tabular-nums sm:text-[52px]" title={fullMoney(sales?.net, cur)}>
+              <div className="mt-1.5 break-words text-[34px] font-extrabold leading-[1.05] tracking-[-.03em] tabular-nums sm:text-[44px] xl:text-[52px]" title={fullMoney(sales?.net, cur)}>
                 {money(sales?.net ?? 0, cur, mode)}
               </div>
             )}

@@ -148,22 +148,44 @@ function KpiCard({
   barTone?: 'good' | 'bad' | 'accent';
 }) {
   return (
-    <div className="flex min-w-0 flex-col gap-2.5 rounded-2xl border border-line bg-surface p-4 shadow-[0_1px_2px_rgba(16,24,40,.04)]">
-      <div className="flex items-start justify-between gap-2">
-        <span className="text-[11.5px] font-bold uppercase tracking-[.06em] text-muted">{label}</span>
-        {delta}
-      </div>
-      <span className="truncate text-[26px] font-extrabold leading-tight tracking-tight tabular-nums text-ink" title={title}>
+    <div className="flex min-w-0 flex-col gap-2 rounded-2xl border border-line bg-surface p-3.5 shadow-[0_1px_2px_rgba(16,24,40,.04)] sm:gap-2.5 sm:p-4">
+      <span className="text-[11px] font-bold uppercase leading-snug tracking-[.05em] text-muted sm:text-[11.5px]">{label}</span>
+      {/* Never truncate a figure: smaller on phones, wraps if it must. */}
+      <span className="break-words text-[20px] font-extrabold leading-tight tracking-tight tabular-nums text-ink sm:text-[26px]" title={title}>
         {value}
       </span>
+      <div className="flex flex-wrap items-center gap-1.5">{delta}</div>
       <Sparkbars values={bars} tone={barTone} />
-      <span className="text-xs text-muted">{note}</span>
+      <span className="text-xs leading-snug text-muted">{note}</span>
     </div>
   );
 }
 
-export function HealthKpis({ m, s, periodLabel }: { m: ManagerData | null; s: PeriodSales | null; periodLabel: string }) {
+export function HealthKpis({
+  m,
+  s,
+  periodLabel,
+  loading,
+}: {
+  m: ManagerData | null;
+  s: PeriodSales | null;
+  periodLabel: string;
+  /** The selected period is still loading: show skeletons, never the previous period's figures. */
+  loading?: boolean;
+}) {
   const [mode] = useNumberMode();
+  if (loading) {
+    return (
+      <section aria-labelledby="dash-kpis" aria-busy="true">
+        <SectionTitle id="dash-kpis" title="Business health" aside={<span className="text-[13px] text-muted">Loading {periodLabel}…</span>} />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(200px,1fr))]">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="h-[168px] animate-pulse rounded-2xl border border-line bg-sunken" />
+          ))}
+        </div>
+      </section>
+    );
+  }
   const cur = s?.currency ?? null;
   const sp = m?.sparks ?? [];
   const q = m?.quality;

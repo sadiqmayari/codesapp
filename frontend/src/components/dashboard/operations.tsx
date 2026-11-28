@@ -177,7 +177,9 @@ export function TeamToday({
   agents,
   currency,
   showAttendance,
+  loading,
 }: {
+  loading?: boolean;
   attendance: TodaySummary | null;
   agents: AgentReportRow[] | null;
   currency: string | null;
@@ -201,7 +203,9 @@ export function TeamToday({
         ) : undefined
       }
     >
-      {top.length === 0 ? (
+      {loading ? (
+        <div className="space-y-3" aria-busy="true">{Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-10 animate-pulse rounded-lg bg-sunken" />)}</div>
+      ) : top.length === 0 ? (
         <EmptyState compact title="No order work yet" description="Confirmations and orders made from chat show up here." />
       ) : (
         <div className="overflow-x-auto">
