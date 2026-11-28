@@ -6,6 +6,9 @@
 
 ## Current Status
 
+**Finance role — A-List + Returns tabs (2026-11-28, latest):** frontend only, no migration.
+- `/finance` now has tabs Payments · Dispatch lists (A-List) · Returns (`?tab=`). A-List tab = read-only loadsheet batches by day with Loadsheet PDF + A-List downloads; Returns tab = the returns-received history (PDF/CSV per day/range) without Scan. `/orders/returns` now renders the shared `ReturnsHistoryView`; its custom range uses the tenant clock.
+
 **Dashboard v3 — role-aware command centre (2026-11-28, latest):** migration `20261201000000_dashboard_layout` (auto-applies).
 - Owner/admin: navy hero (net sales, monthly target ring, intraday vs yesterday, rules-based brief), Needs you now (unread + wait, confirm, shipper advice, book, old tickets), Business health KPIs with sparks, order flow + leaks, live activity, chats-by-hour heatmap + first-reply time, team today, courier scorecard, return hotspots, Plan & access with every super-admin override marked "Custom", Customise (per user + team default).
 - Agent: "Next up" chat, own queue, my chats, my day vs 30-day average, commission / leaderboard / attendance when granted. No company money.

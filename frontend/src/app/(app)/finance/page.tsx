@@ -1,6 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { DispatchLists } from '@/components/finance/dispatch-lists';
+import { ReturnsHistoryView } from '@/components/orders/returns-history';
 import { Loader2, Search } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
@@ -28,22 +31,66 @@ import { CourierPaymentsBoard } from '@/components/orders/courier-payments-board
  * are hidden for finance inside the board). The order lookup on top is a
  * finance-specific convenience the board doesn't carry.
  */
+type FinanceTab = 'payments' | 'alist' | 'returns';
+const TABS: { key: FinanceTab; label: string }[] = [
+  { key: 'payments', label: 'Payments' },
+  { key: 'alist', label: 'Dispatch lists (A-List)' },
+  { key: 'returns', label: 'Returns' },
+];
+
 export default function FinancePage() {
+  return (
+    <Suspense fallback={null}>
+      <FinanceInner />
+    </Suspense>
+  );
+}
+
+function FinanceInner() {
   const toast = useToast();
+  const router = useRouter();
+  const params = useSearchParams();
+  const raw = params.get('tab');
+  const tab: FinanceTab = raw === 'alist' || raw === 'returns' ? raw : 'payments';
+  const setTab = (t: FinanceTab) =>
+    router.replace(t === 'payments' ? '/finance' : `/finance?tab=${t}`, { scroll: false });
+
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Finance</h1>
         <p className="text-sm text-gray-500">
-          Courier payments, settlements and order lookup.
+          Courier payments, settlements, dispatch lists and returns.
         </p>
       </div>
 
       {/* Look up any order (read-only) — number or customer phone */}
       <OrderSearch />
 
-      {/* The full Courier-payments board (shared with the owner/admin Orders view). */}
-      <CourierPaymentsBoard toast={toast} />
+      <nav className="flex gap-1 overflow-x-auto border-b border-line" aria-label="Finance sections">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            aria-current={tab === t.key ? 'page' : undefined}
+            className={
+              '-mb-px shrink-0 border-b-2 px-4 py-2.5 text-sm font-semibold ' +
+              (tab === t.key
+                ? 'border-brand-600 text-brand-700'
+                : 'border-transparent text-muted hover:text-ink')
+            }
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
+
+      {/* Payments = the full Courier-payments board (shared with owner/admin).
+          A-List + Returns are read-only views of the ops screens. */}
+      {tab === 'payments' && <CourierPaymentsBoard toast={toast} />}
+      {tab === 'alist' && <DispatchLists />}
+      {tab === 'returns' && <ReturnsHistoryView canScan={false} embedded />}
     </div>
   );
 }
