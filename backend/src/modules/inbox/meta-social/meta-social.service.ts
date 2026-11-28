@@ -57,6 +57,7 @@ const PAGE_FIELDS = [
 
 const MAX_INBOUND_MEDIA = 25 * 1024 * 1024;
 const WINDOW_MS = 24 * 60 * 60 * 1000;
+const PLACEHOLDER_NAMES = new Set(['Facebook user', 'Instagram user']);
 /** Pull sync cadence (DMs every tick, comments every Nth tick). */
 const SYNC_TICK_MS = 2 * 60_000;
 const COMMENT_SYNC_EVERY = 5;
@@ -542,14 +543,21 @@ export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Find or create the contact for a FB/IG user (revives a soft-deleted one). */
-  async resolveContact(page: MetaPageRow, channel: SocialChannel, userId: string) {
+  async resolveContact(page: MetaPageRow, channel: SocialChannel, userId: string, hintName?: string | null) {
     const field = this.idField(channel);
     const companyId = page.company_id;
     const live = await this.prisma.contact.findFirst({
       where: { company_id: companyId, [field]: userId, deleted_at: null },
       orderBy: { id: 'asc' },
     });
-    if (live) return { contact: live, isNew: false };
+    if (live) {
+      // A contact created before we knew the name gets it now.
+      if (hintName && PLACEHOLDER_NAMES.has(live.name)) {
+        const contact = await this.prisma.contact.update({ where: { id: live.id }, data: { name: hintName.slice(0, 190) } });
+        return { contact, isNew: false };
+      }
+      return { contact: live, isNew: false };
+    }
     const dead = await this.prisma.contact.findFirst({
       where: { company_id: companyId, [field]: userId, deleted_at: { not: null } },
       orderBy: { id: 'desc' },
@@ -565,7 +573,7 @@ export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
     const contact = await this.prisma.contact.create({
       data: {
         company_id: companyId,
-        name: profile.name ?? (channel === 'messenger' ? 'Facebook user' : 'Instagram user'),
+        name: (profile.name ?? hintName)?.slice(0, 190) || (channel === 'messenger' ? 'Facebook user' : 'Instagram user'),
         phone: '',
         [field]: userId,
         avatar_url: profile.avatar?.slice(0, 1000) ?? null,
@@ -637,7 +645,7 @@ export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
       if (dup) return false;
     }
 
-    const { contact, isNew } = await this.resolveContact(page, ev.channel, ev.userId);
+    const { contact, isNew } = await this.resolveContact(page, ev.channel, ev.userId, ev.userName);
     const inbound = ev.kind !== 'echo';
     const isBlocked = contact.status === 'blocked';
     // Synced messages can be minutes/hours old: the 24h window and the list
@@ -1239,6 +1247,7 @@ export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
   private syncTicks = 0;
   private readonly syncCursor = new Map<number, number>();
   private readonly syncErrLogged = new Map<string, number>();
+  private readonly syncBackoff = new Map<string, number>();
 
   onModuleInit(): void {
     if (!runsBackground()) return;
@@ -1296,15 +1305,22 @@ export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
       this.syncCursor.get(page.id) ??
       (page.last_event_at ? page.last_event_at.getTime() - 3_600_000 : started - FIRST_SYNC_MS);
     const token = this.pageToken(page);
+    await this.refreshNames(page, token).catch(() => undefined);
     let imported = 0;
     const channels: SocialChannel[] = page.ig_user_id ? ['messenger', 'instagram'] : ['messenger'];
     for (const channel of channels) {
       const accountId = channel === 'messenger' ? page.page_id : (page.ig_user_id as string);
+      const backoffKey = `${channel}:${page.id}`;
+      if ((this.syncBackoff.get(backoffKey) ?? 0) > Date.now()) continue;
       let events: ParsedMessaging[];
       try {
         events = await this.pullConversations(page, token, channel, accountId, since);
+        this.syncBackoff.delete(backoffKey);
       } catch (err) {
-        this.logSyncError(`${channel}:${page.id}`, `${channel} sync ${page.name}: ${(err as Error).message}`);
+        // Meta refuses Instagram DM reads for an unpublished app (error -2
+        // "Timeout"): retry every 30 min instead of every tick.
+        this.syncBackoff.set(backoffKey, Date.now() + 30 * 60_000);
+        this.logSyncError(backoffKey, `${channel} sync ${page.name}: ${(err as Error).message}`);
         continue;
       }
       events.sort((a, b) => a.timestamp - b.timestamp);
@@ -1351,7 +1367,7 @@ export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
     type GConvo = {
       id: string;
       updated_time: string;
-      participants?: { data?: Array<{ id?: string }> };
+      participants?: { data?: Array<{ id?: string; name?: string; username?: string }> };
       messages?: { data?: GMsg[] };
     };
     const ig = channel === 'instagram';
@@ -1359,6 +1375,7 @@ export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
       `updated_time,participants,messages.limit(${ig ? 10 : 25})` +
       '{id,created_time,message,from,to,attachments{mime_type,name,file_url,image_data{url},video_data{url}}}';
     const out: ParsedMessaging[] = [];
+    const names = new Map<string, string>();
     const overlap = since - 10 * 60_000;
     let after: string | undefined;
     for (let pageNo = 0; pageNo < 4; pageNo++) {
@@ -1380,8 +1397,11 @@ export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
           reachedOld = true;
           break;
         }
-        const customer = (c.participants?.data ?? []).find((x) => x.id && x.id !== accountId && x.id !== page.page_id)?.id;
+        const who = (c.participants?.data ?? []).find((x) => x.id && x.id !== accountId && x.id !== page.page_id);
+        const customer = who?.id;
         if (!customer) continue;
+        const customerName = who?.name || who?.username || null;
+        if (customerName) names.set(customer, customerName);
         for (const m of c.messages?.data ?? []) {
           const ts = new Date(m.created_time).getTime();
           if (!Number.isFinite(ts) || ts < overlap) continue;
@@ -1391,6 +1411,7 @@ export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
             channel,
             accountId,
             userId: customer,
+            userName: customerName,
             mid: m.id,
             text: m.message?.trim() ? m.message : null,
             attachments: (m.attachments?.data ?? []).map((a) => ({
@@ -1420,7 +1441,51 @@ export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
       after = res.paging?.next ? res.paging.cursors?.after : undefined;
       if (reachedOld || !after) break;
     }
+    await this.fixPlaceholderNames(page.company_id, channel, names);
     return out;
+  }
+
+  /** Rename "Facebook user" / "Instagram user" contacts whose real name we now know. */
+  private async fixPlaceholderNames(companyId: number, channel: SocialChannel, names: Map<string, string>) {
+    if (!names.size) return;
+    const field = this.idField(channel);
+    const rows = await this.prisma.contact.findMany({
+      where: { company_id: companyId, [field]: { in: [...names.keys()] }, name: { in: [...PLACEHOLDER_NAMES] } },
+      select: { id: true, fb_psid: true, ig_sid: true },
+    });
+    for (const r of rows) {
+      const id = channel === 'messenger' ? r.fb_psid : r.ig_sid;
+      const name = id ? names.get(id) : null;
+      if (name) await this.prisma.contact.update({ where: { id: r.id }, data: { name: name.slice(0, 190) } }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Once per process per Page: read the participant names of the recent chats
+   * (any age) so contacts created without a name get theirs.
+   */
+  private readonly namesRefreshed = new Set<number>();
+  private async refreshNames(page: MetaPageRow, token: string): Promise<void> {
+    if (this.namesRefreshed.has(page.id)) return;
+    this.namesRefreshed.add(page.id);
+    const names = new Map<string, string>();
+    let after: string | undefined;
+    for (let i = 0; i < 4; i++) {
+      const res = await this.graph<{
+        data?: Array<{ participants?: { data?: Array<{ id?: string; name?: string }> } }>;
+        paging?: { cursors?: { after?: string }; next?: string };
+      }>('GET', `${page.page_id}/conversations`, token, {
+        query: { platform: 'messenger', fields: 'participants', limit: '50', ...(after ? { after } : {}) },
+      });
+      for (const c of res.data ?? []) {
+        for (const x of c.participants?.data ?? []) {
+          if (x.id && x.name && x.id !== page.page_id) names.set(x.id, x.name);
+        }
+      }
+      after = res.paging?.next ? res.paging.cursors?.after : undefined;
+      if (!after) break;
+    }
+    await this.fixPlaceholderNames(page.company_id, 'messenger', names);
   }
 
   publicMediaUrl(webPath: string): string {

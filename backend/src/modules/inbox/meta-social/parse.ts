@@ -37,6 +37,8 @@ export interface ParsedMessaging {
   /** Message sent from a Meta inbox (Business Suite) by an app other than ours. */
   appId: string | null;
   isDeleted: boolean;
+  /** Customer's display name when the source knows it (conversation sync). */
+  userName?: string | null;
   /** Ad / post that started the chat (click-to-Messenger / IG ads). */
   referral: { source: string | null; type: string | null; adId: string | null; ref: string | null } | null;
 }
