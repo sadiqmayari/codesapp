@@ -28,6 +28,7 @@ import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service
 // them decoupled, matching the job-queue decoupling used elsewhere.
 import { ShopifyService } from '../integrations/shopify/shopify.service';
 import { canonContactPhone, phoneVariants } from '../../common/utils/contact-phone';
+import { MetaSocialService } from './meta-social/meta-social.service';
 
 /** Exact (case-insensitive) consent keywords — WhatsApp marketing opt-out. */
 const OPT_OUT_WORDS = new Set(['STOP', 'UNSUBSCRIBE', 'STOP ALL', 'OPT OUT', 'OPTOUT']);
@@ -175,6 +176,7 @@ export class MetaWebhookService implements OnModuleInit {
     private readonly botEngine: BotEngineService,
     private readonly webhookDispatcher: WebhookDispatcherService,
     private readonly moduleRef: ModuleRef,
+    private readonly metaSocial: MetaSocialService,
   ) {}
 
   onModuleInit(): void {
@@ -325,7 +327,17 @@ export class MetaWebhookService implements OnModuleInit {
   }
 
   async handle(payload: unknown): Promise<void> {
-    const wrapper = payload as { rawPayload?: { entry?: MetaWebhookEntry[] } };
+    const wrapper = payload as {
+      rawPayload?: { object?: string; entry?: MetaWebhookEntry[] };
+      keyCompanyId?: number | null;
+    };
+    // Facebook Page / Instagram deliveries (Messenger + IG DMs, comments) go
+    // to the Meta social handler; everything else is WhatsApp.
+    const objectName = wrapper?.rawPayload?.object;
+    if (objectName === 'page' || objectName === 'instagram') {
+      await this.metaSocial.handleWebhook(wrapper.rawPayload, wrapper.keyCompanyId ?? null);
+      return;
+    }
     const entries = wrapper?.rawPayload?.entry ?? [];
     for (const entry of entries) {
       for (const change of entry.changes ?? []) {
@@ -424,7 +436,7 @@ export class MetaWebhookService implements OnModuleInit {
     if (msg.type === 'reaction') {
       if (!existing) return;
       const rconvo = await this.prisma.conversation.findFirst({
-        where: { company_id: companyId, contact_id: existing.id, deleted_at: null },
+        where: { company_id: companyId, contact_id: existing.id, channel: 'whatsapp', deleted_at: null },
         orderBy: { id: 'desc' },
         select: { id: true },
       });
@@ -491,6 +503,7 @@ export class MetaWebhookService implements OnModuleInit {
       where: {
         company_id: companyId,
         contact_id: contact.id,
+        channel: 'whatsapp',
         deleted_at: null,
       },
       orderBy: { id: 'desc' },

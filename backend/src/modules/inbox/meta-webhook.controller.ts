@@ -18,6 +18,7 @@ import { Request, Response } from 'express';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { EncryptionService } from '../../common/services/encryption.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { socialSerialKey } from './meta-social/parse';
 
 @Controller('webhooks/meta')
 export class MetaWebhookController {
@@ -38,10 +39,10 @@ export class MetaWebhookController {
    */
   private async resolveSecrets(
     key?: string,
-  ): Promise<{ verifyToken?: string; appSecret?: string }> {
+  ): Promise<{ verifyToken?: string; appSecret?: string; companyId?: number | null }> {
     const envVerify = this.config.get<string>('META_VERIFY_TOKEN');
     const envSecret = this.config.get<string>('META_APP_SECRET');
-    if (!key) return { verifyToken: envVerify, appSecret: envSecret };
+    if (!key) return { verifyToken: envVerify, appSecret: envSecret, companyId: null };
 
     // Multi-Number: a number's own webhook_key routes to that number's verify
     // token + app secret. Fall back to the legacy per-company key during the
@@ -49,6 +50,7 @@ export class MetaWebhookController {
     const num = await this.prisma.whatsAppNumber.findUnique({
       where: { webhook_key: key },
       select: {
+        company_id: true,
         webhook_verify_token: true,
         webhook_app_secret_encrypted: true,
       },
@@ -58,6 +60,7 @@ export class MetaWebhookController {
       (await this.prisma.company.findFirst({
         where: { webhook_key: key },
         select: {
+          id: true,
           webhook_verify_token: true,
           webhook_app_secret_encrypted: true,
         },
@@ -75,6 +78,9 @@ export class MetaWebhookController {
     return {
       verifyToken: source.webhook_verify_token || envVerify,
       appSecret,
+      // The tenant this key belongs to: Page/Instagram events are only
+      // accepted for that tenant's own connected Pages.
+      companyId: 'company_id' in source ? source.company_id : source.id,
     };
   }
 
@@ -95,6 +101,7 @@ export class MetaWebhookController {
 
   private async handleReceive(
     appSecret: string | undefined,
+    keyCompanyId: number | null | undefined,
     req: RawBodyRequest<Request>,
     signature: string | undefined,
     res: Response,
@@ -123,10 +130,12 @@ export class MetaWebhookController {
       // processed in parallel / out of order, and makes redelivered-duplicate
       // handling race-free. Mixed-participant batches (rare) get no key and keep
       // the legacy parallel behavior (never worse than before).
-      const serialKey = this.deriveSerialKey(req.body);
+      const objectName = (req.body as { object?: string } | undefined)?.object;
+      const isSocial = objectName === 'page' || objectName === 'instagram';
+      const serialKey = isSocial ? socialSerialKey(req.body) : this.deriveSerialKey(req.body);
       await this.jobQueue.enqueue(
         'message',
-        { rawPayload: req.body },
+        { rawPayload: req.body, keyCompanyId: keyCompanyId ?? null },
         serialKey ? { serialKey } : undefined,
       );
     } catch (err) {
@@ -198,7 +207,7 @@ export class MetaWebhookController {
     @Res() res: Response,
   ): Promise<void> {
     const { appSecret } = await this.resolveSecrets();
-    await this.handleReceive(appSecret, req, signature, res);
+    await this.handleReceive(appSecret, null, req, signature, res);
   }
 
   // ---- Per-tenant routes (Option B): /webhooks/meta/<webhook_key> ---------
@@ -223,8 +232,8 @@ export class MetaWebhookController {
     @Headers('x-hub-signature-256') signature: string | undefined,
     @Res() res: Response,
   ): Promise<void> {
-    const { appSecret } = await this.resolveSecrets(key);
-    await this.handleReceive(appSecret, req, signature, res);
+    const { appSecret, companyId } = await this.resolveSecrets(key);
+    await this.handleReceive(appSecret, companyId, req, signature, res);
   }
 
   /**

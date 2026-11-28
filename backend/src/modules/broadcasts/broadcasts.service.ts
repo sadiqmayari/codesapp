@@ -369,6 +369,7 @@ export class BroadcastsService {
           // Contacts 360: never broadcast to blocked or opted-out contacts.
           status: { not: 'blocked' },
           opted_out_at: null,
+          phone: { not: '' },
         },
         select: { id: true },
       });

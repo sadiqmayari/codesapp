@@ -6,6 +6,12 @@
 
 ## Current Status
 
+**Facebook Messenger + Instagram DMs + FB/IG comments (2026-11-28, latest):** migration `20261202000000_meta_social_channels` (auto-applies). Module grant `meta_inbox` (+ `social_comments` for comments).
+- Uses the tenant's own Meta app (same as WhatsApp, same callback URL). Settings → Facebook & Instagram: paste a system-user token, switch Pages on (CodesApp subscribes them).
+- Messenger + Instagram chats in the main inbox (channel filter + badges), reply text/media within 24h, echoes from Business Suite, read ticks, ad referrals. No templates/calls/bots/AI on these chats yet.
+- FB Page + Instagram comments arrive by webhook on /comments; reply, hide/unhide, Reply privately (opens a chat). 14-day backfill on enable / Check now.
+- PENDING: grant Sois `meta_inbox` + `social_comments`, connect the Page, add the Page + Instagram webhook subscriptions in the Sois Meta app, live test DM + comment round-trip.
+
 **Finance role — A-List + Returns tabs (2026-11-28, latest):** frontend only, no migration.
 - `/finance` now has tabs Payments · Dispatch lists (A-List) · Returns (`?tab=`). A-List tab = read-only loadsheet batches by day with Loadsheet PDF + A-List downloads; Returns tab = the returns-received history (PDF/CSV per day/range) without Scan. `/orders/returns` now renders the shared `ReturnsHistoryView`; its custom range uses the tenant clock.
 

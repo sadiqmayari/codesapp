@@ -210,7 +210,7 @@ export class CallsService {
     });
     if (!contact) return null;
     const convo = await this.prisma.conversation.findFirst({
-      where: { company_id: companyId, contact_id: contact.id, deleted_at: null },
+      where: { company_id: companyId, contact_id: contact.id, channel: 'whatsapp', deleted_at: null },
       orderBy: { last_message_at: 'desc' },
       select: { assigned_user_id: true },
     });
@@ -338,7 +338,7 @@ export class CallsService {
       const ids = contacts.map((c) => c.id);
       // Prefer the most-active conversation among all duplicate contacts.
       const convo = await this.prisma.conversation.findFirst({
-        where: { company_id: companyId, contact_id: { in: ids }, deleted_at: null },
+        where: { company_id: companyId, contact_id: { in: ids }, channel: 'whatsapp', deleted_at: null },
         orderBy: [{ last_message_at: 'desc' }, { updated_at: 'desc' }],
         select: { id: true, contact_id: true, assigned_user_id: true },
       });

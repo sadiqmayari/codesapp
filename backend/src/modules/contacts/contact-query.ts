@@ -78,6 +78,8 @@ export function contactWhereSql(companyId: number, f: ContactFilter = {}): Prism
   if (f.sendableOnly) {
     conds.push(Prisma.sql`status <> 'blocked'`);
     conds.push(Prisma.sql`opted_out_at IS NULL`);
+    // Facebook/Instagram-only contacts have no phone: nothing to WhatsApp.
+    conds.push(Prisma.sql`phone <> ''`);
   }
 
   const q = f.search?.trim();

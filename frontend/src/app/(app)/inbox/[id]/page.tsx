@@ -279,7 +279,10 @@ export default function ThreadPage() {
 
   // Load this contact's Shopify orders (local mirror) for the header chip +
   // info panel whenever the conversation's phone changes.
-  const contactPhone = convo?.contact?.phone ?? null;
+  const contactPhone = convo?.contact?.phone || null;
+  // Facebook Messenger / Instagram chat: no templates, no WhatsApp calls.
+  const socialChannel = convo?.channel && convo.channel !== 'whatsapp' ? convo.channel : null;
+  const channelName = socialChannel === 'instagram' ? 'Instagram' : socialChannel === 'messenger' ? 'Messenger' : 'WhatsApp';
   // ordersError: a failed load is shown as an error with Retry — it used to
   // look like "No orders found". ordersNonce re-runs the fetch (Retry, after
   // creating an order, "No response", or an `orders.changed` event).
@@ -1988,7 +1991,7 @@ export default function ThreadPage() {
           setPanelOpen(true);
         }}
         onTicket={() => setTicketOpenSignal((n) => n + 1)}
-        onSendTemplate={() => setTplOpen(true)}
+        onSendTemplate={socialChannel ? undefined : () => setTplOpen(true)}
         onAddLabel={addLabel}
         onRemoveLabel={removeLabel}
       />
@@ -2134,8 +2137,10 @@ export default function ThreadPage() {
               <p className="text-sm font-semibold text-ink">No messages yet</p>
               <p className="max-w-xs text-xs text-muted">
                 {win.open
-                  ? 'Say hello — your reply goes straight to the customer on WhatsApp.'
-                  : 'Start the conversation with an approved template.'}
+                  ? `Say hello — your reply goes straight to the customer on ${channelName}.`
+                  : socialChannel
+                    ? `The customer has to message you on ${channelName} first.`
+                    : 'Start the conversation with an approved template.'}
               </p>
             </div>
           ) : (
@@ -2437,7 +2442,7 @@ export default function ThreadPage() {
                         shopifyReady ? () => setCatalogOpen(true) : undefined
                       }
                       onQuickReply={() => setQuickOpen(true)}
-                      onTemplate={() => setTplOpen(true)}
+                      onTemplate={socialChannel ? undefined : () => setTplOpen(true)}
                       onShopify={
                         shopifyReady ? () => setOrderOpen(true) : undefined
                       }
@@ -2499,7 +2504,9 @@ export default function ThreadPage() {
                 <p className="text-xs text-muted">
                   {convo?.contact?.status === 'blocked'
                     ? 'This contact is blocked.'
-                    : 'The 24-hour window is closed — send an approved template to restart the conversation. Free replies reopen as soon as the customer writes back.'}
+                    : socialChannel
+                      ? `The 24-hour reply window is closed. ${channelName} only lets you reply within 24 hours of the customer's last message; replies reopen as soon as they write back.`
+                      : 'The 24-hour window is closed — send an approved template to restart the conversation. Free replies reopen as soon as the customer writes back.'}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -2512,12 +2519,14 @@ export default function ThreadPage() {
                     <ShopifyIcon size={16} /> Create order
                   </button>
                 )}
-                <button
-                  onClick={() => setTplOpen(true)}
-                  className="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg flex items-center gap-2"
-                >
-                  <FileText size={16} /> Send template
-                </button>
+                {!socialChannel && (
+                  <button
+                    onClick={() => setTplOpen(true)}
+                    className="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg flex items-center gap-2"
+                  >
+                    <FileText size={16} /> Send template
+                  </button>
+                )}
               </div>
             </div>
           </div>

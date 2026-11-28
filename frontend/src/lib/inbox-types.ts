@@ -1,9 +1,13 @@
 export interface ContactLite {
   id: number;
   name: string;
+  /** '' for a Facebook / Instagram-only contact. */
   phone: string;
   email: string | null;
+  avatar_url?: string | null;
 }
+
+export type ConversationChannel = 'whatsapp' | 'messenger' | 'instagram';
 
 export interface AssignedUser {
   id: number;
@@ -31,6 +35,8 @@ export interface ConversationRow {
   window_expires_at: string | null;
   pinned_at: string | null;
   ai_autoreply: boolean | null;
+  /** whatsapp (default) | messenger | instagram */
+  channel?: ConversationChannel;
   updated_at: string;
 }
 
@@ -60,9 +66,14 @@ export interface ConversationDetail {
     city?: string | null;
     custom_fields?: Record<string, unknown> | null;
     created_at?: string;
+    fb_psid?: string | null;
+    ig_sid?: string | null;
   };
   /** Which tenant WhatsApp number the customer writes to (multi-number). */
   via_number?: { label: string | null; phone: string | null } | null;
+  /** Facebook / Instagram chat: the Page (and IG account) it's on. */
+  via_page?: { name: string; igUsername: string | null } | null;
+  channel?: ConversationChannel;
   created_at?: string;
   assigned_user: AssignedUser | null;
   labels: { id: number; label: string }[];

@@ -887,3 +887,10 @@ Additive, real Prisma migration (auto-applies on container start).
 Additive, real Prisma migration (auto-applies on container start).
 - `users.dashboard_layout JSON NULL` — the member's own dashboard `{hidden: string[]}` (widget ids from `lib/dashboard.ts WIDGETS`). NULL = follow the company default.
 - `companies.dashboard_default JSON NULL` — owner/admin team default `{hidden: string[]}`. NULL = every widget shown.
+
+## Facebook & Instagram (migration 20261202000000_meta_social_channels · Dec-2026)
+- **`meta_pages`**: `id, company_id, page_id (UNIQUE), name, picture_url, page_token_encrypted (AES-GCM), ig_user_id (UNIQUE, nullable), ig_username, status (active|error|disconnected), subscribed_fields JSON, last_error, last_event_at, created_at, updated_at`. Index `(company_id, status)`. Inbound Page / Instagram webhooks route by `page_id` / `ig_user_id`.
+- `companies.meta_social_token_encrypted` TEXT NULL — system-user token (lists Pages).
+- `conversations.channel` VARCHAR(16) NOT NULL DEFAULT 'whatsapp' (`whatsapp|messenger|instagram`), `conversations.meta_page_id` INT NULL; index `(company_id, channel, last_message_at)`.
+- `contacts.fb_psid` / `contacts.ig_sid` VARCHAR(64) NULL (indexed with company_id), `contacts.avatar_url` VARCHAR(1000) NULL. FB/IG-only contacts have `phone = ''`.
+- `social_comments` rows with `platform='facebook'|'instagram'` use `account_id = meta_pages.id`; `source='ad'` when the IG webhook carries `media.ad_id`.

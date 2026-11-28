@@ -1,4 +1,5 @@
 import {
+  Optional,
   BadRequestException,
   ForbiddenException,
   Inject,
@@ -27,6 +28,7 @@ import { phoneSearchDigits } from '../../common/utils/contact-phone';
 import { clampQuery } from '../../common/utils/search';
 import { UsageMeteringService } from '../usage-metering/usage-metering.service';
 import { InboxGateway } from './inbox.gateway';
+import { MetaSocialService } from './meta-social/meta-social.service';
 import { MetaClientService, MetaSendPayload } from './meta-client.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import { CompanyStatusService } from '../../common/services/company-status.service';
@@ -217,7 +219,174 @@ export class InboxService implements OnModuleInit {
     private readonly aiMetering: AiMeteringService,
     private readonly aiProfile: AiProfileService,
     private readonly jobQueue: JobQueueService,
+    @Optional() private readonly metaSocial?: MetaSocialService,
   ) {}
+
+  /** Facebook Messenger / Instagram chat (not WhatsApp). */
+  private isSocial(convo: { channel?: string | null }): boolean {
+    return !!convo.channel && convo.channel !== 'whatsapp';
+  }
+
+  private requireMetaSocial(): MetaSocialService {
+    if (!this.metaSocial) throw new ForbiddenException('Facebook & Instagram are not available');
+    return this.metaSocial;
+  }
+
+  /**
+   * Text send on a Messenger / Instagram chat: same persistence + events as
+   * the WhatsApp path, Graph Send API instead of the Cloud API. No templates
+   * (Meta has none for these channels); the 24h window still applies.
+   */
+  private async sendSocialMessage(
+    companyId: number,
+    convo: Awaited<ReturnType<InboxService['requireConversation']>>,
+    dto: SendMessageDto,
+    userId?: number,
+    opts?: { sentByAi?: boolean },
+  ) {
+    const social = this.requireMetaSocial();
+    if (dto.type !== SendMessageType.text) {
+      throw new BadRequestException(
+        dto.type === SendMessageType.template
+          ? 'Templates are WhatsApp-only, reply with a normal message'
+          : 'Use the attachment button to send files on this chat',
+      );
+    }
+    const text = dto.content?.trim() ? dto.content : null;
+    if (!text) throw new BadRequestException('content is required for text messages');
+    if (!convo.window_expires_at || convo.window_expires_at.getTime() < Date.now()) {
+      throw new ForbiddenException('24-hour reply window closed, wait for the customer to message again');
+    }
+    let contextMessageId: number | null = null;
+    let replyToMid: string | null = null;
+    if (dto.contextMessageId) {
+      const ref = await this.prisma.message.findFirst({
+        where: { id: dto.contextMessageId, company_id: companyId, conversation_id: convo.id },
+        select: { id: true, meta_message_id: true },
+      });
+      contextMessageId = ref?.id ?? null;
+      replyToMid = ref?.meta_message_id ?? null;
+    }
+    const mid = await social.sendText(companyId, convo, text, replyToMid);
+    const data = {
+      conversation_id: convo.id,
+      company_id: companyId,
+      message_type: 'text' as const,
+      direction: 'outbound' as const,
+      content: text,
+      status: 'sent' as const,
+      meta_message_id: mid,
+      context_message_id: contextMessageId,
+      user_id: userId ?? null,
+      client_id: dto.clientId ?? null,
+      sent_by_ai: opts?.sentByAi === true,
+      timestamp: new Date(),
+    };
+    let message;
+    try {
+      message = await this.prisma.message.create({ data, include: MESSAGE_INCLUDE });
+    } catch (err) {
+      // The Page echo raced us and stored this mid first: claim that row.
+      if ((err as { code?: string })?.code !== 'P2002' || !mid) throw err;
+      const row = await this.prisma.message.findFirst({
+        where: { company_id: companyId, meta_message_id: mid },
+        select: { id: true },
+      });
+      if (!row) throw err;
+      message = await this.prisma.message.update({
+        where: { id: row.id },
+        data: {
+          user_id: data.user_id,
+          client_id: data.client_id,
+          sent_by_ai: data.sent_by_ai,
+          context_message_id: contextMessageId,
+        },
+        include: MESSAGE_INCLUDE,
+      });
+    }
+    await this.prisma.conversation.update({
+      where: { id: convo.id },
+      data: { last_message: text.slice(0, 500), last_message_at: new Date() },
+    });
+    await this.metering.incrementMessages(companyId);
+    await this.autoAssignOnReply(companyId, convo.id, convo.assigned_user_id, userId);
+    this.gateway.emitToConversationScoped(
+      companyId,
+      convo.assigned_user_id ?? userId ?? null,
+      'message.sent',
+      { message },
+    );
+    await this.webhookDispatcher.dispatch(companyId, 'message.sent', {
+      messageId: message.id,
+      conversationId: convo.id,
+      contactId: convo.contact_id,
+      messageType: 'text',
+      channel: convo.channel,
+    });
+    return message;
+  }
+
+  /** Deliver a persisted `sending` media row on a Messenger / Instagram chat. */
+  private async deliverSocialMedia(
+    companyId: number,
+    convo: Awaited<ReturnType<InboxService['requireConversation']>>,
+    messageId: number,
+    kind: 'image' | 'video' | 'audio' | 'document',
+    webPath: string,
+    caption: string | undefined,
+    assignedUserId: number | null,
+  ): Promise<void> {
+    const social = this.requireMetaSocial();
+    try {
+      const mid = await social.sendAttachment(companyId, convo, kind, social.publicMediaUrl(webPath));
+      await this.prisma.message.update({
+        where: { id: messageId },
+        data: { status: 'sent', meta_message_id: mid ?? undefined },
+      });
+      this.gateway.emitToCompany(companyId, 'message.status', {
+        messageId,
+        conversationId: convo.id,
+        status: 'sent',
+      });
+      // Attachments carry no caption on these channels: send it as a text.
+      if (caption) {
+        const cmid = await social.sendText(companyId, convo, caption).catch(() => null);
+        if (cmid) {
+          const cap = await this.prisma.message
+            .create({
+              data: {
+                conversation_id: convo.id,
+                company_id: companyId,
+                message_type: 'text',
+                direction: 'outbound',
+                content: caption,
+                status: 'sent',
+                meta_message_id: cmid,
+                user_id: assignedUserId,
+                timestamp: new Date(),
+              },
+              include: MESSAGE_INCLUDE,
+            })
+            .catch(() => null);
+          if (cap) {
+            this.gateway.emitToConversationScoped(companyId, assignedUserId, 'message.sent', { message: cap });
+          }
+        }
+      }
+      await this.metering.incrementMessages(companyId);
+    } catch (err) {
+      const reason = (err instanceof Error ? err.message : String(err)).slice(0, 500);
+      await this.prisma.message
+        .update({ where: { id: messageId }, data: { status: 'failed', error_reason: reason } })
+        .catch(() => undefined);
+      this.gateway.emitToCompany(companyId, 'message.status', {
+        messageId,
+        conversationId: convo.id,
+        status: 'failed',
+        error: reason,
+      });
+    }
+  }
 
   /**
    * Coalesced fulfillment-board change ping for the Orders screen. Lets services
@@ -358,6 +527,9 @@ export class InboxService implements OnModuleInit {
     } else if (dto.assignedUserId) {
       where.assigned_user_id = dto.assignedUserId;
     }
+    if (dto.channel) {
+      where.channel = dto.channel;
+    }
     if (dto.label) {
       // The label filter is a PICKER of labels in use (inbox/layout LabelFilter),
       // so match the chosen label exactly (case-insensitive via the column
@@ -405,7 +577,7 @@ export class InboxService implements OnModuleInit {
     // Latest message (type/direction/status) for the WhatsApp-style row preview
     // (media icon + ✓✓ tick) — index-backed single-row seek per conversation.
     const rowInclude = {
-      contact: { select: { id: true, name: true, phone: true, email: true } },
+      contact: { select: { id: true, name: true, phone: true, email: true, avatar_url: true } },
       assigned_user: { select: { id: true, name: true, email: true } },
       labels: { select: { label: true } },
       messages: {
@@ -522,6 +694,17 @@ export class InboxService implements OnModuleInit {
         .catch(() => null);
       if (wn) viaNumber = { label: wn.label, phone: wn.display_phone_number };
     }
+    // Facebook / Instagram: which Page (and IG account) the chat is on.
+    let viaPage: { name: string; igUsername: string | null } | null = null;
+    if (convo.meta_page_id) {
+      const mp = await this.prisma.metaPage
+        .findFirst({
+          where: { id: convo.meta_page_id, company_id: companyId },
+          select: { name: true, ig_username: true },
+        })
+        .catch(() => null);
+      if (mp) viaPage = { name: mp.name, igUsername: mp.ig_username };
+    }
     if (viewer) {
       const isPrivileged =
         isPrivilegedRole(viewer.role);
@@ -540,9 +723,9 @@ export class InboxService implements OnModuleInit {
         },
         select: { pinned_at: true },
       });
-      return { ...convo, pinned_at: pin?.pinned_at ?? null, via_number: viaNumber };
+      return { ...convo, pinned_at: pin?.pinned_at ?? null, via_number: viaNumber, via_page: viaPage };
     }
-    return { ...convo, via_number: viaNumber };
+    return { ...convo, via_number: viaNumber, via_page: viaPage };
   }
 
   async assign(companyId: number, id: number, userId: number | null) {
@@ -920,6 +1103,9 @@ export class InboxService implements OnModuleInit {
       throw new BadRequestException('This message can no longer be reacted to');
     }
     const convo = await this.requireConversation(companyId, target.conversation_id);
+    if (this.isSocial(convo)) {
+      throw new BadRequestException('Reactions are WhatsApp-only for now');
+    }
     if (!convo.window_expires_at || convo.window_expires_at.getTime() < Date.now()) {
       throw new ForbiddenException('24-hour window closed — reactions are not allowed');
     }
@@ -1151,6 +1337,10 @@ export class InboxService implements OnModuleInit {
     }
 
     const convo = await this.requireConversation(companyId, conversationId);
+
+    if (this.isSocial(convo)) {
+      return this.sendSocialMessage(companyId, convo, dto, userId, opts);
+    }
 
     await this.metaClient.assertOnboarded(companyId);
 
@@ -1433,8 +1623,9 @@ export class InboxService implements OnModuleInit {
     }
 
     const convo = await this.requireConversation(companyId, conversationId);
+    const social = this.isSocial(convo);
 
-    await this.metaClient.assertOnboarded(companyId);
+    if (!social) await this.metaClient.assertOnboarded(companyId);
 
     const now = new Date();
     if (
@@ -1460,10 +1651,13 @@ export class InboxService implements OnModuleInit {
     }
 
     // Multi-Number: send from the number the customer last used on this chat
-    // (falls back to the company's primary / legacy number).
-    const sendNumber = await this.metaClient.resolveSendNumber(companyId, {
-      conversationId,
-    });
+    // (falls back to the company's primary / legacy number). FB/IG chats send
+    // through their Page instead.
+    const sendNumber = social
+      ? { phoneNumberId: '', whatsappNumberId: null as number | null }
+      : await this.metaClient.resolveSendNumber(companyId, {
+          conversationId,
+        });
     if (!sendNumber) {
       throw new ForbiddenException('WhatsApp phone number not configured');
     }
@@ -1475,6 +1669,9 @@ export class InboxService implements OnModuleInit {
     if (!contact) throw new NotFoundException('Contact not found');
     if (contact.status === 'blocked') {
       throw new ForbiddenException('Contact is blocked — unblock them to send messages');
+    }
+    if (social && convo.channel === 'instagram' && rule.kind === 'document') {
+      throw new BadRequestException('Instagram does not accept documents, send an image or video');
     }
 
     const messageType = rule.kind;
@@ -1607,6 +1804,20 @@ export class InboxService implements OnModuleInit {
       'message.sent',
       { message },
     );
+
+    if (social) {
+      // One Graph call by public URL: no upload step, no queue needed.
+      void this.deliverSocialMedia(
+        companyId,
+        convo,
+        message.id,
+        messageType as 'image' | 'video' | 'audio' | 'document',
+        mediaWebPath,
+        caption,
+        convo.assigned_user_id ?? input.userId ?? null,
+      );
+      return message;
+    }
 
     await this.jobQueue.enqueue(
       'send-media',

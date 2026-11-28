@@ -26,6 +26,7 @@ import {
   X,
 } from 'lucide-react';
 import { AiStateBadge } from './ai-state-badge';
+import { BrandMark } from '@/components/icons/brand-logo';
 import { cn } from '@/lib/utils';
 import { avatarColor, initialsOf } from '@/lib/avatar';
 import { apiFetch } from '@/lib/api';
@@ -72,7 +73,8 @@ export interface ThreadHeaderProps {
   onAudit: () => void;
   onNotes: () => void;
   onTicket: () => void;
-  onSendTemplate: () => void;
+  /** Omitted on Facebook / Instagram chats (templates are WhatsApp-only). */
+  onSendTemplate?: () => void;
   onAddLabel: (label: string) => Promise<void> | void;
   onRemoveLabel: (label: string) => Promise<void> | void;
   /** Bumped by a keyboard shortcut to open the assignee picker. */
@@ -402,7 +404,9 @@ export default function ThreadHeader(p: ThreadHeaderProps) {
     { key: 'labels', label: 'Labels…', icon: Tag, onSelect: () => setLabelsOpen(true) },
     { key: 'notes', label: 'Internal notes', icon: StickyNote, onSelect: p.onNotes },
     { key: 'ticket', label: 'Support ticket', icon: LifeBuoy, onSelect: p.onTicket },
-    { key: 'template', label: 'Send template', icon: FileText, onSelect: p.onSendTemplate },
+    ...(p.onSendTemplate
+      ? [{ key: 'template', label: 'Send template', icon: FileText, onSelect: p.onSendTemplate }]
+      : []),
     { key: 'audit', label: 'Why this reply?', icon: History, onSelect: p.onAudit },
     { key: 'clear', label: 'Clear chat', icon: Eraser, onSelect: p.onClear },
     { key: 'block', label: blocked ? 'Unblock contact' : 'Block contact', icon: Ban, danger: !blocked, onSelect: p.onBlock },
@@ -466,7 +470,22 @@ export default function ThreadHeader(p: ThreadHeaderProps) {
               {c?.id ? <AiStateBadge conversationId={c.id} iconOnly={compact === true} /> : null}
             </span>
             <span className="flex min-w-0 items-center gap-1.5 overflow-hidden text-xs text-muted">
-              <span className="truncate">{c?.contact?.phone}</span>
+              <span className="truncate">
+                {c?.channel && c.channel !== 'whatsapp' ? (
+                  <span className="inline-flex items-center gap-1">
+                    <BrandMark
+                      brand={c.channel === 'instagram' ? 'instagram' : 'messenger'}
+                      size="sm"
+                      className="!h-4 !w-4 !rounded-full [&>svg]:!h-2.5 [&>svg]:!w-2.5"
+                    />
+                    {c.channel === 'instagram'
+                      ? `Instagram${c.via_page?.igUsername ? ` · @${c.via_page.igUsername}` : ''}`
+                      : `Messenger${c.via_page?.name ? ` · ${c.via_page.name}` : ''}`}
+                  </span>
+                ) : (
+                  c?.contact?.phone
+                )}
+              </span>
               {labels.slice(0, 2).map((l) => (
                 <span
                   key={l}

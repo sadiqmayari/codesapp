@@ -289,6 +289,9 @@ model Company {
   webhook_key                       String?           @unique @db.VarChar(160)
   webhook_app_secret_encrypted      String?           @db.Text
   webhook_verify_token              String?           @db.VarChar(255)
+  // Facebook & Instagram (Meta social): the tenant's system-user token from
+  // their OWN Meta app (same app as WhatsApp), AES-GCM. Used to (re)list Pages.
+  meta_social_token_encrypted       String?           @db.Text
   // Per-tenant Shopify webhook (client's own custom Shopify app): unique
   // callback URL /webhooks/shopify/{shopify_webhook_key}; the client's
   // Shopify webhook signing secret is stored encrypted for HMAC verify.
@@ -737,6 +740,11 @@ model Contact {
   // exclude opted-out contacts. 1:1 chat replies are unaffected.
   opted_out_at    DateTime?     @db.DateTime(3)
   opt_out_source  String?       @db.VarChar(32)
+  // Meta social: Page-scoped Messenger id / Instagram-scoped id. A contact that
+  // only messaged on FB/IG has phone = '' until an agent adds one.
+  fb_psid         String?       @db.VarChar(64)
+  ig_sid          String?       @db.VarChar(64)
+  avatar_url      String?       @db.VarChar(1000)
   deleted_at      DateTime?
   created_at      DateTime      @default(now())
 
@@ -746,6 +754,8 @@ model Contact {
   call_logs     CallLog[]
 
   @@index([company_id, phone])
+  @@index([company_id, fb_psid])
+  @@index([company_id, ig_sid])
   @@index([company_id, deleted_at, status])
   @@index([company_id, last_message_at])
   @@map("contacts")
@@ -884,6 +894,10 @@ model Conversation {
   // Multi-Number update (Stage 2): the WhatsApp number this conversation last
   // exchanged a message on — outbound replies default to it. NULL = primary.
   last_whatsapp_number_id Int?
+  // Channel of this chat: whatsapp | messenger | instagram. One conversation
+  // per (contact, channel). meta_page_id = meta_pages.id for FB/IG chats.
+  channel                 String             @default("whatsapp") @db.VarChar(16)
+  meta_page_id            Int?
   window_expires_at       DateTime?
   unread_count            Int                @default(0)
   deleted_at              DateTime?
@@ -904,6 +918,7 @@ model Conversation {
   @@index([company_id, last_message_at(sort: Desc)])
   @@index([company_id, pinned_at(sort: Desc)])
   @@index([company_id, referral_source_id])
+  @@index([company_id, channel, last_message_at])
   @@map("conversations")
 }
 
@@ -3464,6 +3479,30 @@ model SocialComment {
   @@index([company_id, commented_at])
   @@index([company_id, status])
   @@map("social_comments")
+}
+
+// Facebook Pages (+ linked Instagram professional account) connected for
+// Messenger / Instagram DMs and comments through the tenant's own Meta app.
+// Inbound webhooks route by page_id / ig_user_id (globally unique: one Page
+// belongs to one tenant). Page token AES-GCM.
+model MetaPage {
+  id                   Int       @id @default(autoincrement())
+  company_id           Int
+  page_id              String    @unique @db.VarChar(64)
+  name                 String    @db.VarChar(255)
+  picture_url          String?   @db.VarChar(1000)
+  page_token_encrypted String    @db.Text
+  ig_user_id           String?   @unique @db.VarChar(64)
+  ig_username          String?   @db.VarChar(128)
+  status               String    @default("active") @db.VarChar(16) // active | error | disconnected
+  subscribed_fields    Json?
+  last_error           String?   @db.VarChar(500)
+  last_event_at        DateTime?
+  created_at           DateTime  @default(now())
+  updated_at           DateTime  @updatedAt
+
+  @@index([company_id, status])
+  @@map("meta_pages")
 }
 
 // YouTube channels connected for Growth (channel stats + comments). Token =

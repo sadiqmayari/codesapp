@@ -12,6 +12,7 @@ import { TeamSection } from '@/components/settings/team';
 import { TrackingSection } from '@/components/settings/tracking';
 import { CompetitionSection } from '@/components/settings/competition';
 import { WhatsAppSection } from '@/components/settings/whatsapp';
+import { MetaSocialSection } from '@/components/settings/meta-social';
 import { StoresSection } from '@/components/settings/stores';
 import {
   ConfirmationSection,
@@ -69,6 +70,8 @@ export default function SettingsSectionPage() {
       return <CompetitionSection />;
     case 'whatsapp':
       return <WhatsAppSection />;
+    case 'facebook-instagram':
+      return <MetaSocialSection />;
     case 'stores':
       return <StoresSection />;
     case 'confirmation':

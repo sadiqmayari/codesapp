@@ -5,6 +5,7 @@ import { EncryptionService } from '../../common/services/encryption.service';
 import { FeatureService } from '../../common/services/feature.service';
 import { runsBackground } from '../../common/utils/process-role';
 import { InboxGateway } from '../inbox/inbox.gateway';
+import { MetaSocialService } from '../inbox/meta-social/meta-social.service';
 import { listTikTokComments, replyTikTokComment, setTikTokCommentHidden } from './tiktok-comments.client';
 import { ConfigService } from '@nestjs/config';
 import { YoutubeCreds, channelComments, replyToComment, setCommentHidden } from '../growth/platforms/google/youtube.client';
@@ -30,7 +31,8 @@ const ymd = (d: Date) => d.toISOString().slice(0, 10);
  * Ad / social comments. TikTok ad comments are pulled by a worker poller
  * (TikTok has no comment webhook for ads) from every active TikTok ad account
  * of tenants granted the `social_comments` module, then listed, replied to and
- * hidden from the Comments page. Meta FB/IG plug in later as another platform.
+ * hidden from the Comments page. Facebook + Instagram comments arrive by
+ * webhook (MetaSocialService writes them); reply/hide go through it too.
  */
 @Injectable()
 export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
@@ -44,7 +46,44 @@ export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
     private readonly feature: FeatureService,
     private readonly gateway: InboxGateway,
     private readonly config: ConfigService,
+    private readonly metaSocial: MetaSocialService,
   ) {}
+
+  private isMeta(platform: string) {
+    return platform === 'facebook' || platform === 'instagram';
+  }
+
+  private async loadMeta(companyId: number, id: number) {
+    const c = await this.prisma.socialComment.findFirst({ where: { id, company_id: companyId } });
+    return c && this.isMeta(c.platform) ? c : null;
+  }
+
+  private metaName(platform: string) {
+    return platform === 'instagram' ? 'Instagram' : 'Facebook';
+  }
+
+  /** Private reply: DM the commenter on Messenger / Instagram (opens an inbox chat). */
+  async privateReply(companyId: number, userId: number, id: number, text: string) {
+    const body = text.trim();
+    if (!body) throw new BadRequestException('Write a message first.');
+    const c = await this.loadMeta(companyId, id);
+    if (!c) throw new BadRequestException('Private replies work on Facebook and Instagram comments only.');
+    let res: { conversationId: number };
+    try {
+      res = await this.metaSocial.privateReply(companyId, c, body, userId);
+    } catch (e) {
+      throw new BadRequestException(`${this.metaName(c.platform)} refused the private reply: ${(e as Error).message}`);
+    }
+    if (!c.replied_at) {
+      await this.prisma.socialComment.update({
+        where: { id: c.id },
+        data: { replied_at: new Date(), replied_by_user_id: userId, reply_text: `(private) ${body}`.slice(0, 5000) },
+      });
+    }
+    await this.audit(companyId, userId, 'comment.private_reply', c.id, { platform: c.platform });
+    this.safeEmit(companyId, 'comments.updated', { id: c.id });
+    return res;
+  }
 
   private ytCreds(tokenEncrypted: string | null): YoutubeCreds {
     if (!tokenEncrypted) throw new BadRequestException('The YouTube channel behind this comment is disconnected. Reconnect it in Growth → Connections.');
@@ -227,7 +266,7 @@ export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
     }
     const term = q.q?.trim().slice(0, 100);
     if (term) where.OR = [{ text: { contains: term } }, { author_name: { contains: term } }, { ad_name: { contains: term } }];
-    const [rows, total, unreplied, accounts, channels, byPlatform] = await Promise.all([
+    const [rows, total, unreplied, accounts, channels, meta, byPlatform] = await Promise.all([
       this.prisma.socialComment.findMany({
         where,
         orderBy: [{ commented_at: 'desc' }, { id: 'desc' }],
@@ -242,6 +281,7 @@ export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
       this.prisma.socialComment.count({ where: { company_id: companyId, replied_at: null, parent_external_id: null, status: 'visible' } }),
       this.prisma.adAccount.count({ where: { company_id: companyId, platform: 'tiktok', status: 'active' } }),
       this.prisma.youtubeChannel.count({ where: { company_id: companyId, status: 'active' } }),
+      this.metaSocial.hasPages(companyId),
       this.prisma.socialComment.groupBy({
         by: ['platform'],
         where: { company_id: companyId, replied_at: null, parent_external_id: null, status: 'visible' },
@@ -250,7 +290,19 @@ export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
     ]);
     const unrepliedByPlatform: Record<string, number> = {};
     for (const g of byPlatform) unrepliedByPlatform[g.platform] = g._count._all;
-    return { rows, total, page, limit, unreplied, unrepliedByPlatform, hasAccounts: accounts + channels > 0, hasTikTok: accounts > 0, hasYoutube: channels > 0 };
+    return {
+      rows,
+      total,
+      page,
+      limit,
+      unreplied,
+      unrepliedByPlatform,
+      hasAccounts: accounts + channels > 0 || meta.facebook,
+      hasTikTok: accounts > 0,
+      hasYoutube: channels > 0,
+      hasFacebook: meta.facebook,
+      hasInstagram: meta.instagram,
+    };
   }
 
   private async loadYoutube(companyId: number, id: number) {
@@ -274,6 +326,21 @@ export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
   async reply(companyId: number, userId: number, id: number, text: string) {
     const body = text.trim();
     if (!body) throw new BadRequestException('Write a reply first.');
+    const mc = await this.loadMeta(companyId, id);
+    if (mc) {
+      try {
+        await this.metaSocial.replyToComment(companyId, mc, body);
+      } catch (e) {
+        throw new BadRequestException(`${this.metaName(mc.platform)} refused the reply: ${(e as Error).message}`);
+      }
+      const row = await this.prisma.socialComment.update({
+        where: { id: mc.id },
+        data: { reply_text: body, replied_at: new Date(), replied_by_user_id: userId },
+      });
+      await this.audit(companyId, userId, 'comment.replied', mc.id, { platform: mc.platform });
+      this.safeEmit(companyId, 'comments.updated', { id: mc.id });
+      return row;
+    }
     const yt = await this.loadYoutube(companyId, id);
     if (yt) {
       try {
@@ -303,6 +370,18 @@ export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
   }
 
   async setHidden(companyId: number, userId: number, id: number, hidden: boolean) {
+    const mc = await this.loadMeta(companyId, id);
+    if (mc) {
+      try {
+        await this.metaSocial.setCommentHidden(companyId, mc, hidden);
+      } catch (e) {
+        throw new BadRequestException(`${this.metaName(mc.platform)} refused: ${(e as Error).message}`);
+      }
+      const row = await this.prisma.socialComment.update({ where: { id: mc.id }, data: { status: hidden ? 'hidden' : 'visible' } });
+      await this.audit(companyId, userId, hidden ? 'comment.hidden' : 'comment.unhidden', mc.id, { platform: mc.platform });
+      this.safeEmit(companyId, 'comments.updated', { id: mc.id });
+      return row;
+    }
     const yt = await this.loadYoutube(companyId, id);
     if (yt) {
       try {
@@ -347,7 +426,15 @@ export class SocialCommentsService implements OnModuleInit, OnModuleDestroy {
         errors.push(`${a.external_id}: ${(e as Error).message}`);
       }
     }
-    return { accounts: accounts.length + channels.length, created, errors };
+    const meta = await this.metaSocial.hasPages(companyId);
+    if (meta.facebook) {
+      try {
+        created += await this.metaSocial.backfillComments(companyId);
+      } catch (e) {
+        errors.push(`Facebook/Instagram: ${(e as Error).message}`);
+      }
+    }
+    return { accounts: accounts.length + channels.length + (meta.facebook ? 1 : 0), created, errors };
   }
 
   private async audit(companyId: number, userId: number, action: string, entityId: number, metadata: Record<string, unknown>) {

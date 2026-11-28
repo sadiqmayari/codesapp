@@ -15,6 +15,8 @@ import { MetaWebhookController } from './meta-webhook.controller';
 import { MetaWebhookService } from './meta-webhook.service';
 import { WhatsAppNumbersController } from './whatsapp-numbers.controller';
 import { WsJwtGuard } from './ws-jwt.guard';
+import { MetaSocialService } from './meta-social/meta-social.service';
+import { MetaSocialController } from './meta-social/meta-social.controller';
 
 @Module({
   imports: [
@@ -32,6 +34,7 @@ import { WsJwtGuard } from './ws-jwt.guard';
     InboxController,
     MetaWebhookController,
     WhatsAppNumbersController,
+    MetaSocialController,
   ],
   providers: [
     InboxService,
@@ -39,7 +42,8 @@ import { WsJwtGuard } from './ws-jwt.guard';
     MetaClientService,
     MetaWebhookService,
     WsJwtGuard,
+    MetaSocialService,
   ],
-  exports: [InboxService, InboxGateway, MetaClientService],
+  exports: [InboxService, InboxGateway, MetaClientService, MetaSocialService],
 })
 export class InboxModule {}

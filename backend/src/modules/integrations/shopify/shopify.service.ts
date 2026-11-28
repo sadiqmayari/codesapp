@@ -1947,6 +1947,7 @@ export class ShopifyService implements OnModuleInit {
       where: {
         company_id: companyId,
         contact_id: contact.id,
+        channel: 'whatsapp',
         deleted_at: null,
       },
       orderBy: { id: 'desc' },
@@ -4138,7 +4139,7 @@ export class ShopifyService implements OnModuleInit {
     }
 
     let convo = await this.prisma.conversation.findFirst({
-      where: { company_id: companyId, contact_id: contact.id, deleted_at: null },
+      where: { company_id: companyId, contact_id: contact.id, channel: 'whatsapp', deleted_at: null },
       orderBy: { id: 'desc' },
     });
     if (!convo) {

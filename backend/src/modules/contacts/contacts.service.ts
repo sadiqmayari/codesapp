@@ -303,9 +303,17 @@ export class ContactsService {
    * template. Mirrors CallsService.createConversation.
    */
   async ensureConversation(companyId: number, id: number) {
-    await this.get(companyId, id);
+    const ct = await this.get(companyId, id);
+    // A contact with a phone opens its WhatsApp chat (templates live there);
+    // a Facebook/Instagram-only contact opens its latest chat of any channel.
+    const hasPhone = !!(ct as { phone?: string | null })?.phone;
     const existing = await this.prisma.conversation.findFirst({
-      where: { company_id: companyId, contact_id: id, deleted_at: null },
+      where: {
+        company_id: companyId,
+        contact_id: id,
+        deleted_at: null,
+        ...(hasPhone ? { channel: 'whatsapp' } : {}),
+      },
       orderBy: [{ last_message_at: 'desc' }, { id: 'desc' }],
       select: { id: true },
     });
@@ -420,7 +428,9 @@ export class ContactsService {
       data.opt_out_source = dto.optedOut ? before.opt_out_source ?? 'agent' : null;
     }
     if (dto.phone !== undefined) {
-      if (actor && !isManager(actor)) {
+      // Agents may ADD a phone to a Facebook/Instagram-only contact (it has
+      // none yet); changing an existing number stays owner/admin only.
+      if (actor && !isManager(actor) && before.phone) {
         throw new ForbiddenException('Only owners and admins can change a phone number');
       }
       const phone = canonContactPhone(dto.phone);
@@ -679,7 +689,7 @@ export class ContactsService {
       SELECT REPLACE(REPLACE(REPLACE(phone, '+', ''), ' ', ''), '-', '') AS canon,
              COUNT(*) AS c, GROUP_CONCAT(id ORDER BY id) AS ids
       FROM contacts
-      WHERE company_id = ${companyId} AND deleted_at IS NULL
+      WHERE company_id = ${companyId} AND deleted_at IS NULL AND phone <> ''
       GROUP BY canon
       HAVING COUNT(*) > 1
       ORDER BY c DESC, canon
@@ -781,8 +791,16 @@ export class ContactsService {
         where: { id: primary.id, company_id: companyId },
         data: {
           name,
-          phone: canonContactPhone(primary.phone) || primary.phone,
+          phone:
+            canonContactPhone(primary.phone) ||
+            primary.phone ||
+            canonContactPhone(losers.find((l) => l.phone)?.phone ?? '') ||
+            '',
           email: primary.email || losers.find((l) => l.email)?.email || null,
+          // Facebook / Instagram ids follow the person into the merged contact.
+          fb_psid: primary.fb_psid || losers.find((l) => l.fb_psid)?.fb_psid || null,
+          ig_sid: primary.ig_sid || losers.find((l) => l.ig_sid)?.ig_sid || null,
+          avatar_url: primary.avatar_url || losers.find((l) => l.avatar_url)?.avatar_url || null,
           address: primary.address || losers.find((l) => l.address)?.address || null,
           city: primary.city || losers.find((l) => l.city)?.city || null,
           tags: normalizeTags([primary, ...losers].flatMap((c) => tagsOf(c.tags))),

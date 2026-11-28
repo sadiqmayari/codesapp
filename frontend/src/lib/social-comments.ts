@@ -26,11 +26,21 @@ export interface CommentList {
   hasAccounts: boolean;
   hasTikTok?: boolean;
   hasYoutube?: boolean;
+  hasFacebook?: boolean;
+  hasInstagram?: boolean;
 }
 
-export type CommentPlatform = 'all' | 'tiktok' | 'youtube';
+export type CommentPlatform = 'all' | 'tiktok' | 'youtube' | 'facebook' | 'instagram';
 
-export const PLATFORM_NAME: Record<string, string> = { tiktok: 'TikTok', youtube: 'YouTube', meta: 'Facebook', instagram: 'Instagram' };
+export const PLATFORM_NAME: Record<string, string> = { tiktok: 'TikTok', youtube: 'YouTube', facebook: 'Facebook', instagram: 'Instagram' };
+
+/** Platform chip colour on a comment card. */
+export const PLATFORM_CHIP: Record<string, string> = {
+  tiktok: 'bg-gray-900 text-white',
+  youtube: 'bg-[#CC0000] text-white',
+  facebook: 'bg-[#0866FF] text-white',
+  instagram: 'bg-[#D62976] text-white',
+};
 
 export type CommentStatus = 'unreplied' | 'all' | 'visible' | 'hidden';
 
@@ -44,6 +54,8 @@ export const commentsApi = {
     return apiFetch<CommentList>(`/social-comments?${p.toString()}`, { signal });
   },
   reply: (id: number, text: string) => apiFetch<SocialComment>(`/social-comments/${id}/reply`, { method: 'POST', body: { text } }),
+  privateReply: (id: number, text: string) =>
+    apiFetch<{ conversationId: number }>(`/social-comments/${id}/private-reply`, { method: 'POST', body: { text } }),
   hide: (id: number) => apiFetch<SocialComment>(`/social-comments/${id}/hide`, { method: 'POST' }),
   unhide: (id: number) => apiFetch<SocialComment>(`/social-comments/${id}/unhide`, { method: 'POST' }),
   refresh: () => apiFetch<{ accounts: number; created: number; errors: string[] }>('/social-comments/refresh', { method: 'POST' }),

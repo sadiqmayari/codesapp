@@ -112,6 +112,7 @@ export class BroadcastWorker implements OnModuleInit {
         where: {
           company_id: payload.companyId,
           contact_id: contact.id,
+          channel: 'whatsapp',
           deleted_at: null,
         },
         orderBy: { id: 'desc' },

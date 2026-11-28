@@ -261,6 +261,21 @@ export function ContactInfoPanel(props: ContactInfoPanelProps) {
               props.onContactSaved();
             }}
           />
+          {!phone && convo?.channel && convo.channel !== 'whatsapp' && (
+            <div className="mt-0.5 text-sm text-muted">
+              <EditableField
+                value=""
+                placeholder="+ Add phone (links WhatsApp + orders)"
+                label="phone"
+                type="tel"
+                onSave={async (v) => {
+                  if (!convo?.contact_id || !v.trim()) return;
+                  await apiFetch(`/contacts/${convo.contact_id}`, { method: 'PATCH', body: { phone: v.trim() } });
+                  props.onContactSaved();
+                }}
+              />
+            </div>
+          )}
           {phone && (
             <button
               type="button"
@@ -274,7 +289,9 @@ export function ContactInfoPanel(props: ContactInfoPanelProps) {
           )}
           <p className="mt-0.5 text-xs text-muted">
             {since ? `Customer since ${fmtDate(since)}` : 'Customer'}
-            {convo?.via_number?.phone || convo?.via_number?.label
+            {convo?.channel === 'messenger' ? ` · Messenger${convo.via_page?.name ? ` · ${convo.via_page.name}` : ''}` : ''}
+            {convo?.channel === 'instagram' ? ` · Instagram${convo.via_page?.igUsername ? ` · @${convo.via_page.igUsername}` : ''}` : ''}
+            {convo?.channel && convo.channel !== 'whatsapp' ? '' : convo?.via_number?.phone || convo?.via_number?.label
               ? ` · via ${convo.via_number.label || convo.via_number.phone}`
               : ''}
           </p>
@@ -471,7 +488,7 @@ function EditableField({
   placeholder: string;
   label: string;
   className?: string;
-  type?: 'text' | 'email';
+  type?: 'text' | 'email' | 'tel';
   onSave: (v: string) => Promise<void>;
 }) {
   const toast = useToast();

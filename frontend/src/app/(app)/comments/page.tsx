@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Eye, EyeOff, MessageSquareText, RefreshCw, Reply } from 'lucide-react';
+import { Eye, EyeOff, MessageCircle, MessageSquareText, RefreshCw, Reply } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { ApiError, isAbortError } from '@/lib/api';
 import { fmtDateTime } from '@/lib/utils';
 import { useToast } from '@/components/toast';
@@ -15,13 +16,14 @@ import { SkeletonRows } from '@/components/ui/skeleton';
 import { EmptyState, NoResults } from '@/components/ui/empty-state';
 import { SearchInput } from '@/components/ui/search-input';
 import { StatusChips } from '@/components/ui/filter-bar';
-import { commentsApi, PLATFORM_NAME, type CommentList, type CommentPlatform, type CommentStatus, type SocialComment } from '@/lib/social-comments';
+import { commentsApi, PLATFORM_CHIP, PLATFORM_NAME, type CommentList, type CommentPlatform, type CommentStatus, type SocialComment } from '@/lib/social-comments';
 
 const err = (e: unknown, fb: string) => (e instanceof ApiError ? e.userMessage : fb);
 
 function CommentCard({ c, onChanged }: { c: SocialComment; onChanged: (row: SocialComment) => void }) {
   const toast = useToast();
-  const [open, setOpen] = useState(false);
+  const router = useRouter();
+  const [open, setOpen] = useState<false | 'public' | 'private'>(false);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -44,10 +46,27 @@ function CommentCard({ c, onChanged }: { c: SocialComment; onChanged: (row: Soci
 
   const pname = PLATFORM_NAME[c.platform] ?? c.platform;
   const yt = c.platform === 'youtube';
+  const meta = c.platform === 'facebook' || c.platform === 'instagram';
+
+  const sendPrivate = async () => {
+    setBusy('reply');
+    try {
+      const r = await commentsApi.privateReply(c.id, text);
+      onChanged({ ...c, replied_at: c.replied_at ?? new Date().toISOString(), reply_text: c.reply_text ?? `(private) ${text}` });
+      toast.success(`Sent as a ${c.platform === 'instagram' ? 'Instagram' : 'Messenger'} message`);
+      setText('');
+      setOpen(false);
+      router.push(`/inbox/${r.conversationId}`);
+    } catch (e) {
+      toast.error(err(e, 'Could not send the private reply'));
+    } finally {
+      setBusy(null);
+    }
+  };
   return (
     <Card className="p-4">
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-        <span className={yt ? 'rounded-md bg-[#CC0000] px-2 py-0.5 text-xs font-bold text-white' : 'rounded-md bg-gray-900 px-2 py-0.5 text-xs font-bold text-white'}>{pname}</span>
+        <span className={`rounded-md px-2 py-0.5 text-xs font-bold ${PLATFORM_CHIP[c.platform] ?? 'bg-gray-900 text-white'}`}>{pname}</span>
         <Badge tone={c.source === 'ad' ? 'warn' : 'neutral'}>{c.source === 'ad' ? 'Ad' : 'Organic'}</Badge>
         {c.ad_name && (yt && c.post_id
           ? <a href={`https://youtu.be/${c.post_id}`} target="_blank" rel="noreferrer" className="truncate font-semibold text-ink hover:underline">on {c.ad_name}</a>
@@ -68,16 +87,26 @@ function CommentCard({ c, onChanged }: { c: SocialComment; onChanged: (row: Soci
       {open && (
         <div className="mt-3 space-y-2">
           <textarea value={text} onChange={(e) => setText(e.target.value)} maxLength={500} rows={2} autoFocus
-            className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink" placeholder="Write a public reply…" />
+            className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink"
+            placeholder={open === 'private' ? `Private message to ${c.author_name ?? 'this person'}…` : 'Write a public reply…'} />
           <div className="flex gap-2">
-            <Button size="sm" loading={busy === 'reply'} disabled={!text.trim()} onClick={() => void act('reply', () => commentsApi.reply(c.id, text), `Reply posted on ${pname}`)}>Post reply</Button>
+            {open === 'private' ? (
+              <Button size="sm" loading={busy === 'reply'} disabled={!text.trim()} onClick={() => void sendPrivate()}>Send privately</Button>
+            ) : (
+              <Button size="sm" loading={busy === 'reply'} disabled={!text.trim()} onClick={() => void act('reply', () => commentsApi.reply(c.id, text), `Reply posted on ${pname}`)}>Post reply</Button>
+            )}
             <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
           </div>
         </div>
       )}
       {!open && (
         <div className="mt-3 flex gap-2">
-          <Button size="sm" variant="secondary" onClick={() => setOpen(true)}><Reply size={14} /> Reply</Button>
+          <Button size="sm" variant="secondary" onClick={() => setOpen('public')}><Reply size={14} /> Reply</Button>
+          {meta && (
+            <Button size="sm" variant="ghost" onClick={() => setOpen('private')} title="Send a private message (opens a chat in the inbox)">
+              <MessageCircle size={14} /> Reply privately
+            </Button>
+          )}
           {c.status === 'hidden' ? (
             <Button size="sm" variant="ghost" loading={busy === 'hide'} onClick={() => void act('hide', () => commentsApi.unhide(c.id), 'Comment visible again')}><Eye size={14} /> Unhide</Button>
           ) : (
@@ -146,25 +175,31 @@ export default function CommentsPage() {
     setData((d) => (d ? { ...d, rows: d.rows.map((x) => (x.id === row.id ? row : x)) } : d));
 
   const pages = data ? Math.max(1, Math.ceil(data.total / data.limit)) : 1;
+  const platformOptions = (
+    [
+      ['facebook', data?.hasFacebook],
+      ['instagram', data?.hasInstagram],
+      ['tiktok', data?.hasTikTok],
+      ['youtube', data?.hasYoutube],
+    ] as Array<[Exclude<CommentPlatform, 'all'>, boolean | undefined]>
+  )
+    .filter(([, has]) => has)
+    .map(([value]) => ({ value, label: PLATFORM_NAME[value], count: data?.unrepliedByPlatform?.[value] ?? null }));
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-4 md:p-6">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold text-ink">Comments</h1>
-        <span className="text-sm text-muted">Comments on your TikTok ads and YouTube videos. New ones arrive every 10 minutes.</span>
+        <span className="text-sm text-muted">Comments on your posts and ads. Facebook and Instagram arrive live; TikTok and YouTube every 10 minutes.</span>
         {canManage && (
           <Button size="sm" variant="secondary" className="ml-auto" loading={refreshing} onClick={() => void refresh()}><RefreshCw size={14} /> Check now</Button>
         )}
       </div>
-      {(data?.hasTikTok && data?.hasYoutube) || platform !== 'all' ? (
+      {platformOptions.length > 1 || platform !== 'all' ? (
         <StatusChips<CommentPlatform>
           value={platform}
           onChange={(v) => { setPlatform(v); setPage(1); }}
-          options={[
-            { value: 'all', label: 'All' },
-            { value: 'tiktok', label: 'TikTok', count: data?.unrepliedByPlatform?.tiktok ?? null },
-            { value: 'youtube', label: 'YouTube', count: data?.unrepliedByPlatform?.youtube ?? null },
-          ]}
+          options={[{ value: 'all' as CommentPlatform, label: 'All' }, ...platformOptions]}
         />
       ) : null}
       <div className="flex flex-wrap items-center gap-3">
@@ -184,14 +219,19 @@ export default function CommentsPage() {
       {loading && !data ? (
         <SkeletonRows rows={5} />
       ) : data && !data.hasAccounts ? (
-        <EmptyState icon={MessageSquareText} title="Connect TikTok or YouTube"
-          description="Comments come from the TikTok ad accounts and YouTube channels connected in Growth."
-          action={canManage ? <Link href="/growth/connections" className="text-sm font-semibold text-brand-600">Go to Connections</Link> : undefined} />
+        <EmptyState icon={MessageSquareText} title="Connect Facebook, Instagram, TikTok or YouTube"
+          description="Facebook Pages and Instagram connect in Settings → Facebook & Instagram; TikTok ad accounts and YouTube channels in Growth → Connections."
+          action={canManage ? (
+            <span className="flex flex-wrap justify-center gap-4">
+              <Link href="/settings/facebook-instagram" className="text-sm font-semibold text-brand-600">Facebook & Instagram</Link>
+              <Link href="/growth/connections" className="text-sm font-semibold text-brand-600">Growth connections</Link>
+            </span>
+          ) : undefined} />
       ) : data && data.rows.length === 0 ? (
         q || status !== 'all' ? (
           <NoResults query={q} noun="comments" onClear={() => { setQ(''); setStatus('all'); setPage(1); }} />
         ) : (
-          <EmptyState icon={MessageSquareText} title="No comments yet" description="New comments on your TikTok ads and YouTube videos show up here." />
+          <EmptyState icon={MessageSquareText} title="No comments yet" description="New comments on your posts and ads show up here." />
         )
       ) : (
         <div className="space-y-3">

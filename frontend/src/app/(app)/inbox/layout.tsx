@@ -49,6 +49,7 @@ import { stripWaFormatting } from '@/lib/url-detect';
 import { prefetchThread } from '@/lib/thread-cache';
 import { useDraftText } from '@/lib/draft-store';
 import { avatarColor, initialsOf } from '@/lib/avatar';
+import { BrandMark } from '@/components/icons/brand-logo';
 import type {
   ConversationRow,
   MessageStatus,
@@ -94,12 +95,15 @@ function sortConversationRows(rows: ConversationRow[]): ConversationRow[] {
 // Filters persist in the URL query (Inbox-v2) so a reload / shared link keeps
 // the view. Read once on mount from window.location (useSearchParams would
 // force a Suspense boundary around the whole inbox layout).
+type ChannelFilter = '' | 'whatsapp' | 'messenger' | 'instagram';
+const CHANNELS: Exclude<ChannelFilter, ''>[] = ['whatsapp', 'messenger', 'instagram'];
 interface ListFilters {
   status: ListStatus;
   mine: boolean;
   assignee: string;
   label: string;
   search: string;
+  channel: ChannelFilter;
 }
 const DEFAULT_FILTERS: ListFilters = {
   status: 'all',
@@ -107,6 +111,7 @@ const DEFAULT_FILTERS: ListFilters = {
   assignee: '',
   label: '',
   search: '',
+  channel: '',
 };
 function readFiltersFromUrl(): ListFilters {
   if (typeof window === 'undefined') return DEFAULT_FILTERS;
@@ -120,6 +125,7 @@ function readFiltersFromUrl(): ListFilters {
     assignee: /^\d+$/.test(q.get('assignee') ?? '') ? (q.get('assignee') as string) : '',
     label: q.get('label') ?? '',
     search: q.get('q') ?? '',
+    channel: (CHANNELS as string[]).includes(q.get('ch') ?? '') ? (q.get('ch') as ChannelFilter) : '',
   };
 }
 function filtersToQuery(f: ListFilters): string {
@@ -129,6 +135,7 @@ function filtersToQuery(f: ListFilters): string {
   if (f.assignee) q.set('assignee', f.assignee);
   if (f.label) q.set('label', f.label);
   if (f.search) q.set('q', f.search);
+  if (f.channel) q.set('ch', f.channel);
   const s = q.toString();
   return s ? `?${s}` : '';
 }
@@ -160,7 +167,9 @@ export default function InboxLayout({
   const [panel, setPanel] = useState<'chats' | 'calls'>('chats');
   const [rows, setRows] = useState<ConversationRow[]>([]);
   const [filters, setFilters] = useState<ListFilters>(DEFAULT_FILTERS);
-  const { status, mine, assignee, label, search } = filters;
+  const { status, mine, assignee, label, search, channel } = filters;
+  // Facebook / Instagram chats exist only when the module is granted.
+  const socialOn = user?.company?.modules?.meta_inbox === true;
   // The search box updates instantly; the QUERY follows 300ms later so typing
   // "ayesha" is one request, not six (and an older slow response can never
   // overwrite a newer one — see filterSeq below).
@@ -236,7 +245,7 @@ export default function InboxLayout({
     setFilters(DEFAULT_FILTERS);
   }, []);
   const filtersActive =
-    !!search || !!label || mine || (canManage && !!assignee);
+    !!search || !!label || mine || (canManage && !!assignee) || !!channel;
 
   // Optimistically clear the opened chat's unread badge the instant it opens.
   useEffect(() => {
@@ -270,6 +279,7 @@ export default function InboxLayout({
                 : undefined,
             label: label || undefined,
             search: search || undefined,
+            channel: channel || undefined,
             page: pageNum,
             limit,
           },
@@ -280,7 +290,7 @@ export default function InboxLayout({
         total: (env.meta?.total as number) ?? env.data.length,
       };
     },
-    [status, mine, assignee, canManage, label, search, user],
+    [status, mine, assignee, canManage, label, search, channel, user],
   );
 
   // Authoritative unread-conversation count (cheap: limit 1, read meta.total).
@@ -479,6 +489,7 @@ export default function InboxLayout({
       contactId?: number;
       contactName?: string;
       contactPhone?: string;
+      channel?: ConversationRow['channel'];
       windowExpiresAt?: string;
       status?: ConversationRow['status'];
       unreadCount?: number;
@@ -499,7 +510,7 @@ export default function InboxLayout({
         // Only splice when the row is guaranteed to belong in this view. Under
         // any narrowing filter we can't tell (assignee/label/search), so refetch.
         const narrow =
-          !!f.search || !!f.label || f.mine || !!f.assignee ||
+          !!f.search || !!f.label || f.mine || !!f.assignee || !!f.channel ||
           (f.status !== 'all' && f.status !== 'unread' && f.status !== 'open');
         if (narrow) {
           scheduleLoad();
@@ -526,6 +537,7 @@ export default function InboxLayout({
           window_expires_at: p.windowExpiresAt ?? null,
           pinned_at: null,
           ai_autoreply: null,
+          channel: p.channel ?? 'whatsapp',
           updated_at: when,
         };
         setRows((cur) =>
@@ -969,6 +981,25 @@ export default function InboxLayout({
                 >
                   <UserCheck size={13} /> Mine
                 </button>
+                {socialOn && (
+                  <div className="flex items-center rounded-lg border border-line p-0.5" role="group" aria-label="Filter by channel">
+                    {([''] as ChannelFilter[]).concat(CHANNELS).map((c) => (
+                      <button
+                        key={c || 'all'}
+                        type="button"
+                        onClick={() => patchFilters({ channel: c })}
+                        aria-pressed={channel === c}
+                        title={c ? CHANNEL_LABEL[c] : 'All channels'}
+                        className={cn(
+                          'flex h-6 min-w-[26px] items-center justify-center rounded-md px-1 text-xs font-semibold',
+                          channel === c ? 'bg-sunken text-ink' : 'text-muted hover:text-ink',
+                        )}
+                      >
+                        {c ? <ChannelDot channel={c} /> : 'All'}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <LabelFilter
                   value={label}
                   options={labelOptions}
@@ -1314,11 +1345,16 @@ const ConversationRowItem = memo(function ConversationRowItem({
         <span
           aria-hidden
           className={cn(
-            'mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white',
+            'relative mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white',
             avatarColor(name),
           )}
         >
           {initialsOf(name)}
+          {r.channel && r.channel !== 'whatsapp' && (
+            <span className="absolute -bottom-0.5 -right-0.5 rounded-full ring-2 ring-surface">
+              <ChannelDot channel={r.channel} />
+            </span>
+          )}
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="flex items-center justify-between gap-2">
@@ -1374,7 +1410,7 @@ const ConversationRowItem = memo(function ConversationRowItem({
                 <span className="rounded bg-amber-100 px-1.5 text-xs font-semibold text-amber-800">Pending</span>
               )}
               {windowClosed && (
-                <span className="rounded bg-sunken px-1.5 text-xs font-semibold text-muted" title="The 24h window closed — only templates can be sent">
+                <span className="rounded bg-sunken px-1.5 text-xs font-semibold text-muted" title={r.channel && r.channel !== 'whatsapp' ? 'The 24h window closed: wait for the customer to write again' : 'The 24h window closed — only templates can be sent'}>
                   Window closed
                 </span>
               )}
@@ -1536,5 +1572,23 @@ function PreviewLine({ row }: { row: ConversationRow }) {
       {/* Never fall back to the phone number — it read as a message. */}
       <span className={cn('truncate', !hasCaption && 'italic')}>{hasCaption ? raw : 'Message'}</span>
     </>
+  );
+}
+
+const CHANNEL_LABEL: Record<Exclude<ChannelFilter, ''>, string> = {
+  whatsapp: 'WhatsApp',
+  messenger: 'Messenger',
+  instagram: 'Instagram',
+};
+
+/** Small round channel badge (list rows + the channel filter). */
+function ChannelDot({ channel }: { channel: string }) {
+  const brand = channel === 'messenger' ? 'messenger' : channel === 'instagram' ? 'instagram' : 'whatsapp';
+  return (
+    <BrandMark
+      brand={brand}
+      size="sm"
+      className="!h-[18px] !w-[18px] !rounded-full [&>svg]:!h-2.5 [&>svg]:!w-2.5"
+    />
   );
 }

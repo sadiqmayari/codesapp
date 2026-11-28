@@ -1,6 +1,7 @@
 import { Transform, Type } from 'class-transformer';
 import {
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -43,6 +44,11 @@ export class ListConversationsDto {
   @IsString()
   @MaxLength(100)
   label?: string;
+
+  // whatsapp | messenger | instagram
+  @IsOptional()
+  @IsIn(['whatsapp', 'messenger', 'instagram'])
+  channel?: string;
 
   @IsOptional()
   @IsInt()

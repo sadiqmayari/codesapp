@@ -11,6 +11,7 @@ import {
   Clock,
   CreditCard,
   MessageCircle,
+  MessagesSquare,
   ShoppingBag,
   BadgeCheck,
   ShoppingCart,
@@ -48,6 +49,7 @@ export type SettingsSectionId =
   | 'tracking'
   | 'competition'
   | 'whatsapp'
+  | 'facebook-instagram'
   | 'stores'
   | 'confirmation'
   | 'abandoned'
@@ -105,6 +107,7 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
     label: 'Channels',
     items: [
       { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle, access: 'manage', keywords: 'numbers meta webhook verify token waba calling sip phone' },
+      { id: 'facebook-instagram', label: 'Facebook & Instagram', icon: MessagesSquare, access: 'manage', keywords: 'messenger instagram dm direct messages page comments meta facebook' },
     ],
   },
   {
