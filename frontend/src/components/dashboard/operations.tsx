@@ -252,14 +252,15 @@ export function CourierScorecard({ rows }: { rows: CourierPerfRow[] | null }) {
       ) : (
         <div className="flex flex-col gap-3">
           {list.map((c) => {
-            const r = c.deliveryRate ?? 0;
+            // API sends a 0–1 fraction.
+            const r = (c.deliveryRate ?? 0) * 100;
             return (
               <div key={c.courierType} className="grid grid-cols-[96px_minmax(0,1fr)_56px_92px] items-center gap-3 text-[13px]">
                 <span className="truncate font-extrabold text-ink">{c.courier}</span>
                 <div className="h-2.5 overflow-hidden rounded-full bg-sunken">
                   <div className={cn('h-full rounded-full', r >= 78 ? 'bg-emerald-500' : r >= 70 ? 'bg-amber-500' : 'bg-red-500')} style={{ width: `${Math.min(100, r)}%` }} />
                 </div>
-                <span className="text-right text-sm font-extrabold tabular-nums text-ink">{pct(c.deliveryRate, 0)}</span>
+                <span className="text-right text-sm font-extrabold tabular-nums text-ink">{pct(r, 0)}</span>
                 <span className="text-right text-muted tabular-nums">{c.total.toLocaleString('en-US')} parcels</span>
               </div>
             );

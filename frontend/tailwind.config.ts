@@ -11,6 +11,9 @@ import type { Config } from 'tailwindcss';
 const v = (name: string) => `rgb(var(--${name}) / <alpha-value>)`;
 
 const config: Config = {
+  // Follow the app's theme (lib/theme.ts puts .dark on <html>), NOT the OS —
+  // the default 'media' applied every dark: class on a light app for OS-dark users.
+  darkMode: 'class',
   content: [
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',

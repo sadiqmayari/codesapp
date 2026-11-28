@@ -1161,3 +1161,11 @@ The old `/ad-report` had these defects; each is fixed by the Growth module (see 
 - **Symptom:** `GET /api/dashboard/manager` took ~140 s for Sois; the `orderFlow` section alone was ~190 s.
 - **Cause:** `shopify_order_messages` had no index on `shopify_order_gid`, so a per-order `EXISTS` on it scanned all ~39k rows for each of ~9k orders. A derived-table rewrite was no better (MariaDB BNL-joined two key-less derived tables).
 - **Fix:** shipments via correlated `EXISTS` (unique `(company_id, shopify_order_gid)` index), confirmations via `IN (SELECT …)` (materialised once), plus migration `20261201010000_order_messages_gid_index`. 2.4 s on the same data. Never join derived tables on a gid without a key; check `EXPLAIN` for `BNL join`.
+
+## [UI] Dark-mode colours showing on the light theme (fixed 2026-11-28)
+- **Symptom:** pale/low-contrast text (e.g. light-green links on white cards) for users whose computer is in dark mode while CodesApp is set to Light.
+- **Cause:** `tailwind.config.ts` had no `darkMode`, so Tailwind used the default `'media'` — every `dark:` class (188 of them) followed the OS, not the app theme (`lib/theme.ts` toggles a `.dark` class).
+- **Fix:** `darkMode: 'class'`. Never remove it.
+
+## [Dashboard] Courier scorecard showed 1% for every courier (fixed 2026-11-28)
+- **Cause:** `/shipments/performance` returns `deliveryRate` as a 0–1 fraction; the dashboard treated it as a percent. Multiply by 100 when displaying.
