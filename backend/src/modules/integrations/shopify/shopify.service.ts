@@ -9284,8 +9284,15 @@ export class ShopifyService implements OnModuleInit {
           for (const n of res?.data?.nodes ?? []) {
             if (!n?.id) continue;
             const fs = n.fulfillments ?? [];
-            const f = fs.find((x) => x.status === 'SUCCESS') ?? fs[0];
-            const trk = (f?.trackingInfo ?? [])[0] ?? {};
+            // Never fall back to a CANCELLED/failed fulfilment: its tracking is a
+            // dead consignment (e.g. one released via Cancel-booking) and used to
+            // be back-filled onto the order's next shipment row.
+            const dead = new Set(['CANCELLED', 'ERROR', 'FAILURE']);
+            const f =
+              fs.find((x) => x.status === 'SUCCESS') ??
+              fs.find((x) => !dead.has(String(x.status ?? '').toUpperCase()));
+            if (!f) continue;
+            const trk = (f.trackingInfo ?? [])[0] ?? {};
             out.set(n.id, {
               company: trk.company ?? null,
               number: trk.number ?? null,
@@ -10979,10 +10986,14 @@ export class ShopifyService implements OnModuleInit {
           // courier — drop it out of Courier payments. Otherwise capture the
           // courier + delivery lifecycle (creates the shipment on first sight).
           if (String(f.status ?? '').toLowerCase() === 'cancelled') {
+            // Scoped to THIS fulfilment: a late cancel of an old (already
+            // un-booked) fulfilment must not cancel the order's NEW row
+            // (e.g. an address_issue flagged right after Cancel-booking).
             await this.orderSync.cancelShipmentForOrder(
               company.id,
               gid,
               'fulfillment cancelled',
+              { fulfillmentGid: f.admin_graphql_api_id ?? null },
             );
           } else {
             await this.orderSync.applyFulfillmentEvent(

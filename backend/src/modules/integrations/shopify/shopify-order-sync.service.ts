@@ -600,14 +600,36 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     companyId: number,
     orderGid: string,
     reason: string,
+    opts: { fulfillmentGid?: string | null } = {},
   ): Promise<void> {
     if (!orderGid) return;
+    // A cancelled FULFILMENT (vs a cancelled ORDER) only concerns the row that
+    // fulfilment belongs to. Never touch an address_issue row (never sent to a
+    // courier) or a row carrying a DIFFERENT fulfilment — a late webhook for an
+    // old, already-unbooked fulfilment used to flip the order's new
+    // address_issue row to 'cancelled' (#60046, Nov-2026).
+    const fulfillmentScope =
+      opts.fulfillmentGid !== undefined
+        ? {
+            status: { notIn: ['delivered', 'returned', 'cancelled', 'address_issue'] as ShipmentStatus[] },
+            ...(opts.fulfillmentGid
+              ? {
+                  OR: [
+                    { shopify_fulfillment_gid: null },
+                    { shopify_fulfillment_gid: opts.fulfillmentGid },
+                  ],
+                }
+              : {}),
+          }
+        : null;
     try {
       await this.prisma.shipment.updateMany({
         where: {
           company_id: companyId,
           shopify_order_gid: orderGid,
-          status: { notIn: ['delivered', 'returned', 'cancelled'] },
+          ...(fulfillmentScope ?? {
+            status: { notIn: ['delivered', 'returned', 'cancelled'] as ShipmentStatus[] },
+          }),
         },
         data: {
           status: 'cancelled',
