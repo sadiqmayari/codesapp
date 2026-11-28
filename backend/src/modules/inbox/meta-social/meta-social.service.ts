@@ -4,6 +4,8 @@ import {
   ForbiddenException,
   Injectable,
   Logger,
+  OnModuleDestroy,
+  OnModuleInit,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -19,6 +21,8 @@ import { UsageMeteringService } from '../../usage-metering/usage-metering.servic
 import { WebhookDispatcherService } from '../../webhooks/webhook-dispatcher.service';
 import { InboxGateway } from '../inbox.gateway';
 import { MetaClientService } from '../meta-client.service';
+import { FeatureService } from '../../../common/services/feature.service';
+import { runsBackground } from '../../../common/utils/process-role';
 import {
   ParsedComment,
   ParsedMessaging,
@@ -53,6 +57,11 @@ const PAGE_FIELDS = [
 
 const MAX_INBOUND_MEDIA = 25 * 1024 * 1024;
 const WINDOW_MS = 24 * 60 * 60 * 1000;
+/** Pull sync cadence (DMs every tick, comments every Nth tick). */
+const SYNC_TICK_MS = 2 * 60_000;
+const COMMENT_SYNC_EVERY = 5;
+/** First pull after a restart for a Page that never synced. */
+const FIRST_SYNC_MS = 3 * 24 * 3_600_000;
 
 type MetaPageRow = {
   id: number;
@@ -88,7 +97,7 @@ interface AvailablePage {
  * comment-moderation calls. Persistence of agent sends stays in InboxService.
  */
 @Injectable()
-export class MetaSocialService {
+export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MetaSocialService.name);
   private readonly version: string;
 
@@ -101,6 +110,7 @@ export class MetaSocialService {
     private readonly webhookDispatcher: WebhookDispatcherService,
     private readonly gateway: InboxGateway,
     private readonly metaClient: MetaClientService,
+    private readonly feature: FeatureService,
   ) {
     this.version = this.config.get<string>('META_GRAPH_VERSION') ?? 'v19.0';
   }
@@ -598,15 +608,25 @@ export class MetaSocialService {
     return a.type;
   }
 
-  private async handleMessaging(page: MetaPageRow, ev: ParsedMessaging): Promise<void> {
+  private async handleMessaging(
+    page: MetaPageRow,
+    ev: ParsedMessaging,
+    opts: { fromSync?: boolean } = {},
+  ): Promise<boolean> {
     const companyId = page.company_id;
-    if (ev.kind === 'read' || ev.kind === 'delivery') return this.handleReceipt(page, ev);
-    if (ev.kind === 'reaction') return this.handleReaction(page, ev);
-    if (ev.isDeleted) return;
+    if (ev.kind === 'read' || ev.kind === 'delivery') {
+      await this.handleReceipt(page, ev);
+      return false;
+    }
+    if (ev.kind === 'reaction') {
+      await this.handleReaction(page, ev);
+      return false;
+    }
+    if (ev.isDeleted) return false;
 
     // Our own sends come back as echoes too. The send path stores the mid
     // right after Meta answers; give it a moment so the echo finds it.
-    if (ev.kind === 'echo' && ev.mid) {
+    if (ev.kind === 'echo' && ev.mid && !opts.fromSync) {
       await new Promise((r) => setTimeout(r, 1500));
     }
     if (ev.mid) {
@@ -614,14 +634,16 @@ export class MetaSocialService {
         where: { company_id: companyId, meta_message_id: { in: [ev.mid, `${ev.mid}#1`] } },
         select: { id: true },
       });
-      if (dup) return;
+      if (dup) return false;
     }
 
     const { contact, isNew } = await this.resolveContact(page, ev.channel, ev.userId);
     const inbound = ev.kind !== 'echo';
     const isBlocked = contact.status === 'blocked';
-    const now = new Date();
-    const windowExpiresAt = new Date(Date.now() + WINDOW_MS);
+    // Synced messages can be minutes/hours old: the 24h window and the list
+    // order follow the MESSAGE time, never "now".
+    const now = new Date(Math.min(ev.timestamp, Date.now()));
+    const windowExpiresAt = new Date(now.getTime() + WINDOW_MS);
 
     let convo = await this.findConversation(companyId, contact.id, ev.channel);
     let isNewConvo = false;
@@ -639,11 +661,13 @@ export class MetaSocialService {
       });
       isNewConvo = true;
     } else if (inbound) {
+      const keepWindow =
+        convo.window_expires_at && convo.window_expires_at.getTime() > windowExpiresAt.getTime();
       convo = await this.prisma.conversation.update({
         where: { id: convo.id },
         data: {
           meta_page_id: page.id,
-          window_expires_at: windowExpiresAt,
+          window_expires_at: keepWindow ? undefined : windowExpiresAt,
           status: convo.status === 'resolved' ? 'open' : convo.status,
           unread_count: isBlocked ? undefined : { increment: 1 },
         },
@@ -742,7 +766,7 @@ export class MetaSocialService {
         throw err;
       }
     }
-    if (!created.length) return;
+    if (!created.length) return false;
     const last = created[created.length - 1];
     const preview = (ev.text ?? (last.content || `[${last.message_type}]`)).slice(0, 500);
     await this.prisma.conversation.update({
@@ -752,7 +776,7 @@ export class MetaSocialService {
     await this.metering.incrementMessages(companyId).catch(() => undefined);
     if (isNewConvo) await this.metering.incrementConversations(companyId).catch(() => undefined);
 
-    if (inbound && isBlocked) return;
+    if (inbound && isBlocked) return true;
     for (const message of created) {
       if (inbound) {
         this.gateway.emitToConversationScoped(companyId, convo.assigned_user_id, 'message.received', {
@@ -763,7 +787,7 @@ export class MetaSocialService {
           contactPhone: contact.phone,
           channel: ev.channel,
           isNewContact: isNew,
-          windowExpiresAt: windowExpiresAt.toISOString(),
+          windowExpiresAt: (convo.window_expires_at ?? windowExpiresAt).toISOString(),
           status: convo.status,
           unreadCount: convo.unread_count,
         });
@@ -784,6 +808,7 @@ export class MetaSocialService {
         })
         .catch(() => undefined);
     }
+    return true;
   }
 
   private async handleReceipt(page: MetaPageRow, ev: ParsedMessaging): Promise<void> {
@@ -1199,6 +1224,203 @@ export class MetaSocialService {
     return this.sendRaw(t.page, t.channel, t.recipient, {
       attachment: { type, payload: { url: publicUrl, is_reusable: false } },
     });
+  }
+
+  // ---------------------------------------------------------------- Sync
+  //
+  // Meta only PUSHES Page / Instagram webhooks to a published (live) app.
+  // Until then — and as a safety net afterwards — the worker PULLS: every
+  // 2 min the recent conversations of each connected Page (Messenger +
+  // Instagram), every 10 min the recent comments. Everything is deduped on
+  // the Meta message / comment id, so pull + push can run side by side.
+
+  private syncTimer: NodeJS.Timeout | null = null;
+  private syncRunning = false;
+  private syncTicks = 0;
+  private readonly syncCursor = new Map<number, number>();
+  private readonly syncErrLogged = new Map<string, number>();
+
+  onModuleInit(): void {
+    if (!runsBackground()) return;
+    this.syncTimer = setInterval(() => void this.syncTick(), SYNC_TICK_MS);
+    setTimeout(() => void this.syncTick(), 30_000);
+  }
+
+  onModuleDestroy(): void {
+    if (this.syncTimer) clearInterval(this.syncTimer);
+  }
+
+  private async syncTick(): Promise<void> {
+    if (this.syncRunning) return;
+    this.syncRunning = true;
+    const tick = this.syncTicks++;
+    try {
+      const granted = await this.feature.companiesWith('meta_inbox');
+      if (!granted.size) return;
+      const pages = await this.prisma.metaPage.findMany({
+        where: { company_id: { in: [...granted] }, status: 'active' },
+      });
+      for (const page of pages) {
+        await this.syncPage(page).catch((err) =>
+          this.logSyncError(`page:${page.id}`, `DM sync ${page.name}: ${(err as Error).message}`),
+        );
+      }
+      if (tick % COMMENT_SYNC_EVERY === 0) {
+        const withComments = await this.feature.companiesWith('social_comments');
+        for (const companyId of new Set(pages.map((p) => p.company_id))) {
+          if (!withComments.has(companyId)) continue;
+          await this.backfillComments(companyId).catch((err) =>
+            this.logSyncError(`comments:${companyId}`, `comment sync: ${(err as Error).message}`),
+          );
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`meta-social sync tick failed: ${(err as Error).message}`);
+    } finally {
+      this.syncRunning = false;
+    }
+  }
+
+  /** At most one log line per key per hour (Instagram timeouts repeat). */
+  private logSyncError(key: string, msg: string) {
+    const last = this.syncErrLogged.get(key) ?? 0;
+    if (Date.now() - last < 3_600_000) return;
+    this.syncErrLogged.set(key, Date.now());
+    this.logger.warn(msg);
+  }
+
+  /** Pull this Page's recent Messenger (+ Instagram) messages into the inbox. */
+  async syncPage(page: MetaPageRow & { last_event_at?: Date | null }): Promise<number> {
+    const started = Date.now();
+    const since =
+      this.syncCursor.get(page.id) ??
+      (page.last_event_at ? page.last_event_at.getTime() - 3_600_000 : started - FIRST_SYNC_MS);
+    const token = this.pageToken(page);
+    let imported = 0;
+    const channels: SocialChannel[] = page.ig_user_id ? ['messenger', 'instagram'] : ['messenger'];
+    for (const channel of channels) {
+      const accountId = channel === 'messenger' ? page.page_id : (page.ig_user_id as string);
+      let events: ParsedMessaging[];
+      try {
+        events = await this.pullConversations(page, token, channel, accountId, since);
+      } catch (err) {
+        this.logSyncError(`${channel}:${page.id}`, `${channel} sync ${page.name}: ${(err as Error).message}`);
+        continue;
+      }
+      events.sort((a, b) => a.timestamp - b.timestamp);
+      for (const ev of events) {
+        try {
+          if (await this.handleMessaging(page, ev, { fromSync: true })) imported++;
+        } catch (err) {
+          this.logSyncError(`msg:${page.id}`, `sync import failed: ${(err as Error).message}`);
+        }
+      }
+    }
+    this.syncCursor.set(page.id, started);
+    if (imported) {
+      await this.prisma.metaPage
+        .update({ where: { id: page.id }, data: { last_event_at: new Date() } })
+        .catch(() => undefined);
+    }
+    return imported;
+  }
+
+  private async pullConversations(
+    page: MetaPageRow,
+    token: string,
+    channel: SocialChannel,
+    accountId: string,
+    since: number,
+  ): Promise<ParsedMessaging[]> {
+    type GMsg = {
+      id: string;
+      created_time: string;
+      message?: string;
+      from?: { id?: string };
+      to?: { data?: Array<{ id?: string }> };
+      attachments?: {
+        data?: Array<{
+          mime_type?: string;
+          name?: string;
+          file_url?: string;
+          image_data?: { url?: string };
+          video_data?: { url?: string };
+        }>;
+      };
+    };
+    type GConvo = {
+      id: string;
+      updated_time: string;
+      participants?: { data?: Array<{ id?: string }> };
+      messages?: { data?: GMsg[] };
+    };
+    const ig = channel === 'instagram';
+    const fields =
+      `updated_time,participants,messages.limit(${ig ? 10 : 25})` +
+      '{id,created_time,message,from,to,attachments{mime_type,name,file_url,image_data{url},video_data{url}}}';
+    const out: ParsedMessaging[] = [];
+    const overlap = since - 10 * 60_000;
+    let after: string | undefined;
+    for (let pageNo = 0; pageNo < 4; pageNo++) {
+      const res = await this.graph<{
+        data?: GConvo[];
+        paging?: { cursors?: { after?: string }; next?: string };
+      }>('GET', `${page.page_id}/conversations`, token, {
+        query: {
+          platform: channel,
+          fields,
+          limit: ig ? '10' : '25',
+          ...(after ? { after } : {}),
+        },
+      });
+      const convos = res.data ?? [];
+      let reachedOld = false;
+      for (const c of convos) {
+        if (new Date(c.updated_time).getTime() < overlap) {
+          reachedOld = true;
+          break;
+        }
+        const customer = (c.participants?.data ?? []).find((x) => x.id && x.id !== accountId && x.id !== page.page_id)?.id;
+        if (!customer) continue;
+        for (const m of c.messages?.data ?? []) {
+          const ts = new Date(m.created_time).getTime();
+          if (!Number.isFinite(ts) || ts < overlap) continue;
+          const fromUs = m.from?.id === accountId || m.from?.id === page.page_id;
+          out.push({
+            kind: fromUs ? 'echo' : 'message',
+            channel,
+            accountId,
+            userId: customer,
+            mid: m.id,
+            text: m.message?.trim() ? m.message : null,
+            attachments: (m.attachments?.data ?? []).map((a) => ({
+              type: a.image_data?.url
+                ? ('image' as const)
+                : a.video_data?.url
+                  ? ('video' as const)
+                  : (a.mime_type ?? '').startsWith('audio/')
+                    ? ('audio' as const)
+                    : a.file_url
+                      ? ('document' as const)
+                      : ('other' as const),
+              url: a.image_data?.url ?? a.video_data?.url ?? a.file_url ?? null,
+              title: a.name ?? null,
+            })),
+            replyToMid: null,
+            timestamp: ts,
+            watermark: null,
+            mids: [],
+            emoji: null,
+            appId: null,
+            isDeleted: false,
+            referral: null,
+          });
+        }
+      }
+      after = res.paging?.next ? res.paging.cursors?.after : undefined;
+      if (reachedOld || !after) break;
+    }
+    return out;
   }
 
   publicMediaUrl(webPath: string): string {
