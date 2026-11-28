@@ -18,9 +18,13 @@ import { DateRangeDto } from './dtos/date-range.dto';
 import { DashboardDto } from './dtos/dashboard.dto';
 import { ModuleGuard } from '../../common/guards/module.guard';
 import { RequireModule } from '../../common/decorators/require-module.decorator';
+import { INBOX_ROLES, PRIVILEGED } from '../../common/auth/roles';
 
 @Controller('analytics')
-@UseGuards(AuthGuard('jwt'), TenantGuard, ModuleGuard)
+// Every route needs a role: locked roles (member, finance, hr...) never reach
+// company analytics. Money, plan and cost routes are owner/admin only.
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard, ModuleGuard)
+@Roles(...INBOX_ROLES)
 export class AnalyticsController {
   constructor(private readonly analytics: AnalyticsService) {}
 
@@ -32,6 +36,7 @@ export class AnalyticsController {
    * are kept for backward compat but the UI no longer uses them.
    */
   @Get('dashboard')
+  @Roles(...PRIVILEGED)
   dashboard(
     @CurrentUser() user: { companyId: number },
     @Query() dto: DashboardDto,
@@ -40,6 +45,7 @@ export class AnalyticsController {
   }
 
   @Get('overview')
+  @Roles(...PRIVILEGED)
   overview(
     @CurrentUser() user: { companyId: number },
     @Query() dto: DateRangeDto,
@@ -48,6 +54,7 @@ export class AnalyticsController {
   }
 
   @Get('funnel')
+  @Roles(...PRIVILEGED)
   funnel(
     @CurrentUser() user: { companyId: number },
     @Query() dto: DateRangeDto,
@@ -56,6 +63,7 @@ export class AnalyticsController {
   }
 
   @Get('agents')
+  @Roles(...PRIVILEGED)
   agents(
     @CurrentUser() user: { companyId: number },
     @Query() dto: DateRangeDto,
@@ -65,6 +73,7 @@ export class AnalyticsController {
 
   // Orders created by each agent + total order value, for the dashboard card.
   @Get('agent-orders')
+  @Roles(...PRIVILEGED)
   agentOrders(
     @CurrentUser() user: { companyId: number },
     @Query() dto: DateRangeDto,
@@ -77,8 +86,7 @@ export class AnalyticsController {
   // contact + orders created & value + delivery. Static routes BEFORE the
   // `:userId` param route so they aren't shadowed.
   @Get('agents-report')
-  @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles(...PRIVILEGED)
   agentsReport(
     @CurrentUser() user: { companyId: number },
     @Query() dto: DateRangeDto,
@@ -87,8 +95,7 @@ export class AnalyticsController {
   }
 
   @Get('agents-report/export')
-  @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles(...PRIVILEGED)
   async agentsReportExport(
     @CurrentUser() user: { companyId: number },
     @Query() dto: DateRangeDto,
@@ -101,8 +108,7 @@ export class AnalyticsController {
   }
 
   @Get('agents-report/:userId/activity')
-  @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles(...PRIVILEGED)
   agentActivityFeed(
     @CurrentUser() user: { companyId: number },
     @Param('userId', ParseIntPipe) userId: number,
@@ -125,8 +131,7 @@ export class AnalyticsController {
   // ABC/Pareto star products, dead stock, return rate, reorder). OWNER/ADMIN.
   @Get('inventory-product')
   @RequireModule('inventory')
-  @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles(...PRIVILEGED)
   inventoryProduct(
     @CurrentUser() user: { companyId: number },
     @Query() dto: DashboardDto,
@@ -135,6 +140,7 @@ export class AnalyticsController {
   }
 
   @Get('conversation-cost')
+  @Roles(...PRIVILEGED)
   conversationCost(
     @CurrentUser() user: { companyId: number },
     @Query() dto: DateRangeDto,
@@ -143,12 +149,14 @@ export class AnalyticsController {
   }
 
   @Get('usage')
+  @Roles(...PRIVILEGED)
   usage(@CurrentUser() user: { companyId: number }) {
     return this.analytics.usage(user.companyId);
   }
 
   // Click-to-WhatsApp ad attribution: chats/contacts/orders per ad or post.
   @Get('ad-attribution')
+  @Roles(...PRIVILEGED)
   adAttribution(@CurrentUser() user: { companyId: number }) {
     return this.analytics.adAttribution(user.companyId);
   }

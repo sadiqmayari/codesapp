@@ -882,3 +882,8 @@ Additive, real Prisma migration (auto-applies on container start).
 
 ## social_comments (migration 20261128000000_social_comments · Nov-2026)
 - One row per ad/social comment (TikTok ad comments first). `platform`, `source` (ad|organic), `account_id` (→ ad_accounts.id, no FK), `external_id` (unique per company+platform), `parent_external_id`, `ad_id`, `ad_name`, `post_id`, `author_name`, `author_id`, `text`, `status` visible|hidden, `commented_at`, `reply_text`, `replied_by_user_id`, `replied_at`, `raw` JSON (full platform row). Indexes `(company_id, commented_at)`, `(company_id, status)`.
+
+## Dashboard layout (migration 20261201000000_dashboard_layout · Nov-2026)
+Additive, real Prisma migration (auto-applies on container start).
+- `users.dashboard_layout JSON NULL` — the member's own dashboard `{hidden: string[]}` (widget ids from `lib/dashboard.ts WIDGETS`). NULL = follow the company default.
+- `companies.dashboard_default JSON NULL` — owner/admin team default `{hidden: string[]}`. NULL = every widget shown.

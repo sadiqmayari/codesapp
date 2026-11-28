@@ -1,3 +1,4 @@
+import { resolveEffectiveLimits } from '../../common/utils/effective-limits';
 import { afterDiscountSql, grossSql, netOrderSql, salesFromRow, salesSelectSql } from '../../common/utils/sales';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -1682,6 +1683,8 @@ export class AnalyticsService {
         }),
       ]);
     const sub = company?.subscription;
+    // Effective = super-admin override ?? plan (the same resolver PlanGuard uses).
+    const eff = sub && company ? resolveEffectiveLimits(sub, company) : null;
     return {
       period,
       usage: {
@@ -1692,11 +1695,11 @@ export class AnalyticsService {
         webhookCalls: usage?.webhook_calls ?? 0,
         conversationsOpened: usage?.conversations_opened ?? 0,
       },
-      limits: sub
+      limits: eff
         ? {
-            contactLimit: sub.contact_limit,
-            templateLimit: sub.template_limit,
-            userLimit: sub.user_limit,
+            contactLimit: eff.contact_limit,
+            templateLimit: eff.template_limit,
+            userLimit: eff.user_limit,
           }
         : null,
     };

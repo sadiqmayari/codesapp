@@ -36,6 +36,9 @@ const config: Config = {
         line: v('line'),
         ink: v('ink'),
         muted: v('muted'),
+        // CodesApp brand tile (dashboard heroes): navy + cyan accent.
+        navy: { DEFAULT: v('navy'), 2: v('navy-2'), line: v('navy-line') },
+        accent: v('accent'),
       },
       fontFamily: {
         sans: [

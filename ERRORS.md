@@ -1147,3 +1147,12 @@ The old `/ad-report` had these defects; each is fixed by the Growth module (see 
 - **Symptom:** #60046 (Sois) showed a cancelled shipment while Shopify had the order open and unfulfilled. The agent's address-issue flag was lost.
 - **Cause:** booked with Rocket (CN 1245148221) → agent pressed Cancel booking (Rocket cancel + Shopify unfulfil, row deleted) → flagged Address issue (new row, `address_issue`). Then (1) the courier status sync's `getFulfillmentTracking` fell back to the CANCELLED fulfilment (`fs.find(SUCCESS) ?? fs[0]`) and back-filled its dead CN + fulfilment gid onto the new row, and (2) a `fulfillments/update status=cancelled` webhook for that old fulfilment ran `cancelShipmentForOrder`, which matched every non-terminal row of the order — including the `address_issue` one — and set it `cancelled`.
 - **Fix:** `getFulfillmentTracking` never uses a CANCELLED/ERROR/FAILURE fulfilment. The fulfilment-cancel webhook now passes the fulfilment gid: it skips `address_issue` rows and rows carrying a different fulfilment gid. An ORDER cancel still cancels every row. #60046's row was restored to `address_issue` and the dead CN + fulfilment gid cleared (2026-11-28).
+
+## [Analytics] Any role could read company sales/cost/usage from the API (fixed 2026-11-28)
+- **Symptom:** `AnalyticsController` had only `AuthGuard('jwt') + TenantGuard + ModuleGuard` — a member / finance / HR user could call `/api/analytics/orders`, `agent-orders`, `conversation-cost`, `usage`, `ad-attribution` directly (the UI hid them, the API did not).
+- **Fix:** class `RolesGuard` + `@Roles(...INBOX_ROLES)`, money/plan/cost routes `PRIVILEGED`. Any new analytics route inherits INBOX_ROLES; mark money routes PRIVILEGED.
+
+## [Billing/Dashboard] Usage bars showed the plan cap, not the super-admin override (fixed 2026-11-28)
+- **Symptom:** a tenant with `contact_limit_override=50000` on a 25k plan saw "41,230 / 25,000" (over 100%) on the dashboard and billing page.
+- **Cause:** `AnalyticsService.usage()` and `BillingService.getSubscription()` read `subscription.*_limit` directly instead of `resolveEffectiveLimits`.
+- **Fix:** both use `resolveEffectiveLimits`; `getSubscription` also returns `planLimits`; the dashboard's Plan & access card marks overridden limits "Custom · plan N".

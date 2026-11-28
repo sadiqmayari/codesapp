@@ -6,6 +6,11 @@
 
 ## Current Status
 
+**Dashboard v3 — role-aware command centre (2026-11-28, latest):** migration `20261201000000_dashboard_layout` (auto-applies).
+- Owner/admin: navy hero (net sales, monthly target ring, intraday vs yesterday, rules-based brief), Needs you now (unread + wait, confirm, shipper advice, book, old tickets), Business health KPIs with sparks, order flow + leaks, live activity, chats-by-hour heatmap + first-reply time, team today, courier scorecard, return hotspots, Plan & access with every super-admin override marked "Custom", Customise (per user + team default).
+- Agent: "Next up" chat, own queue, my chats, my day vs 30-day average, commission / leaderboard / attendance when granted. No company money.
+- Security: analytics API role-gated (was open to every role). Billing + usage now show effective (override) limits.
+
 **Attendance auto-checkout — per tenant + per member, off by default (2026-11-27, latest):** migration `20261130000000_attendance_auto_checkout_user` (auto-applies).
 - Briefly removed, then brought back under control: tenant switch (off unless saved), per-member Company default / On / Off, and a "Record the check-out at" choice — **last activity in the app** (new default; fixes wrong late check-out times) or shift end.
 

@@ -12,6 +12,7 @@ import { AiMeteringService } from '../ai/ai-metering.service';
 import { ListInvoicesDto } from './dtos/list-invoices.dto';
 import { RequestPlanChangeDto } from './dtos/request-plan-change.dto';
 import { numifyDecimals } from '../../common/utils/decimal';
+import { resolveEffectiveLimits } from '../../common/utils/effective-limits';
 import { CompanyStatusService } from '../../common/services/company-status.service';
 import { MailService } from '../../common/services/mail.service';
 
@@ -122,6 +123,9 @@ export class BillingService {
       }),
     ]);
     const sub = company.subscription;
+    // Super-admin per-company overrides win over the plan (same resolver as
+    // PlanGuard) — the billing page used to show the raw plan caps.
+    const eff = resolveEffectiveLimits(sub, company);
 
     // AI accrues post-paid: what's been spent in the CURRENT activation cycle is
     // added to the NEXT invoice. Surface it so the tenant isn't surprised.
@@ -166,18 +170,22 @@ export class BillingService {
       plan: sub.plan_name,
       monthlyPrice: sub.monthly_price,
       limits: {
-        contactLimit: sub.contact_limit,
-        templateLimit: sub.template_limit,
-        userLimit: sub.user_limit,
+        contactLimit: eff.contact_limit,
+        templateLimit: eff.template_limit,
+        userLimit: eff.user_limit,
         // Multi-Store/Number allowances (override ?? plan). The Settings UI only
         // offers "add store / add number" when the effective allowance is > 1
         // (i.e. the super-admin has enabled it for this tenant).
-        shopifyStoreLimit:
-          company.shopify_store_limit_override ?? sub.shopify_store_limit ?? 1,
-        whatsappNumberLimit:
-          company.whatsapp_number_limit_override ??
-          sub.whatsapp_number_limit ??
-          1,
+        shopifyStoreLimit: eff.shopify_store_limit,
+        whatsappNumberLimit: eff.whatsapp_number_limit,
+      },
+      // The plan's own caps, so the UI can mark a limit CodesApp customised.
+      planLimits: {
+        contactLimit: sub.contact_limit,
+        templateLimit: sub.template_limit,
+        userLimit: sub.user_limit,
+        shopifyStoreLimit: sub.shopify_store_limit ?? 1,
+        whatsappNumberLimit: sub.whatsapp_number_limit ?? 1,
       },
       // Accruing AI charges for the current cycle (added to the next invoice).
       aiUsage,

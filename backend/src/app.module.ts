@@ -15,6 +15,7 @@ import { BotsModule } from './modules/bots/bots.module';
 import { AiAgentModule } from './modules/ai-agent/ai-agent.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { OnboardingModule } from './modules/onboarding/onboarding.module';
 import { CronModule } from './modules/cron/cron.module';
@@ -56,6 +57,7 @@ import { AppController } from './app.controller';
     WebhooksModule,
     BillingModule,
     AnalyticsModule,
+    DashboardModule,
     BotsModule,
     AiAgentModule,
     InboxModule,

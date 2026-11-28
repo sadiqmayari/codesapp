@@ -403,6 +403,8 @@ model Company {
   // NULL = no overrides → normal plan+tenant resolution. See
   // common/services/feature.service.ts + common/features/feature.constants.ts.
   feature_overrides                 Json?
+  // Dashboard v3: owner/admin team default layout {hidden: string[]}. NULL = all widgets.
+  dashboard_default                 Json?
   // Tenant toggle for proactive Shopify->WhatsApp notifications. Effective also
   // requires the plan's proactive_notifications (and no super-admin force-off).
   // Default false (opt-in).
@@ -539,6 +541,8 @@ model User {
   attendance_lock_after_shift  Boolean?
   // Per-user override of companies.attendance_auto_checkout (NULL = company, true = on, false = off).
   attendance_auto_checkout     Boolean?
+  // Dashboard v3: this member's own layout {hidden: string[]}. NULL = company default.
+  dashboard_layout             Json?
   // Monthly gross base salary (tenant currency). NULL = no salary set (payroll
   // row shows blanks). salary_allowances = JSON array of {label, amount} lines
   // (fuel, food, etc.) added to gross. salary_overtime_rate = optional per-user

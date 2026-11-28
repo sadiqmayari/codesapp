@@ -23,6 +23,11 @@
   --muted: 107 114 128; /* secondary text (gray-500) */
   --bubble-out: 217 253 211; /* Inbox-v2 outbound bubble (WhatsApp light green) */
   --chat-bg: 242 239 233; /* Inbox-v2 thread wallpaper tone */
+  /* CodesApp brand surfaces (dashboard hero tiles): navy app tile + cyan arrow. */
+  --navy: 14 26 43;
+  --navy-2: 18 35 58;
+  --navy-line: 30 51 80;
+  --accent: 34 184 207;
 }
 
 @layer base {
@@ -53,6 +58,9 @@
   --muted: 140 153 147;
   --bubble-out: 0 92 75;
   --chat-bg: 11 20 26;
+  --navy: 10 19 33;
+  --navy-2: 15 29 49;
+  --navy-line: 28 46 72;
 }
 
 /* Inbox-v2: thin indeterminate progress bar while the conversation list refilters. */
