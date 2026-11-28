@@ -59,8 +59,8 @@ const MAX_INBOUND_MEDIA = 25 * 1024 * 1024;
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 const PLACEHOLDER_NAMES = new Set(['Facebook user', 'Instagram user']);
 /** Pull sync cadence (DMs every tick, comments every Nth tick). */
-const SYNC_TICK_MS = 2 * 60_000;
-const COMMENT_SYNC_EVERY = 5;
+const SYNC_TICK_MS = 5 * 60_000;
+const COMMENT_SYNC_EVERY = 6;
 /** First pull after a restart for a Page that never synced. */
 const FIRST_SYNC_MS = 3 * 24 * 3_600_000;
 
