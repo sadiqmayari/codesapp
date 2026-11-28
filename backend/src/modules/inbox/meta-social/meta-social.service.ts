@@ -44,6 +44,13 @@ export const META_SOCIAL_SCOPES = [
   'instagram_manage_comments',
 ] as const;
 
+/** Every permission, grouped by what it unlocks (Settings checklist). */
+export const META_SCOPE_GROUPS: Record<'messaging' | 'comments' | 'publishing', string[]> = {
+  messaging: ['pages_show_list', 'pages_messaging', 'pages_manage_metadata', 'instagram_basic', 'instagram_manage_messages'],
+  comments: ['pages_read_engagement', 'pages_manage_engagement', 'instagram_manage_comments'],
+  publishing: ['pages_manage_posts', 'instagram_content_publish'],
+};
+
 /** Page webhook fields we subscribe each Page to (POST /{page}/subscribed_apps). */
 const PAGE_FIELDS = [
   'messages',
@@ -123,7 +130,7 @@ export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
 
   // ---------------------------------------------------------------- Graph
 
-  private async graph<T = Record<string, unknown>>(
+  async graph<T = Record<string, unknown>>(
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
     token: string,
@@ -197,7 +204,7 @@ export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
     return wa ? { token: wa, source: 'whatsapp' } : null;
   }
 
-  private pageToken(page: { page_token_encrypted: string }): string {
+  pageToken(page: { page_token_encrypted: string }): string {
     const t = this.decryptOrNull(page.page_token_encrypted);
     if (!t) throw new BadRequestException('Page token unreadable — reconnect the Page');
     return t;
@@ -298,6 +305,96 @@ export class MetaSocialService implements OnModuleInit, OnModuleDestroy {
       verifyToken: info.verifyToken,
       pages: pages.map((p) => this.pagePublic(p)),
     };
+  }
+
+  /** A connected Page of this tenant + its token (posting, diagnostics). */
+  async pageWithToken(companyId: number, metaPageId: number) {
+    const page = await this.prisma.metaPage.findFirst({ where: { id: metaPageId, company_id: companyId } });
+    if (!page || page.status === 'disconnected') {
+      throw new NotFoundException('That Page is not connected (Settings → Facebook & Instagram)');
+    }
+    return { page, token: this.pageToken(page) };
+  }
+
+  private readonly diagCache = new Map<number, { at: number; data: unknown }>();
+
+  /**
+   * Live setup checklist: which permissions the token has (by group), whether
+   * each Page is subscribed to the app, whether Instagram messages are
+   * readable. Best-effort: every probe is wrapped; cached 60 s per tenant.
+   */
+  async diagnostics(companyId: number, fresh = false) {
+    const hit = this.diagCache.get(companyId);
+    if (!fresh && hit && Date.now() - hit.at < 60_000) return hit.data;
+    const tok = await this.resolveToken(companyId);
+    let granted: string[] | null = null;
+    if (tok) {
+      try {
+        const r = await this.graph<{ data?: { scopes?: string[] } }>('GET', 'debug_token', tok.token, {
+          query: { input_token: tok.token },
+        });
+        granted = r.data?.scopes ?? null;
+      } catch {
+        granted = null;
+      }
+    }
+    const groups = Object.fromEntries(
+      Object.entries(META_SCOPE_GROUPS).map(([g, list]) => [
+        g,
+        list.map((scope) => ({ scope, granted: granted ? granted.includes(scope) : null })),
+      ]),
+    );
+    const rows = await this.prisma.metaPage.findMany({
+      where: { company_id: companyId, status: { not: 'disconnected' } },
+      orderBy: { id: 'asc' },
+    });
+    const pages = [];
+    for (const p of rows) {
+      let token: string | null = null;
+      try {
+        token = this.pageToken(p);
+      } catch {
+        token = null;
+      }
+      let subscribed: boolean | null = null;
+      let igMessages: { ok: boolean; error: string | null } | null = null;
+      if (token) {
+        try {
+          const r = await this.graph<{ data?: unknown[] }>('GET', `${p.page_id}/subscribed_apps`, token);
+          subscribed = (r.data ?? []).length > 0;
+        } catch {
+          subscribed = null;
+        }
+        if (p.ig_user_id) {
+          try {
+            await this.graph('GET', `${p.page_id}/conversations`, token, {
+              query: { platform: 'instagram', limit: '1' },
+            });
+            igMessages = { ok: true, error: null };
+          } catch (err) {
+            igMessages = { ok: false, error: (err as Error).message.slice(0, 200) };
+          }
+        }
+      }
+      pages.push({
+        id: p.id,
+        name: p.name,
+        igUsername: p.ig_username,
+        status: p.status,
+        lastError: p.last_error,
+        lastEventAt: p.last_event_at,
+        subscribed,
+        igMessages,
+      });
+    }
+    const data = {
+      token: { set: !!tok, source: tok?.source ?? null, scopesKnown: granted != null },
+      groups,
+      pages,
+      checkedAt: new Date().toISOString(),
+    };
+    this.diagCache.set(companyId, { at: Date.now(), data });
+    return data;
   }
 
   /** Validate + store the system-user token; returns permissions + Pages it can reach. */

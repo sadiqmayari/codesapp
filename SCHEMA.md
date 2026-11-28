@@ -894,3 +894,6 @@ Additive, real Prisma migration (auto-applies on container start).
 - `conversations.channel` VARCHAR(16) NOT NULL DEFAULT 'whatsapp' (`whatsapp|messenger|instagram`), `conversations.meta_page_id` INT NULL; index `(company_id, channel, last_message_at)`.
 - `contacts.fb_psid` / `contacts.ig_sid` VARCHAR(64) NULL (indexed with company_id), `contacts.avatar_url` VARCHAR(1000) NULL. FB/IG-only contacts have `phone = ''`.
 - `social_comments` rows with `platform='facebook'|'instagram'` use `account_id = meta_pages.id`; `source='ad'` when the IG webhook carries `media.ad_id`.
+
+## social_posts (migration 20261203000000_social_posts · Dec-2026)
+- `id, company_id, content_item_id NULL, caption TEXT, media JSON [{webPath,type,mime}], targets JSON [{metaPageId,platform}], status VARCHAR(16) (draft|scheduled|publishing|published|partial|failed|cancelled), scheduled_at, published_at, results JSON [{metaPageId,platform,externalId,permalink,error,at}], last_error, created_by_user_id, created_at, updated_at`. Indexes `(company_id,status,scheduled_at)`, `(company_id,content_item_id)`.

@@ -17,6 +17,7 @@ import {
   Maximize2,
 } from 'lucide-react';
 import { ContentMediaViewer } from '@/components/content/media-viewer';
+import { PostComposer } from '@/components/social/post-composer';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { ConfirmDialog } from '@/components/ui/modal';
@@ -78,6 +79,8 @@ export default function ContentDetailPage() {
   const itemId = Number(id);
   const router = useRouter();
   const { user } = useAuth();
+  const canPost = user?.company?.modules ? user.company.modules.social_publish === true : false;
+  const [composerOpen, setComposerOpen] = useState(false);
   const toast = useToast();
   const canReview = user?.role === 'owner' || user?.role === 'admin';
   const canManage =
@@ -614,6 +617,15 @@ export default function ContentDetailPage() {
           {/* Publish + delete (managers only) */}
           {canManage && (
             <div className="mt-5 flex flex-wrap gap-2">
+              {item.status === 'approved' && canPost && item.drive_file_id && (
+                <button
+                  onClick={() => setComposerOpen(true)}
+                  disabled={busy}
+                  className="px-3 py-1.5 text-sm rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <Rocket size={15} /> Publish to Facebook &amp; Instagram
+                </button>
+              )}
               {item.status === 'approved' && (
                 <button
                   onClick={doPublish}
@@ -663,6 +675,23 @@ export default function ContentDetailPage() {
         </div>
       </div>
 
+      {composerOpen && (
+        <PostComposer
+          open
+          mode={{
+            kind: 'content',
+            contentId: item.id,
+            caption: item.caption ?? '',
+            previewUrl: item.drive_file_id ? driveThumbUrl(item.drive_file_id, 1200) : null,
+            mediaType: (item.media_type as 'image' | 'video' | null) ?? null,
+          }}
+          onClose={() => setComposerOpen(false)}
+          onDone={() => {
+            setComposerOpen(false);
+            void load();
+          }}
+        />
+      )}
       <ConfirmDialog
         open={confirmDelete}
         title="Delete content?"

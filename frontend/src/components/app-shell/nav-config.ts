@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  Send,
   LayoutDashboard,
   MessagesSquare,
   MessageCircle,
@@ -75,9 +76,11 @@ export function buildNav(user: AuthUser | null): NavSection[] {
     return flat([{ href: '/finance', label: 'Finance', icon: Wallet }, TEAM]);
   if (role === 'fulfillment')
     return flat([{ href: '/orders', label: 'Orders', icon: ShoppingBag }, ...stock, TEAM]);
+  const posts: NavItem[] = has('social_publish') ? [{ href: '/content/posts', label: 'Posts', icon: Send }] : [];
   if (role === 'content_manager')
     return flat([
       { href: '/content', label: 'Content', icon: Clapperboard },
+      ...posts,
       TEAM,
     ]);
   if (role === 'pr_manager')
@@ -85,6 +88,7 @@ export function buildNav(user: AuthUser | null): NavSection[] {
   if (role === 'creative_executive' || role === 'social_media_executive')
     return flat([
       { href: '/content', label: 'Content', icon: Clapperboard },
+      ...posts,
       { href: '/pr', label: 'PR', icon: Sparkles },
       TEAM,
     ]);
@@ -136,6 +140,7 @@ export function buildNav(user: AuthUser | null): NavSection[] {
         ...(contentEnabled
           ? [{ href: '/content', label: 'Content', icon: Clapperboard }]
           : []),
+        ...(isOwnerAdmin ? posts : []),
         ...(prEnabled ? [{ href: '/pr', label: 'PR', icon: Sparkles }] : []),
       ],
     },
@@ -244,6 +249,7 @@ export function lockedAccessFor(role: string | undefined): LockedAccess | null {
 export const MODULE_ROUTES: { prefix: string; module: string; label: string }[] = [
   { prefix: '/growth', module: 'growth', label: 'Growth' },
   { prefix: '/inventory', module: 'inventory', label: 'Inventory' },
+  { prefix: '/content/posts', module: 'social_publish', label: 'Facebook & Instagram posts' },
   { prefix: '/content', module: 'content', label: 'Content' },
   { prefix: '/pr', module: 'pr', label: 'PR' },
   { prefix: '/leaderboard', module: 'leaderboard', label: 'Leaderboard' },

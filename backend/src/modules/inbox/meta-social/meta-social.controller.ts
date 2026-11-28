@@ -6,6 +6,7 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -41,6 +42,11 @@ export class MetaSocialController {
   @Get('status')
   status(@CurrentUser() u: U) {
     return this.svc.status(u.companyId);
+  }
+
+  @Get('diagnostics')
+  diagnostics(@CurrentUser() u: U, @Query('fresh') fresh?: string) {
+    return this.svc.diagnostics(u.companyId, fresh === '1');
   }
 
   @Post('connect')

@@ -15,5 +15,6 @@ import { GDriveService } from './gdrive.service';
   imports: [AuthModule],
   controllers: [ContentController, ContentOAuthController],
   providers: [ContentService, GDriveService],
+  exports: [ContentService, GDriveService],
 })
 export class ContentModule {}

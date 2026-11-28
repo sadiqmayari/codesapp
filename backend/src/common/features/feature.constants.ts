@@ -121,7 +121,8 @@ export type ModuleGrantKey =
   | 'couriers'
   | 'tickets'
   | 'social_comments'
-  | 'meta_inbox';
+  | 'meta_inbox'
+  | 'social_publish';
 
 export type ModuleKey = ModuleGrantKey | 'content' | 'pr' | 'inventory';
 
@@ -144,6 +145,7 @@ export const MODULE_REGISTRY: ModuleDef[] = [
   { key: 'meta_inbox', group: 'Communication', label: 'Facebook & Instagram DMs', description: 'Messenger and Instagram chats in the inbox (own Meta app)' },
   { key: 'growth', group: 'Growth', label: 'Growth', description: 'Ad sync, attribution, forecast, Growth AI' },
   { key: 'growth_publish', group: 'Growth', parent: 'growth', label: 'Allow publishing ads', description: 'Off = Growth is read-only (no budget edits, no new ads)' },
+  { key: 'social_publish', group: 'Growth', label: 'Facebook & Instagram posts', description: 'Publish and schedule posts to Pages and Instagram (own Meta app)' },
   { key: 'content', group: 'Growth', label: 'Content', description: 'Content planning, Drive media, approvals', legacyColumn: 'content_enabled' },
   { key: 'pr', group: 'Growth', label: 'PR', description: 'Influencer forms and PR orders', legacyColumn: 'pr_enabled' },
   { key: 'attendance', group: 'Team', label: 'Attendance', description: 'Check-in, leave, auto-checkout, daily sweep' },

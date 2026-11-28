@@ -6,6 +6,11 @@
 
 ## Current Status
 
+**Facebook & Instagram posts + setup checklist (2026-11-28, latest):** migration `20261203000000_social_posts` (auto-applies). Module grant `social_publish`.
+- `/content/posts`: compose, publish now or schedule to Pages + Instagram (photo, album/carousel, video/Reel), retry failed, cancel/edit scheduled. Approved Content items get "Publish to Facebook & Instagram".
+- Settings → Facebook & Instagram shows a live setup checklist (permissions by feature, Page subscription, Instagram access).
+- PENDING: grant Sois `social_publish`; regenerate the token with `pages_manage_posts` + `instagram_content_publish`; first real test post only after the user approves.
+
 **Facebook Messenger + Instagram DMs + FB/IG comments (2026-11-28, latest):** migration `20261202000000_meta_social_channels` (auto-applies). Module grant `meta_inbox` (+ `social_comments` for comments).
 - Uses the tenant's own Meta app (same as WhatsApp, same callback URL). Settings → Facebook & Instagram: paste a system-user token, switch Pages on (CodesApp subscribes them).
 - Messenger + Instagram chats in the main inbox (channel filter + badges), reply text/media within 24h, echoes from Business Suite, read ticks, ad referrals. No templates/calls/bots/AI on these chats yet.

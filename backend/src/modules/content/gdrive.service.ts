@@ -283,6 +283,25 @@ export class GDriveService {
   }
 
   /** Best-effort delete when a content item is removed. */
+  /** Download a Drive file's bytes (publishing content to Facebook / Instagram). */
+  async downloadBytes(
+    companyId: number,
+    fileId: string,
+    maxBytes = 300 * 1024 * 1024,
+  ): Promise<{ buffer: Buffer; mime: string; name: string }> {
+    const ctx = await this.driveFor(companyId);
+    if (!ctx) throw new BadRequestException('Google Drive is not connected');
+    const meta = await ctx.drive.files.get({ fileId, fields: 'name,mimeType,size' });
+    const size = Number(meta.data.size ?? 0);
+    if (size > maxBytes) throw new BadRequestException('This file is too large to publish');
+    const res = await ctx.drive.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' });
+    return {
+      buffer: Buffer.from(res.data as ArrayBuffer),
+      mime: meta.data.mimeType ?? 'application/octet-stream',
+      name: meta.data.name ?? fileId,
+    };
+  }
+
   async deleteFile(companyId: number, fileId: string): Promise<void> {
     try {
       const ctx = await this.driveFor(companyId);

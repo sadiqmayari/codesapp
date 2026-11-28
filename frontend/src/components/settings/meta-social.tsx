@@ -181,6 +181,7 @@ export function MetaSocialSection() {
       description="Messenger and Instagram DMs arrive in the inbox; Page and Instagram comments arrive in Comments. Uses your own Meta app, the same one as your WhatsApp."
       icon={<BrandMark brand="messenger" />}
     >
+      {st.tokenSet && <SetupChecklist />}
       <SettingsCard
         title="Meta connection"
         description="One token for WhatsApp, Facebook and Instagram: CodesApp uses the WhatsApp token you already saved. Give that system-user token the Page and Instagram permissions too."
@@ -346,5 +347,138 @@ export function MetaSocialSection() {
         </p>
       </SettingsCard>
     </SettingsPage>
+  );
+}
+
+interface Diagnostics {
+  token: { set: boolean; source: 'own' | 'whatsapp' | null; scopesKnown: boolean };
+  groups: Record<'messaging' | 'comments' | 'publishing', Array<{ scope: string; granted: boolean | null }>>;
+  pages: Array<{
+    id: number;
+    name: string;
+    igUsername: string | null;
+    status: string;
+    lastError: string | null;
+    lastEventAt: string | null;
+    subscribed: boolean | null;
+    igMessages: { ok: boolean; error: string | null } | null;
+  }>;
+  checkedAt: string;
+}
+
+const GROUP_LABEL: Record<keyof Diagnostics['groups'], string> = {
+  messaging: 'Messenger & Instagram DMs',
+  comments: 'Comments',
+  publishing: 'Publishing posts',
+};
+
+function Mark({ ok }: { ok: boolean | null }) {
+  return (
+    <span
+      className={
+        'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white ' +
+        (ok === true ? 'bg-brand-600' : ok === false ? 'bg-amber-500' : 'bg-gray-400')
+      }
+      aria-hidden
+    >
+      {ok === true ? '✓' : ok === false ? '!' : '?'}
+    </span>
+  );
+}
+
+/** Live checklist: permissions by feature, Page subscriptions, Instagram access. */
+function SetupChecklist() {
+  const [d, setD] = useState<Diagnostics | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async (fresh = false) => {
+    setBusy(true);
+    try {
+      setD(await apiFetch<Diagnostics>(`${BASE}/diagnostics${fresh ? '?fresh=1' : ''}`));
+    } catch {
+      setD(null);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!d) return busy ? <SettingsSkeleton cards={1} /> : null;
+  const missing = (g: keyof Diagnostics['groups']) => d.groups[g].filter((x) => x.granted === false).map((x) => x.scope);
+  return (
+    <SettingsCard
+      title="Setup checklist"
+      description="Checked live with Meta. Fix anything amber and press Check again."
+      action={
+        <Button variant="secondary" size="sm" loading={busy} onClick={() => void load(true)}>
+          <RefreshCw size={14} /> Check again
+        </Button>
+      }
+    >
+      <div className="flex flex-col divide-y divide-line">
+        {(Object.keys(GROUP_LABEL) as Array<keyof Diagnostics['groups']>).map((g) => {
+          const miss = missing(g);
+          const ok = !d.token.scopesKnown ? null : miss.length === 0;
+          return (
+            <div key={g} className="flex gap-3 py-3">
+              <Mark ok={ok} />
+              <div className="min-w-0 flex-1 text-sm">
+                <p className="font-semibold text-ink">{GROUP_LABEL[g]} permissions</p>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {d.groups[g].map((x) => (
+                    <span
+                      key={x.scope}
+                      className={
+                        'rounded-full px-2 py-0.5 text-xs font-semibold ' +
+                        (x.granted === false ? 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-200' : 'bg-brand-50 text-brand-800 dark:bg-brand-900/30 dark:text-brand-200')
+                      }
+                    >
+                      {x.scope}
+                      {x.granted === false ? ' ✗' : ''}
+                    </span>
+                  ))}
+                </div>
+                {miss.length > 0 && (
+                  <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">
+                    Generate the system-user token again (Business Settings → System users → Generate token) with {miss.join(', ')} ticked, and save it in Settings → WhatsApp.
+                  </p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        {d.pages.map((p) => (
+          <div key={p.id} className="flex flex-col gap-2 py-3 text-sm">
+            <div className="flex gap-3">
+              <Mark ok={p.subscribed} />
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-ink">{p.name}: subscribed to your app</p>
+                <p className="text-xs text-muted">
+                  {p.subscribed === false
+                    ? 'Not subscribed. Use Retry on the Page below.'
+                    : p.lastEventAt
+                      ? `Last message or comment ${fmtDateTime(p.lastEventAt)}`
+                      : 'No messages yet. Send the Page a test message.'}
+                </p>
+              </div>
+            </div>
+            {p.igMessages && (
+              <div className="flex gap-3">
+                <Mark ok={p.igMessages.ok} />
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-ink">@{p.igUsername}: Instagram messages</p>
+                  <p className="text-xs text-muted">
+                    {p.igMessages.ok
+                      ? 'Readable.'
+                      : 'Meta is blocking Instagram messages for this app. It needs App Review for instagram_manage_messages; until then, Instagram accounts added as testers (App roles → Instagram Testers) can message and get replies.'}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </SettingsCard>
   );
 }

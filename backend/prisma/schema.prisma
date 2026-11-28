@@ -3505,6 +3505,30 @@ model MetaPage {
   @@map("meta_pages")
 }
 
+// Posts published / scheduled to Facebook Pages + Instagram accounts (own
+// Meta app). One row = one post sent to one or more targets; results hold the
+// per-target outcome. content_item_id links a post made from the Content module.
+model SocialPost {
+  id                 Int       @id @default(autoincrement())
+  company_id         Int
+  content_item_id    Int?
+  caption            String    @db.Text
+  media              Json      // [{webPath, type:'image'|'video', mime}]
+  targets            Json      // [{metaPageId, platform:'facebook'|'instagram'}]
+  status             String    @default("draft") @db.VarChar(16) // draft|scheduled|publishing|published|partial|failed|cancelled
+  scheduled_at       DateTime?
+  published_at       DateTime?
+  results            Json?     // [{metaPageId, platform, externalId, permalink, error}]
+  last_error         String?   @db.VarChar(500)
+  created_by_user_id Int?
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+
+  @@index([company_id, status, scheduled_at])
+  @@index([company_id, content_item_id])
+  @@map("social_posts")
+}
+
 // YouTube channels connected for Growth (channel stats + comments). Token =
 // the channel owner's Google OAuth refresh token (AES-GCM). One row per channel.
 model YoutubeChannel {
